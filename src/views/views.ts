@@ -116,6 +116,18 @@ export function buildHeader(actions: ViewActions): ViewHost {
   );
 
   const tabSched = h("button", { class: "tab", title: "Schedule", onclick: () => go("schedule") }, svg(ICONS.calendar, 13));
+  const tabProductivity = h(
+    "button",
+    {
+      class: "tab",
+      title: "Productivity & Focus Workspace (Baymax)",
+      onclick: () => {
+        actions.blip();
+        void Bridge.openProductivityWindow();
+      },
+    },
+    svg(ICONS.timer, 13)
+  );
   const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, svg(ICONS.plus, 13));
 
   const micBtn = h("button", { title: "Voice Control (Mic)", onclick: () => actions.toggleMic() }, svg(ICONS.mic, 14));
@@ -130,7 +142,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabChat, tabCouple, tabRemote, tabSched, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabChat, tabCouple, tabRemote, tabSched, tabProductivity, tabDrop),
     h("div", { class: "header-actions" }, micBtn, gearBtn, soundBtn),
   );
 

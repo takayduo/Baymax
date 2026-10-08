@@ -968,14 +968,14 @@ class JarvisLive:
         # Load customization from config
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
-            self._asst_name = (_cfg.get("assistant_name") or "Mochi").strip()
+            self._asst_name = (_cfg.get("assistant_name") or "Baymax").strip()
             _role = str(_cfg.get("user_role", "me")).strip().lower()
             if _role == "her":
                 _user_name = (_cfg.get("user_name") or _cfg.get("partner_name") or "Ayzil").strip()
             else:
                 _user_name = (_cfg.get("user_name") or "Badsha").strip()
         except Exception:
-            self._asst_name = "Mochi"
+            self._asst_name = "Baymax"
             _user_name = ""
 
         memory     = load_memory()

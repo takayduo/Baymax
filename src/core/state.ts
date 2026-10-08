@@ -187,7 +187,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
 
   // Mark-LV PC Control & Agent Engine Defaults
-  assistantName: "Mochi",
+  assistantName: "Baymax",
   voiceName: "Charon",
   wakeWordEnabled: false,
   pushToTalkEnabled: false,
@@ -202,6 +202,7 @@ export const DEFAULT_SETTINGS: Settings = {
   audioInputDevice: "",
   audioOutputDevice: "",
   activeActions: {
+    productivity_manager: true,
     computer_control: true,
     browser_control: true,
     open_app: true,

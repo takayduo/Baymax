@@ -18,7 +18,7 @@ Write-Host "      ✓ Stopped running processes" -ForegroundColor Green
 # 2. Remove Desktop Shortcuts
 Write-Host "[2/4] Removing Desktop shortcut..." -ForegroundColor Yellow
 $desktopPath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Desktop)
-$shortcuts = @("Mochi Ultra.lnk", "Mochi Eye.lnk", "Mochi.lnk")
+$shortcuts = @("Baymax.lnk", "Mochi Ultra.lnk", "Mochi Eye.lnk", "Mochi.lnk")
 foreach ($s in $shortcuts) {
     $shortcutPath = Join-Path $desktopPath $s
     if (Test-Path $shortcutPath) {
@@ -30,7 +30,7 @@ Write-Host "      ✓ Desktop shortcuts removed" -ForegroundColor Green
 # 3. Clean up Windows Startup (Shortcut & Registry)
 Write-Host "[3/4] Removing from Windows Startup..." -ForegroundColor Yellow
 $startupFolder = [System.IO.Path]::Combine($env:APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
-$startupShortcuts = @("Mochi Ultra.lnk", "Mochi Eye.lnk", "Mochi.lnk", "CoucouCreator.vbs")
+$startupShortcuts = @("Baymax.lnk", "Mochi Ultra.lnk", "Mochi Eye.lnk", "Mochi.lnk", "CoucouCreator.vbs")
 foreach ($s in $startupShortcuts) {
     $p = Join-Path $startupFolder $s
     if (Test-Path $p) { Remove-Item -Force $p -ErrorAction SilentlyContinue }
@@ -39,19 +39,22 @@ foreach ($s in $startupShortcuts) {
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CoucouCreator" -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Mochi" -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Mochi Ultra" -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Baymax" -ErrorAction SilentlyContinue
 Write-Host "      ✓ Startup entries removed" -ForegroundColor Green
 
 # 4. Remove Mochi Folder & Cache
-Write-Host "[4/4] Removing Mochi files and data..." -ForegroundColor Yellow
-$installFolders = @("$env:USERPROFILE\Mochi-Ultra", "$env:USERPROFILE\Mochi-Eye")
+Write-Host "[4/4] Removing Baymax / Mochi files and data..." -ForegroundColor Yellow
+$installFolders = @("$env:USERPROFILE\Baymax", "$env:USERPROFILE\Mochi-Ultra", "$env:USERPROFILE\Mochi-Eye")
 foreach ($folder in $installFolders) {
     if (Test-Path $folder) {
         Remove-Item -Recurse -Force $folder -ErrorAction SilentlyContinue
     }
 }
 $appDataFolders = @(
+    (Join-Path $env:APPDATA "baymax"),
     (Join-Path $env:APPDATA "mochi-ultra"),
     (Join-Path $env:APPDATA "mochi-eye"),
+    (Join-Path $env:LOCALAPPDATA "baymax"),
     (Join-Path $env:LOCALAPPDATA "mochi-ultra")
 )
 foreach ($folder in $appDataFolders) {
@@ -59,7 +62,7 @@ foreach ($folder in $appDataFolders) {
         Remove-Item -Recurse -Force $folder -ErrorAction SilentlyContinue
     }
 }
-Write-Host "      ✓ Mochi files and cache cleaned" -ForegroundColor Green
+Write-Host "      ✓ Files and cache cleaned" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Green

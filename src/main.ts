@@ -174,6 +174,27 @@ async function main() {
     }
   });
 
+  // ── Productivity & Distraction Alert (Baymax) ──────────────────────────
+  await onEvent<{ app: string; userName?: string }>("productivity-distraction-warning", (payload) => {
+    Sound.play("error");
+    State.triggerEmote("annoyed");
+    const appName = payload?.app || "distraction";
+    State.noteMessage = `⚠️ Focus! "${appName}" is blocked during your focus session.`;
+    island.expand("note");
+
+    const uName = payload?.userName || ((State.settings.userRole || "me") === "me" ? State.settings.userName || "Badsha" : State.settings.partnerName || "Ayzil");
+    import("./core/voice").then(({ VoiceManager }) => {
+      VoiceManager.speakText(`Hey ${uName}, focus on your work! You have an active focus session going on.`);
+    }).catch(console.error);
+
+    setTimeout(() => {
+      if (State.view === "note" && State.noteMessage?.includes("blocked")) {
+        island.collapse();
+      }
+    }, 5500);
+    State.notify();
+  });
+
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 
   // The settings window writes preferences; apply them here without a restart.

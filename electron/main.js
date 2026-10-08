@@ -44,6 +44,16 @@ const {
   closeRemoteViewerWindow,
 } = require("./remoteAccess");
 const { checkForUpdates, performUpdate, getLocalVersionInfo } = require("./updater");
+const { Store, STORE_DEFAULTS } = require("./productivity/store");
+const {
+  AppTracker,
+  WINDOW_SCANNER_SCRIPT,
+  SYSTEM_IGNORED_PROCS,
+  DEFAULT_CATEGORIES,
+  ICON_MAP,
+  getLocalDateKey,
+} = require("./productivity/tracker");
+const { AppBlocker } = require("./productivity/blocker");
 
 // Enable Windows Graphics Capture (WGC) for reliable capture across hybrid/multi-GPU systems
 app.commandLine.appendSwitch("enable-features", "WebRtcAllowWgcScreenCapturer,WebRtcAllowWgcWindowCapturer");
@@ -56,8 +66,12 @@ if (!gotTheLock) {
 
 let overlayWin = null;
 let settingsWin = null;
+let productivityWin = null;
 let tray = null;
 let isQuitting = false;
+let productivityStore = null;
+let productivityTracker = null;
+let productivityBlocker = null;
 
 app.on("second-instance", () => {
   if (overlayWin && !overlayWin.isDestroyed()) {
@@ -124,7 +138,7 @@ const DEFAULT_SETTINGS = {
     notepad: "notepad",
   },
   // Mark-LV PC Control & Agent Engine Defaults
-  assistantName: "Mochi",
+  assistantName: "Baymax",
   voiceName: "Charon",
   wakeWordEnabled: false,
   pushToTalkEnabled: false,
@@ -139,6 +153,7 @@ const DEFAULT_SETTINGS = {
   audioInputDevice: "",
   audioOutputDevice: "",
   activeActions: {
+    productivity_manager: true,
     computer_control: true,
     browser_control: true,
     open_app: true,
@@ -1106,6 +1121,112 @@ function createSettingsWindow() {
   });
 }
 
+function broadcastToProductivity(channel, ...args) {
+  if (productivityWin && !productivityWin.isDestroyed()) {
+    try {
+      productivityWin.webContents.send(channel, ...args);
+    } catch (e) {}
+  }
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    try {
+      overlayWin.webContents.send(channel, ...args);
+    } catch (e) {}
+  }
+}
+
+let lastDistractionAlertTime = 0;
+function handleFocusDistractionAlert(procName) {
+  const now = Date.now();
+  if (now - lastDistractionAlertTime < 25000) return;
+  lastDistractionAlertTime = now;
+
+  const isMe = (activeSettings.userRole || "me") === "me";
+  const userName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+
+  console.log(`[Productivity] Alerting user: ${userName} opened distraction app ${procName}`);
+
+  // 1. Send warning to overlay island
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.webContents.send("productivity-distraction-warning", {
+      app: procName,
+      userName: userName,
+    });
+  }
+
+  // 2. Windows Native Notification
+  if (Notification.isSupported()) {
+    try {
+      new Notification({
+        title: "⚠️ Baymax — Focus On Your Work!",
+        body: `Hey ${userName}, "${procName}" is blocked! Focus session is active.`,
+        silent: false,
+      }).show();
+    } catch (e) {}
+  }
+
+  // 3. Spoken voice intervention via Live Assistant
+  sendToLiveEngine({
+    cmd: "text",
+    text: `[FOCUS REMINDER]: The user ${userName} opened the distraction app '${procName}' during an active focus session. Tell them directly to focus on their work right now.`
+  });
+}
+
+function createProductivityWindow() {
+  if (productivityWin && !productivityWin.isDestroyed()) {
+    if (productivityWin.isMinimized()) productivityWin.restore();
+    productivityWin.show();
+    productivityWin.focus();
+    return;
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const winW = Math.min(1280, Math.round(screenWidth * 0.9));
+  const winH = Math.min(840, Math.round(screenHeight * 0.9));
+  const winX = Math.round((screenWidth - winW) / 2);
+  const winY = Math.round((screenHeight - winH) / 2);
+
+  productivityWin = new BrowserWindow({
+    width: winW,
+    height: winH,
+    x: winX,
+    y: winY,
+    minWidth: 920,
+    minHeight: 620,
+    title: "Baymax — Productivity & Focus Workspace",
+    backgroundColor: "#0A0A0A",
+    frame: true,
+    autoHideMenuBar: true,
+    resizable: true,
+    movable: true,
+    minimizable: true,
+    maximizable: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload-productivity.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const distProductivity = path.join(__dirname, "..", "productivity", "dist", "index.html");
+  if (fs.existsSync(distProductivity)) {
+    productivityWin.loadFile(distProductivity);
+  } else {
+    productivityWin.loadURL("http://localhost:3000");
+  }
+
+  productivityWin.on("close", (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      productivityWin.hide();
+    }
+  });
+
+  productivityWin.on("closed", () => {
+    productivityWin = null;
+  });
+}
+
 function setupTray() {
   const iconPath = path.join(__dirname, "..", "public", "icons", "icon.ico");
   let trayIcon = nativeImage.createEmpty();
@@ -1114,16 +1235,20 @@ function setupTray() {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip("Mochi Ultra — AI Desktop Companion");
+  tray.setToolTip("Baymax — AI Desktop Companion & Productivity Engine");
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: "Open Mochi Ultra",
+      label: "Open Baymax",
       click: () => {
         if (overlayWin && !overlayWin.isDestroyed()) {
           overlayWin.webContents.send("tray", "open");
         }
       },
+    },
+    {
+      label: "Productivity & Focus (Distrack)…",
+      click: () => createProductivityWindow(),
     },
     {
       label: "Settings…",
@@ -1638,7 +1763,7 @@ function handleLiveEngineEvent(msg) {
         overlayWin.webContents.send('ai-transcript', {
           role: msg.role || 'assistant',
           text: msg.text || '',
-          speaker: msg.speaker || 'Mochi',
+          speaker: msg.speaker || 'Baymax',
         });
       }
       if (msg.role === 'assistant' && pendingTextResolvers.length > 0) {
@@ -1668,6 +1793,23 @@ function handleLiveEngineEvent(msg) {
     case 'reconfig': {
       if (overlayWin && !overlayWin.isDestroyed()) {
         overlayWin.webContents.send('open-settings-window');
+      }
+      break;
+    }
+    case 'focus_session_command': {
+      const action = msg.action || 'start';
+      if (action === 'start') {
+        const duration = Number(msg.duration_minutes) || 60;
+        const mode = msg.mode || 'Deep Silence';
+        if (productivityBlocker) {
+          productivityBlocker.start({ mode, durationMinutes: duration });
+        }
+        broadcastToProductivity('focus-state-changed', { active: true, duration, mode });
+      } else if (action === 'stop') {
+        if (productivityBlocker) {
+          productivityBlocker.stop();
+        }
+        broadcastToProductivity('focus-state-changed', { active: false });
       }
       break;
     }
@@ -3330,6 +3472,207 @@ ipcMain.handle("secret-clear", (_event, key) => {
   return true;
 });
 
+// ── Productivity & Focus IPC Handlers (Baymax / Distrack) ───────────────────
+ipcMain.handle("get-tracked-apps", (_, timeframe) => {
+  if (!productivityTracker) return [];
+  if (timeframe === "weekly") return productivityTracker.getWeekApps();
+  return productivityTracker.getTodayApps();
+});
+
+ipcMain.handle("get-daily-totals", () => {
+  if (!productivityTracker) return [];
+  return productivityTracker.getDailyTotals();
+});
+
+ipcMain.handle("get-app-categories", () => {
+  return productivityStore ? productivityStore.get("appCategories", {}) : {};
+});
+
+ipcMain.handle("update-app-category", (_, processName, category) => {
+  if (!productivityStore) return true;
+  const cats = productivityStore.get("appCategories", {});
+  cats[processName.toLowerCase()] = category;
+  productivityStore.set("appCategories", cats);
+  const dateKey = getLocalDateKey();
+  const usage = productivityStore.get(`usageData.${dateKey}`, {});
+  const key = processName.toLowerCase();
+  if (usage[key]) {
+    usage[key].category = category;
+    productivityStore.set(`usageData.${dateKey}`, usage);
+  }
+  return true;
+});
+
+ipcMain.handle("scan-running-apps", () => {
+  return new Promise((resolve) => {
+    const { execFile } = require("node:child_process");
+    execFile("powershell.exe", [
+      "-NoProfile", "-NoLogo", "-NonInteractive", "-Command", WINDOW_SCANNER_SCRIPT
+    ], { windowsHide: true, timeout: 10000 }, async (err, stdout) => {
+      if (err || !stdout || !stdout.trim()) {
+        return resolve([]);
+      }
+      try {
+        let data = JSON.parse(stdout.trim());
+        if (!Array.isArray(data)) data = [data];
+        const categories = productivityStore ? productivityStore.get("appCategories", {}) : {};
+        const resultPromises = data
+          .filter((p) => p && p.ProcessName && !SYSTEM_IGNORED_PROCS.includes(p.ProcessName.toLowerCase()))
+          .map(async (p) => {
+            const key = p.ProcessName.toLowerCase();
+            let iconDataUrl = null;
+            if (p.Path) {
+              try {
+                const img = await app.getFileIcon(p.Path, { size: "normal" });
+                iconDataUrl = img.toDataURL();
+              } catch (e) {}
+            }
+            return {
+              id: key,
+              name: p.ProcessName,
+              windowTitle: p.MainWindowTitle || "",
+              timeSpentMinutes: 0,
+              category: categories[key] || DEFAULT_CATEGORIES[key] || "neutral",
+              type: "application",
+              icon: iconDataUrl || ICON_MAP[key] || "apps",
+            };
+          });
+        const result = await Promise.all(resultPromises);
+        const unique = [...new Map(result.map((r) => [r.id, r])).values()];
+        resolve(unique);
+      } catch (e) {
+        resolve([]);
+      }
+    });
+  });
+});
+
+ipcMain.handle("get-focus-sessions", () => {
+  return productivityStore ? productivityStore.get("focusSessions", []) : [];
+});
+
+ipcMain.handle("add-focus-session", (_, session) => {
+  if (!productivityStore) return true;
+  const sessions = productivityStore.get("focusSessions", []);
+  sessions.unshift({ ...session, id: Date.now().toString() });
+  if (sessions.length > 100) sessions.length = 100;
+  productivityStore.set("focusSessions", sessions);
+  return true;
+});
+
+ipcMain.handle("set-focus-sessions", (_, sessions) => {
+  if (productivityStore) productivityStore.set("focusSessions", sessions || []);
+  return true;
+});
+
+ipcMain.handle("start-focus-session", (_, config) => {
+  if (productivityBlocker) productivityBlocker.start(config);
+  broadcastToProductivity("focus-state-changed", { active: true, config });
+  return true;
+});
+
+ipcMain.handle("stop-focus-session", () => {
+  if (productivityBlocker) productivityBlocker.stop();
+  broadcastToProductivity("focus-state-changed", { active: false });
+  return true;
+});
+
+ipcMain.handle("get-focus-active", () => {
+  return productivityBlocker ? productivityBlocker.isActive : false;
+});
+
+ipcMain.handle("get-blocklist", () => {
+  return productivityStore ? productivityStore.get("blocklist", []) : [];
+});
+
+ipcMain.handle("toggle-block-app", (_, appId) => {
+  if (!productivityStore) return [];
+  const list = productivityStore.get("blocklist", []);
+  const idx = list.indexOf(appId);
+  if (idx >= 0) list.splice(idx, 1);
+  else list.push(appId);
+  productivityStore.set("blocklist", list);
+  return list;
+});
+
+ipcMain.handle("set-blocklist", (_, newList) => {
+  if (productivityStore) productivityStore.set("blocklist", newList || []);
+  return newList || [];
+});
+
+ipcMain.handle("get-settings", () => {
+  return productivityStore ? productivityStore.get("settings", STORE_DEFAULTS.settings) : STORE_DEFAULTS.settings;
+});
+
+ipcMain.handle("update-settings", (_, newSettings) => {
+  if (!productivityStore) return newSettings;
+  const current = productivityStore.get("settings", STORE_DEFAULTS.settings);
+  const merged = { ...current, ...newSettings };
+  productivityStore.set("settings", merged);
+  return merged;
+});
+
+ipcMain.handle("clear-data", () => {
+  if (productivityStore) {
+    productivityStore.set("usageData", {});
+    productivityStore.set("focusSessions", []);
+  }
+  return true;
+});
+
+ipcMain.handle("is-onboarded", () => {
+  return productivityStore ? productivityStore.get("onboarded", true) : true;
+});
+
+ipcMain.handle("set-onboarded", () => {
+  if (productivityStore) productivityStore.set("onboarded", true);
+  return true;
+});
+
+ipcMain.handle("get-user-profile", () => {
+  if (!productivityStore) return { name: "Badsha", email: "user@baymax.local", emailVerified: true };
+  const prof = productivityStore.get("userProfile", {});
+  if (!prof.name) {
+    const isMe = (activeSettings.userRole || "me") === "me";
+    const uName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+    return { name: uName, email: `${uName.toLowerCase()}@baymax.local`, picture: "", emailVerified: true };
+  }
+  return prof;
+});
+
+ipcMain.handle("set-user-profile", (_, profile) => {
+  if (productivityStore) productivityStore.set("userProfile", profile);
+  return true;
+});
+
+ipcMain.handle("kill-process", (_, processName) => {
+  return new Promise((resolve) => {
+    const { execFile } = require("node:child_process");
+    execFile("taskkill.exe", ["/IM", `${processName}.exe`, "/F"], { windowsHide: true }, (err) => {
+      resolve(!err);
+    });
+  });
+});
+
+ipcMain.handle("google-sign-in", async () => {
+  const isMe = (activeSettings.userRole || "me") === "me";
+  const uName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+  return { name: uName, email: `${uName.toLowerCase()}@baymax.local`, emailVerified: true };
+});
+
+ipcMain.handle("send-otp-email", async () => {
+  return true;
+});
+
+ipcMain.on("open-productivity-window", () => {
+  createProductivityWindow();
+});
+
+ipcMain.handle("open-productivity-window", () => {
+  createProductivityWindow();
+  return true;
+});
+
 // App Lifecycle
 app.whenReady().then(() => {
   if (session && session.defaultSession) {
@@ -3347,6 +3690,41 @@ app.whenReady().then(() => {
           callback({ video: null });
         });
     });
+  }
+
+  // Initialize Productivity & Focus Tracker Engine
+  try {
+    productivityStore = new Store(STORE_DEFAULTS);
+    const isMe = (activeSettings.userRole || "me") === "me";
+    const currentUserName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+    const existingProfile = productivityStore.get("userProfile", {});
+    if (!existingProfile.name) {
+      productivityStore.set("userProfile", {
+        name: currentUserName,
+        email: `${currentUserName.toLowerCase()}@baymax.local`,
+        picture: "",
+        emailVerified: true,
+      });
+      productivityStore.set("onboarded", true);
+    }
+
+    productivityTracker = new AppTracker(
+      productivityStore,
+      broadcastToProductivity,
+      () => (productivityBlocker ? productivityBlocker.isActive : false),
+      handleFocusDistractionAlert
+    );
+
+    productivityBlocker = new AppBlocker(
+      productivityStore,
+      broadcastToProductivity,
+      handleFocusDistractionAlert
+    );
+
+    productivityTracker.start();
+    console.log("[Productivity Engine] Tracker and Blocker initialized successfully.");
+  } catch (prodErr) {
+    console.error("[Productivity Engine] Initialization error:", prodErr);
   }
 
   setupTray();
@@ -3375,9 +3753,17 @@ app.whenReady().then(() => {
   });
 });
 
-
 app.on("before-quit", () => {
   isQuitting = true;
+  if (productivityTracker) {
+    try { productivityTracker.stop(); } catch (e) {}
+  }
+  if (productivityBlocker) {
+    try { productivityBlocker.stop(); } catch (e) {}
+  }
+  if (productivityStore) {
+    try { productivityStore.saveSync(); } catch (e) {}
+  }
   stopMochiLiveEngine();
 });
 

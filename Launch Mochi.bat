@@ -1,5 +1,5 @@
 @echo off
-title Mochi Ultra Desktop Companion
+title Baymax (Mochi Ultra) Desktop Companion
 cd /d "%~dp0"
 if not exist "%~dp0dist\index.html" (
     call npm run build

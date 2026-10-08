@@ -93,6 +93,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   markLvExecuteAction: (name, parameters) => ipcRenderer.invoke("marklv-execute-action", { name, parameters }),
   markLvLaunchHud: () => ipcRenderer.invoke("marklv-launch-hud"),
 
+  // Productivity & Focus Engine (Baymax)
+  openProductivityWindow: () => ipcRenderer.invoke("open-productivity-window"),
+  startFocusSession: (config) => ipcRenderer.invoke("start-focus-session", config),
+  stopFocusSession: () => ipcRenderer.invoke("stop-focus-session"),
+  getProductivityStats: (timeframe) => ipcRenderer.invoke("get-tracked-apps", timeframe),
+  getProductivityDailyTotals: () => ipcRenderer.invoke("get-daily-totals"),
+
   // Events from Main Process
   on: (channel, callback) => {
     const validChannels = [
@@ -120,6 +127,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "ai-audio-level",
       "ai-content",
       "ai-confirm",
+      "productivity-distraction-warning",
+      "tracking-update",
+      "app-close-warning",
+      "app-blocked",
     ];
     if (validChannels.includes(channel)) {
       const handler = (_event, ...args) => callback(...args);

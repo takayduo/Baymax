@@ -302,12 +302,12 @@ function markLvSection(): HTMLElement {
     // ── Group 1: 3D Holographic Avatar & Voice Model ──
     const assistantNameInput = h("input", {
       type: "text",
-      value: settings.assistantName || "Mochi",
-      placeholder: "Mochi",
+      value: settings.assistantName || "Baymax",
+      placeholder: "Baymax",
       style: "flex:1 1 auto;max-width:200px;",
     }) as HTMLInputElement;
     assistantNameInput.addEventListener("change", () => {
-      settings.assistantName = assistantNameInput.value.trim() || "Mochi";
+      settings.assistantName = assistantNameInput.value.trim() || "Baymax";
       void save();
     });
 

@@ -73,6 +73,13 @@ declare global {
       markLvExecuteAction?(name: string, parameters: any): Promise<{ success: boolean; result?: string; error?: string }>;
       markLvLaunchHud?(): Promise<{ success: boolean; error?: string }>;
 
+      // Productivity & Focus Engine (Baymax)
+      openProductivityWindow?(): Promise<boolean>;
+      startFocusSession?(config: any): Promise<boolean>;
+      stopFocusSession?(): Promise<boolean>;
+      getProductivityStats?(timeframe?: string): Promise<any[]>;
+      getProductivityDailyTotals?(): Promise<any[]>;
+
       secretSet(key: string, val: string): Promise<boolean>;
       secretGet(key: string): Promise<string>;
       secretClear(key: string): Promise<boolean>;
@@ -536,6 +543,28 @@ export const Bridge = {
   markLvLaunchHud: async () => {
     if (window.electronAPI?.markLvLaunchHud) return await window.electronAPI.markLvLaunchHud();
     return { success: false };
+  },
+
+  // Productivity & Focus Engine (Baymax)
+  openProductivityWindow: async (): Promise<boolean> => {
+    if (window.electronAPI?.openProductivityWindow) return await window.electronAPI.openProductivityWindow();
+    return false;
+  },
+  startFocusSession: async (config: any): Promise<boolean> => {
+    if (window.electronAPI?.startFocusSession) return await window.electronAPI.startFocusSession(config);
+    return false;
+  },
+  stopFocusSession: async (): Promise<boolean> => {
+    if (window.electronAPI?.stopFocusSession) return await window.electronAPI.stopFocusSession();
+    return false;
+  },
+  getProductivityStats: async (timeframe?: string): Promise<any[]> => {
+    if (window.electronAPI?.getProductivityStats) return await window.electronAPI.getProductivityStats(timeframe);
+    return [];
+  },
+  getProductivityDailyTotals: async (): Promise<any[]> => {
+    if (window.electronAPI?.getProductivityDailyTotals) return await window.electronAPI.getProductivityDailyTotals();
+    return [];
   },
 };
 

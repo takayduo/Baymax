@@ -157,6 +157,9 @@ class MochiHeadlessUI:
     def show_content(self, title: str, text: str):
         emit_ipc("content", {"title": title, "text": text})
 
+    def emit_productivity_command(self, action: str, duration_minutes: int = 60, mode: str = "Deep Silence"):
+        emit_ipc("focus_session_command", {"action": action, "duration_minutes": duration_minutes, "mode": mode})
+
     def show_quiz(self, topic: str, questions, grade=None):
         emit_ipc("quiz", {"topic": topic, "questions": questions})
 

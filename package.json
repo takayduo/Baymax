@@ -1,11 +1,12 @@
 {
-  "name": "mochi-ultra",
+  "name": "baymax",
   "version": "1.0.0",
-  "description": "Mochi Ultra — AI Desktop Companion with Autonomous PC Control Engine",
+  "description": "Baymax — Autonomous AI Desktop Companion & Productivity Engine with Distrack Integration",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:productivity": "cd productivity && vite build",
     "start": "vite build && electron .",
     "app": "electron ."
   },

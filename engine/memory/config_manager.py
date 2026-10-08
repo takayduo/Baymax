@@ -52,8 +52,8 @@ def is_configured() -> bool:
 
 
 def get_assistant_name() -> str:
-    """Return the configured assistant name, or 'JARVIS' if not set."""
-    return load_api_keys().get("assistant_name", "JARVIS") or "JARVIS"
+    """Return the configured assistant name, or 'Baymax' if not set."""
+    return load_api_keys().get("assistant_name", "Baymax") or "Baymax"
 
 
 def get_user_name() -> str:

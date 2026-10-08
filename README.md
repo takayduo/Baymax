@@ -1,15 +1,24 @@
-# 🍡 Mochi Ultra — AI Desktop Companion with Autonomous PC Control Engine
+# 🤖 Baymax — Autonomous AI Desktop Companion & Productivity Engine
 
-> **The ultimate fusion of Mochi's desktop companion and Mark-LV's autonomous PC control engine.**
-> Featuring authentic 2D squircle physics, eye-following animations, live peer-to-peer partner chat, daily creator schedule, safe Remote Desktop Co-Pilot, and **Mark-LV Autonomous PC Control (clicking, typing, app launching, process closing, browser navigation, window management, system settings, document processing, vision, and long-term memory)**.
+> **The ultimate fusion of Baymax's desktop companion, Distrack's digital mindfulness productivity suite, and Mark-LV's autonomous PC control engine.**
+> Featuring real-time screen time tracking, automatic distraction blocking, voice-guided focus sessions, 2D squircle physics, live peer-to-peer partner chat, daily creator schedule, safe Remote Desktop Co-Pilot, and **Mark-LV Autonomous PC Control (clicking, typing, app launching, process closing, browser navigation, window management, system settings, document processing, vision, and long-term memory)**.
 
 ---
 
 ## ✨ Features
 
+- ⏱️ **Distrack Productivity & Digital Mindfulness Engine**:
+  - **Full Desktop Productivity Workspace**: Dedicated panel beside the task manager displaying complete interactive charts, process classification, weekly insights, flow sessions, and settings.
+  - **Autonomous Screen Time Tracking**: High-performance Win32 background window scanning tracks time spent per app in real time without lag.
+  - **3-Tier Intelligent App Classification**: Categorize applications as **Productive** 🟢, **Neutral** ⚪, or **Wasteful (Distraction)** 🔴.
+  - **Automated Focus Sessions**: Start a focus session for any duration (e.g. 1 hour, 45 mins) via voice command (*"Baymax, start a focus session for 1 hour"*) or 1-click in the UI.
+  - **Automatic Distraction Blacklisting**: Activating a focus session automatically blacklists and intercepts all apps classified as distractions (Discord, games, social media, etc.).
+  - **Proactive AI Voice Interventions**: If you switch to any distraction app during a focus session, Baymax immediately speaks up: *"Hey Badsha, focus on your work! You have an active focus session going on."* Displays warning countdown on the island and force-closes the distraction if not exited.
+  - **Screen Time Analytics by Voice**: Ask Baymax *"Analyze my screen time"* or *"How much time did I waste today?"* to get your real-time Focus Score percentage, productive hours, and top apps.
+
 - ⚡ **Mark-LV Autonomous PC Control Engine**:
   - **Direct Computer Control**: Autonomous mouse clicking, typing, hotkeys, scroll, drag, screenshots, and visual element detection on screen.
-  - **Targeted App Closer (`close_app`)**: Intelligent dual-tier app closing. First prioritizes custom user entries in **Application Paths**; if not found, performs fuzzy matching against active running Windows processes (handles complex game executables like Valorant / `VALORANT-Win64-Shipping.exe`, Riot Client, Steam, Discord, OBS, etc.). Includes an **anti-self-close safety shield** so Mochi and Electron can never accidentally terminate themselves.
+  - **Targeted App Closer (`close_app`)**: Intelligent dual-tier app closing. First prioritizes custom user entries in **Application Paths**; if not found, performs fuzzy matching against active running Windows processes (handles complex game executables like Valorant / `VALORANT-Win64-Shipping.exe`, Riot Client, Steam, Discord, OBS, etc.). Includes an **anti-self-close safety shield** so Baymax and Electron can never accidentally terminate themselves.
   - **Long-Term Memory Vault**: Bi-directional persistent memory engine (`engine/memory/long_term.json`) with interactive GUI controls (`+ Remember` to add, `🗑️ Forget` to delete) and autonomous CLI bridge (`mochi_bridge.py save-memory`, `delete-memory`).
   - **Dual LLM Parity Architecture**: Flawless execution across both Gemini Live (`gemini-2.5-flash`, native multimodal live API with real-time video/audio) and Groq / OpenRouter. Built-in tool calling loop verifies actual task execution instead of hallucinating "done".
   - **Browser Automation**: Playwright autonomous web browser navigation, searching, form filling, and interaction.
@@ -19,7 +28,7 @@
   - **Web Intelligence**: DuckDuckGo web search, news scraping, price comparisons, and YouTube playback.
   - **Flight Finder & Game Updater**: Google Flights search and Steam/Epic Games updater and scheduler.
   - **Autonomous Dev Agent**: Run Python scripts, code helpers, and autonomous developer problem solvers.
-  - **Gemini Live Voice & Audio Routing**: Gemini Live models (`Charon`, `Puck`, `Kore`, `Fenrir`, `Aoede`), openWakeWord gating ("Hey Jarvis" / "Hey Mochi"), and hardware audio routing.
+  - **Gemini Live Voice & Audio Routing**: Gemini Live models (`Charon`, `Puck`, `Kore`, `Fenrir`, `Aoede`), openWakeWord gating ("Hey Jarvis" / "Hey Baymax"), and hardware audio routing.
 - 🖥️ **Remote Desktop Co-Pilot (Mochi Eye)**:
   - **Mutual Permission**: Either partner can click *"Request Remote Access"*. The other receives an interactive prompt to Accept or Decline.
   - **Full Control**: Smooth 60 FPS remote screen view, mouse movement, dragging, clicking, and keyboard shortcuts.
@@ -76,7 +85,7 @@ Before installing Mochi Ultra, make sure you have:
 
 ## 🚀 Easy Installation Guide (Works on Any PC — Even Brand New!)
 
-You do **not** need Git or programming experience to run Mochi Ultra. Choose whichever method is easiest for you:
+You do **not** need Git or programming experience to run Baymax. Choose whichever method is easiest for you:
 
 ---
 
@@ -86,14 +95,15 @@ Works on any fresh Windows 10/11 PC or Windows Sandbox (even with **no Git** and
 1. Press `Win + X` and click **Terminal** or **Windows PowerShell**.
 2. Paste this single command and press `Enter`:
    ```powershell
-   irm https://raw.githubusercontent.com/takayduo/Mochi-Ultra/main/install.ps1 | iex
+   irm https://raw.githubusercontent.com/takayduo/BEMAX/main/install.ps1 | iex
    ```
+   *(Note: Fallback installer link `irm https://raw.githubusercontent.com/takayduo/Mochi-Ultra/main/install.ps1 | iex` also works).*
 3. That's it! The script will:
-   - Auto-install Node.js and Python if missing.
-   - Download the latest Mochi Ultra files (no Git needed).
-   - Install packages and build the desktop app.
-   - Install Python autonomous engine requirements.
-   - Create a **Mochi Ultra** shortcut on your Desktop and launch it immediately.
+   - Auto-install Node.js 22 LTS and Python 3.12 if missing.
+   - Download the latest Baymax & Distrack suite files (no Git needed).
+   - Install packages and build the desktop app bundle.
+   - Install Python Mark-LV autonomous engine requirements.
+   - Create a **Baymax** shortcut on your Desktop and launch it immediately.
 
 ---
 
@@ -101,7 +111,7 @@ Works on any fresh Windows 10/11 PC or Windows Sandbox (even with **no Git** and
 If you prefer not using commands at all:
 
 1. Click the green **`<> Code`** button at the top of this GitHub page and select **`Download ZIP`**.
-2. Right-click the downloaded `Mochi-Ultra-main.zip` $\rightarrow$ click **Extract All…** $\rightarrow$ Extract.
+2. Right-click the downloaded `BEMAX-main.zip` (or `Mochi-Ultra-main.zip`) $\rightarrow$ click **Extract All…** $\rightarrow$ Extract.
 3. Open the extracted folder and double-click **`setup.bat`**.
 4. The batch installer will auto-configure everything and create a desktop shortcut for you!
 
@@ -111,8 +121,8 @@ If you prefer not using commands at all:
 If you already have Git, Node.js LTS, and Python installed:
 
 ```bash
-git clone https://github.com/takayduo/Mochi-Ultra.git
-cd Mochi-Ultra
+git clone https://github.com/takayduo/BEMAX.git
+cd BEMAX
 npm install
 pip install -r engine/requirements.txt
 npm run build
@@ -122,29 +132,29 @@ npm start
 ---
 
 ## 🖥️ How to Run After Installation
-Once installed, you can launch Mochi Ultra anytime:
-- **Desktop Shortcut**: Double-click the **Mochi Ultra** icon on your Desktop.
-- **Direct Launcher**: Double-click **`Launch Mochi.bat`** (instantly starts Mochi Ultra in background and closes the prompt).
+Once installed, you can launch Baymax anytime:
+- **Desktop Shortcut**: Double-click the **Baymax** icon on your Desktop.
+- **Direct Launcher**: Double-click **`Launch Baymax.bat`** (instantly starts Baymax in background and closes the prompt).
 - **Terminal Launch**: Run `npm start` or `npm run app`.
 
 ---
 
 ## 🗑️ How to Uninstall
 
-If you ever want to completely remove Mochi Ultra from your PC:
+If you ever want to completely remove Baymax from your PC:
 
 ### 🌟 Option 1: 1-Line Automatic Uninstaller (Fastest)
 Open **PowerShell** and paste:
 ```powershell
-irm https://raw.githubusercontent.com/takayduo/Mochi-Ultra/main/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/takayduo/BEMAX/main/uninstall.ps1 | iex
 ```
-This stops any running Mochi Ultra processes, removes the app folder, deletes the Desktop & Startup shortcuts, and cleans the cache automatically.
+This stops any running Baymax processes, removes the app folder, deletes the Desktop & Startup shortcuts, and cleans the cache automatically.
 
 ### ✋ Option 2: Manual Uninstallation (Simple 3 Steps)
-1. **Quit Mochi**: Right-click the Mochi icon in your Windows System Tray (near the clock) $\rightarrow$ click **Quit** (or end process in Task Manager).
-2. **Delete the App Folder**: Open File Explorer, go to your User folder (`C:\Users\YourUsername`), and delete the **`Mochi-Ultra`** folder.
-3. **Delete the Desktop Shortcut**: Delete **`Mochi Ultra`** from your Desktop.
-*(Optional: If you enabled "Run on PC Startup", press <kbd>Win</kbd> + <kbd>R</kbd>, type `shell:startup`, and delete `Mochi Ultra.lnk`).*
+1. **Quit Baymax**: Right-click the Baymax icon in your Windows System Tray (near the clock) $\rightarrow$ click **Quit** (or end process in Task Manager).
+2. **Delete the App Folder**: Open File Explorer, go to your User folder (`C:\Users\YourUsername`), and delete the **`Baymax`** (or `Mochi-Ultra`) folder.
+3. **Delete the Desktop Shortcut**: Delete **`Baymax`** from your Desktop.
+*(Optional: If you enabled "Run on PC Startup", press <kbd>Win</kbd> + <kbd>R</kbd>, type `shell:startup`, and delete `Baymax.lnk`).*
 
 ---
 

@@ -3,7 +3,8 @@ node_modules/
 package-lock.json
 
 # Production build output
-dist/
+/dist/
+!productivity/dist/**
 
 # Local reference upstream repository
 coucou_ref/

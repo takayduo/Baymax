@@ -1,0 +1,14 @@
+node_modules/
+build/*
+# dist/
+!dist/
+!dist/**
+.DS_Store
+*.log
+.env*
+!.env.example
+release/
+client_secret_*.json
+*.exe
+scratch/
+

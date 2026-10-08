@@ -102,23 +102,24 @@ if exist "engine\requirements.txt" (
     echo.
 )
 
-:: 4. Build Mochi Ultra
-echo [*] Building Mochi Ultra...
+:: 4. Build Baymax
+echo [*] Building Baymax...
 call npm run build
 
-:: 5. Create Desktop Shortcut pointing directly to electron.exe (no .vbs!)
-powershell -NoProfile -Command "$wsh = New-Object -ComObject WScript.Shell; $s = $wsh.CreateShortcut([System.IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'Mochi Ultra.lnk')); $electron = [System.IO.Path]::Combine('%~dp0', 'node_modules\electron\dist\electron.exe'); if (Test-Path $electron) { $s.TargetPath = $electron; $s.Arguments = '.' } else { $s.TargetPath = 'cmd.exe'; $s.Arguments = '/c \"\"%~dp0Launch Mochi.bat\"\"' }; $s.WorkingDirectory = '%~dp0'; if (Test-Path '%~dp0public\icons\icon.ico') { $s.IconLocation = '%~dp0public\icons\icon.ico,0' }; $s.Description = 'Mochi Ultra — AI Desktop Companion'; $s.Save()" >nul 2>nul
+:: 5. Create Desktop Shortcut pointing directly to electron.exe
+powershell -NoProfile -Command "$wsh = New-Object -ComObject WScript.Shell; $s = $wsh.CreateShortcut([System.IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'Baymax.lnk')); $electron = [System.IO.Path]::Combine('%~dp0', 'node_modules\electron\dist\electron.exe'); if (Test-Path $electron) { $s.TargetPath = $electron; $s.Arguments = '.' } else { $s.TargetPath = 'cmd.exe'; $s.Arguments = '/c \"\"%~dp0Launch Baymax.bat\"\"' }; $s.WorkingDirectory = '%~dp0'; if (Test-Path '%~dp0public\icons\icon.ico') { $s.IconLocation = '%~dp0public\icons\icon.ico,0' }; $s.Description = 'Baymax — Autonomous AI Desktop Companion & Productivity Engine'; $s.Save()" >nul 2>nul
+powershell -NoProfile -Command "$wsh = New-Object -ComObject WScript.Shell; $s = $wsh.CreateShortcut([System.IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'Mochi Ultra.lnk')); $electron = [System.IO.Path]::Combine('%~dp0', 'node_modules\electron\dist\electron.exe'); if (Test-Path $electron) { $s.TargetPath = $electron; $s.Arguments = '.' } else { $s.TargetPath = 'cmd.exe'; $s.Arguments = '/c \"\"%~dp0Launch Baymax.bat\"\"' }; $s.WorkingDirectory = '%~dp0'; if (Test-Path '%~dp0public\icons\icon.ico') { $s.IconLocation = '%~dp0public\icons\icon.ico,0' }; $s.Description = 'Baymax — Autonomous AI Desktop Companion'; $s.Save()" >nul 2>nul
 
 echo.
 echo ===================================================
-echo   [SUCCESS] Mochi Ultra is installed and ready!
-echo   A desktop shortcut 'Mochi Ultra' has been created.
+echo   [SUCCESS] Baymax is installed and ready!
+echo   A desktop shortcut 'Baymax' has been created.
 echo ===================================================
 echo.
-echo Starting Mochi Ultra now...
+echo Starting Baymax now...
 if exist "%~dp0node_modules\electron\dist\electron.exe" (
     start "" "%~dp0node_modules\electron\dist\electron.exe" "%~dp0."
 ) else (
-    start "" "%~dp0Launch Mochi.bat"
+    start "" "%~dp0Launch Baymax.bat"
 )
 exit

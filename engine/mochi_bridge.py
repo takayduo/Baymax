@@ -235,14 +235,20 @@ def main():
             k = sys.argv[3] if len(sys.argv) > 3 else ""
             print(json.dumps(cmd_delete_memory(cat, k)))
             return
-        elif first == "execute":
+        elif first in ("execute", "execute-action"):
             # mochi_bridge.py execute <name> '<json_params>'
             name = sys.argv[2] if len(sys.argv) > 2 else ""
             params_raw = sys.argv[3] if len(sys.argv) > 3 else "{}"
             try:
                 params = json.loads(params_raw)
             except Exception:
-                params = {}
+                try:
+                    import re
+                    fixed = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', params_raw)
+                    fixed = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*([,}])', r': "\1"\2', fixed)
+                    params = json.loads(fixed)
+                except Exception:
+                    params = {}
             print(json.dumps(cmd_execute_action(name, params)))
             return
         elif first == "sync-config":

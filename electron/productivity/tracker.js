@@ -1,0 +1,442 @@
+const { execFile, spawn } = require('node:child_process');
+const path = require('node:path');
+const { app } = require('electron');
+
+function getLocalDateKey(d = new Date()) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+const SYSTEM_IGNORED_PROCS = [
+  'electron', 'distrack', 'baymax', 'mochi', 'systemsettings', 'textinputhost', 'applicationframehost',
+  'shellexperiencehost', 'awcc', 'explorer', 'searchapp', 'startmenuexperiencehost',
+  'widgets', 'ctfmon', 'searchhost', 'taskmgr', 'dwm', 'svchost', 'lockapp',
+  'runtimebroker', 'nvidia share', 'nvspcaps64', 'nvcontainer', 'nvspcaps',
+  'nvidia web helper', 'powertoys.quickaccess', 'powertoys', 'powertoys.awake',
+  'powertoys.fancyzones', 'antigravity', 'conhost', 'wslhost', 'wsl', 'cmd',
+  'powershell', 'pwsh'
+];
+
+/** Default app category guesses based on common process names */
+const DEFAULT_CATEGORIES = {
+  code: 'productive', devenv: 'productive', idea64: 'productive', webstorm64: 'productive',
+  pycharm64: 'productive', figma: 'productive', slack: 'productive', teams: 'productive',
+  outlook: 'productive', winword: 'productive', excel: 'productive', powerpnt: 'productive',
+  onenote: 'productive', notion: 'productive', obsidian: 'productive', terminal: 'productive',
+  windowsterminal: 'productive', powershell: 'productive', cmd: 'productive',
+  postman: 'productive', gitkraken: 'productive', sourcetree: 'productive',
+  androidstudio64: 'productive', sublime_text: 'productive', atom: 'productive',
+  premiere: 'productive', afterfx: 'productive', photoshop: 'productive', blender: 'productive',
+
+  chrome: 'neutral', firefox: 'neutral', msedge: 'neutral', brave: 'neutral',
+  opera: 'neutral', explorer: 'neutral', spotify: 'neutral', vlc: 'neutral',
+  notepad: 'neutral', 'notepad++': 'neutral', calc: 'neutral',
+  mspaint: 'neutral', photos: 'neutral', snippingtool: 'neutral',
+
+  discord: 'wasteful', telegram: 'wasteful', whatsapp: 'wasteful',
+  instagram: 'wasteful', twitter: 'wasteful', steam: 'wasteful',
+  epicgameslauncher: 'wasteful', riotclientservices: 'wasteful',
+  valorant: 'wasteful', leagueclient: 'wasteful', robloxplayerbeta: 'wasteful',
+  tiktok: 'wasteful', netflix: 'wasteful', youtube: 'wasteful',
+};
+
+const ICON_MAP = {
+  code: 'code', devenv: 'code', idea64: 'code', webstorm64: 'code', pycharm64: 'code',
+  chrome: 'public', firefox: 'public', msedge: 'public', brave: 'public', opera: 'public',
+  discord: 'chat', telegram: 'chat', whatsapp: 'chat', slack: 'forum', teams: 'group',
+  spotify: 'music_note', vlc: 'play_circle', figma: 'draw', explorer: 'folder',
+  outlook: 'mail', winword: 'description', excel: 'table', powerpnt: 'slideshow',
+  notion: 'edit_note', obsidian: 'edit_note', notepad: 'edit_note',
+  terminal: 'terminal', windowsterminal: 'terminal', powershell: 'terminal', cmd: 'terminal',
+};
+
+// PowerShell script to enumerate interactive desktop windows reliably
+const WINDOW_SCANNER_SCRIPT = `
+Add-Type @'
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+
+public class WindowInfo {
+    public int Id { get; set; }
+    public string ProcessName { get; set; }
+    public string MainWindowTitle { get; set; }
+    public string Path { get; set; }
+}
+
+public class WindowScanner {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumDesktopWindows(IntPtr hDesktop, EnumWindowsProc lpfn, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool CloseDesktop(IntPtr hDesktop);
+
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    public static List<WindowInfo> GetActiveWindows() {
+        var list = new List<WindowInfo>();
+        var seenPids = new HashSet<int>();
+
+        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
+        if (hDesk == IntPtr.Zero) return list;
+
+        EnumDesktopWindows(hDesk, (hWnd, lParam) => {
+            if (IsWindowVisible(hWnd)) {
+                StringBuilder sb = new StringBuilder(512);
+                int len = GetWindowText(hWnd, sb, sb.Capacity);
+                if (len > 0) {
+                    uint pid = 0;
+                    GetWindowThreadProcessId(hWnd, out pid);
+                    int pInt = (int)pid;
+                    if (pInt > 0 && !seenPids.Contains(pInt)) {
+                        try {
+                            var proc = Process.GetProcessById(pInt);
+                            string path = "";
+                            try { path = proc.MainModule.FileName; } catch {}
+                            list.Add(new WindowInfo {
+                                Id = pInt,
+                                ProcessName = proc.ProcessName,
+                                MainWindowTitle = sb.ToString(),
+                                Path = path
+                            });
+                            seenPids.Add(pInt);
+                        } catch {}
+                    }
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+
+        CloseDesktop(hDesk);
+        return list;
+    }
+}
+'@
+
+$windows = [WindowScanner]::GetActiveWindows()
+$windows | ConvertTo-Json -Compress
+`;
+
+// PowerShell script to monitor foreground window in real-time
+const PS_SCRIPT = `
+Add-Type -MemberDefinition '
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+' -Name 'U' -Namespace 'W' -ErrorAction SilentlyContinue
+
+while($true) {
+  $h=[W.U]::GetForegroundWindow()
+  if ($h -ne [IntPtr]::Zero) {
+    $p=[uint32]0
+    [W.U]::GetWindowThreadProcessId($h,[ref]$p)|Out-Null
+    if ($p -gt 0) {
+      $pr=Get-Process -Id $p -ErrorAction SilentlyContinue
+      if ($pr) {
+        $sb=New-Object System.Text.StringBuilder 512
+        [W.U]::GetWindowText($h, $sb, $sb.Capacity)|Out-Null
+        $t=$sb.ToString()
+        $path=""
+        try { $path=$pr.Path } catch {}
+        @{n=$pr.ProcessName;t=$t;p=[int]$p;path=$path}|ConvertTo-Json -Compress
+      }
+    }
+  }
+  Start-Sleep -Seconds 2
+}
+`;
+
+class AppTracker {
+  /**
+   * @param {any} store
+   * @param {(channel: string, ...args: any[]) => void} broadcaster
+   * @param {() => boolean} [isFocusActiveFn]
+   * @param {(appKey: string) => void} [onFocusDistractionFn]
+   */
+  constructor(store, broadcaster, isFocusActiveFn, onFocusDistractionFn) {
+    this.store = store;
+    this.broadcaster = broadcaster || (() => {});
+    this.isFocusActiveFn = isFocusActiveFn || (() => false);
+    this.onFocusDistractionFn = onFocusDistractionFn || (() => {});
+    this.psProcess = null;
+    this.lastPollTime = null;
+    this.isTracking = false;
+    this.hasInitialScan = false;
+    this.currentForeground = null;
+    this.lastDistractionWarnTime = 0;
+  }
+
+  start() {
+    if (this.isTracking) return;
+    this.isTracking = true;
+    this.lastPollTime = Date.now();
+    console.log('[Tracker] Started');
+
+    this.initialScan();
+
+    this.psProcess = spawn('powershell.exe', [
+      '-NoProfile', '-NoLogo', '-NonInteractive', '-Command', PS_SCRIPT
+    ], { windowsHide: true });
+
+    this.psProcess.stdout.on('data', (data) => {
+      const output = data.toString().trim();
+      const lines = output.split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const info = JSON.parse(line.trim());
+          if (info && info.n) {
+            this.recordActivity(info.n, info.t, info.path);
+          }
+        } catch (e) {}
+      }
+    });
+
+    this.psProcess.on('error', (err) => {
+      console.warn('[Tracker] PowerShell process error:', err.message);
+    });
+  }
+
+  initialScan() {
+    const dateKey = getLocalDateKey();
+    const usageData = this.store.get(`usageData.${dateKey}`, {});
+
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NoLogo', '-NonInteractive', '-Command', WINDOW_SCANNER_SCRIPT],
+      { windowsHide: true, timeout: 10000 },
+      async (err, stdout) => {
+        if (err || !stdout || !stdout.trim()) {
+          this.hasInitialScan = true;
+          return;
+        }
+        try {
+          let data = JSON.parse(stdout.trim());
+          if (!Array.isArray(data)) data = [data];
+
+          const now = Date.now();
+          let changed = false;
+
+          const promises = data.map(async (proc) => {
+            if (!proc || !proc.ProcessName) return;
+            const appKey = proc.ProcessName.toLowerCase();
+
+            if (SYSTEM_IGNORED_PROCS.includes(appKey)) return;
+
+            if (!usageData[appKey] || !usageData[appKey].icon || !usageData[appKey].icon.startsWith('data:')) {
+              let iconDataUrl = null;
+              if (proc.Path) {
+                try {
+                  const img = await app.getFileIcon(proc.Path, { size: 'normal' });
+                  iconDataUrl = img.toDataURL();
+                } catch (e) {}
+              }
+              if (!usageData[appKey]) {
+                usageData[appKey] = {
+                  processName: proc.ProcessName,
+                  windowTitle: proc.MainWindowTitle || proc.ProcessName,
+                  totalSeconds: 1,
+                  category: this.getCategory(appKey),
+                  lastActive: now,
+                  icon: iconDataUrl,
+                };
+                changed = true;
+              } else if (iconDataUrl) {
+                usageData[appKey].icon = iconDataUrl;
+                changed = true;
+              }
+            }
+          });
+
+          await Promise.all(promises);
+
+          if (changed) {
+            this.store.set(`usageData.${dateKey}`, usageData);
+          }
+          this.hasInitialScan = true;
+
+          try {
+            this.broadcaster('tracking-update', {
+              dateKey,
+              apps: this.formatApps(usageData),
+            });
+          } catch (e) {}
+
+          console.log(`[Tracker] Initial scan: found ${Object.keys(usageData).length} apps`);
+        } catch (e) {
+          console.error('[Tracker] Initial scan parse error:', e.message);
+          this.hasInitialScan = true;
+        }
+      }
+    );
+  }
+
+  async recordActivity(processName, windowTitle, exePath) {
+    const now = Date.now();
+    const elapsed = this.lastPollTime ? Math.round((now - this.lastPollTime) / 1000) : 2;
+    this.lastPollTime = now;
+
+    const seconds = Math.min(elapsed, 30);
+    const dateKey = getLocalDateKey();
+    const appKey = processName.toLowerCase();
+
+    if (SYSTEM_IGNORED_PROCS.includes(appKey)) return;
+
+    const cat = this.getCategory(appKey);
+    this.currentForeground = {
+      processName,
+      windowTitle: windowTitle || processName,
+      exePath: exePath || '',
+      category: cat,
+      lastSeen: now,
+    };
+
+    if (this.isFocusActiveFn()) {
+      const blocklist = this.store.get('blocklist', []);
+      const isBlocked = cat === 'wasteful' || blocklist.includes(appKey);
+      if (isBlocked) {
+        if (now - this.lastDistractionWarnTime > 25000) {
+          this.lastDistractionWarnTime = now;
+          this.onFocusDistractionFn(processName);
+        }
+      }
+    }
+
+    const usageData = this.store.get(`usageData.${dateKey}`, {});
+
+    if (!usageData[appKey]) {
+      let iconDataUrl = null;
+      if (exePath) {
+        try {
+          const img = await app.getFileIcon(exePath, { size: 'normal' });
+          iconDataUrl = img.toDataURL();
+        } catch (e) {}
+      }
+      usageData[appKey] = {
+        processName,
+        windowTitle: windowTitle || processName,
+        totalSeconds: 0,
+        category: cat,
+        lastActive: now,
+        icon: iconDataUrl,
+      };
+    }
+
+    usageData[appKey].totalSeconds += seconds;
+    if (windowTitle && windowTitle.trim()) {
+      usageData[appKey].windowTitle = windowTitle.trim();
+    }
+    usageData[appKey].lastActive = now;
+
+    this.store.set(`usageData.${dateKey}`, usageData);
+
+    try {
+      this.broadcaster('tracking-update', {
+        dateKey,
+        apps: this.formatApps(usageData),
+      });
+    } catch (e) {}
+  }
+
+  getCategory(appKey) {
+    const userCats = this.store.get('appCategories', {});
+    if (userCats[appKey]) return userCats[appKey];
+    return DEFAULT_CATEGORIES[appKey] || 'neutral';
+  }
+
+  formatApps(usageData) {
+    return Object.entries(usageData)
+      .map(([key, d]) => ({
+        id: key,
+        name: d.processName,
+        windowTitle: d.windowTitle,
+        timeSpentMinutes: Math.ceil(d.totalSeconds / 60),
+        category: this.getCategory(key),
+        type: 'application',
+        icon: d.icon || ICON_MAP[key] || 'apps',
+      }))
+      .filter(a => a.timeSpentMinutes > 0)
+      .sort((a, b) => b.timeSpentMinutes - a.timeSpentMinutes);
+  }
+
+  getTodayApps() {
+    const dateKey = getLocalDateKey();
+    return this.formatApps(this.store.get(`usageData.${dateKey}`, {}));
+  }
+
+  getWeekApps() {
+    const merged = {};
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dayData = this.store.get(`usageData.${getLocalDateKey(d)}`, {});
+      for (const [key, data] of Object.entries(dayData)) {
+        if (!merged[key]) merged[key] = { ...data, totalSeconds: 0 };
+        merged[key].totalSeconds += data.totalSeconds;
+      }
+    }
+    return this.formatApps(merged);
+  }
+
+  getDailyTotals() {
+    const today = new Date();
+    const day = today.getDay();
+    const monday = new Date(today);
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    monday.setDate(diff);
+
+    const days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    const totals = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      const dateKey = getLocalDateKey(d);
+      const dayData = this.store.get(`usageData.${dateKey}`, {});
+      const totalHours = Object.values(dayData).reduce((s, a) => s + (a.totalSeconds || 0), 0) / 3600;
+      totals.push({
+        day: days[i],
+        label: days[i],
+        value: Math.round(totalHours * 10) / 10,
+        date: dateKey
+      });
+    }
+    return totals;
+  }
+
+  getCurrentForeground() {
+    return this.currentForeground;
+  }
+
+  stop() {
+    this.isTracking = false;
+    if (this.psProcess) {
+      this.psProcess.kill();
+      this.psProcess = null;
+    }
+    console.log('[Tracker] Stopped');
+  }
+}
+
+module.exports = {
+  AppTracker,
+  getLocalDateKey,
+  SYSTEM_IGNORED_PROCS,
+  DEFAULT_CATEGORIES,
+  ICON_MAP,
+  WINDOW_SCANNER_SCRIPT,
+};
