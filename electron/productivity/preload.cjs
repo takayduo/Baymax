@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startFocusSession: (config) => ipcRenderer.invoke('start-focus-session', config),
   stopFocusSession: () => ipcRenderer.invoke('stop-focus-session'),
   getFocusActive: () => ipcRenderer.invoke('get-focus-active'),
+  onFocusStateChanged: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('focus-state-changed', handler);
+    return () => ipcRenderer.removeListener('focus-state-changed', handler);
+  },
   onAppBlocked: (callback) => {
     const handler = (_event, name) => callback(name);
     ipcRenderer.on('app-blocked', handler);

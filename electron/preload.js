@@ -98,7 +98,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getTrackedApps: (timeframe) => ipcRenderer.invoke("get-tracked-apps", timeframe),
   getDailyTotals: () => ipcRenderer.invoke("get-daily-totals"),
   getAppCategories: () => ipcRenderer.invoke("get-app-categories"),
-  updateAppCategory: (data) => ipcRenderer.invoke("update-app-category", data),
+  updateAppCategory: (processName, category) => ipcRenderer.invoke("update-app-category", processName, category),
   scanRunningApps: () => ipcRenderer.invoke("scan-running-apps"),
   getFocusSessions: () => ipcRenderer.invoke("get-focus-sessions"),
   addFocusSession: (session) => ipcRenderer.invoke("add-focus-session", session),
@@ -106,6 +106,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   startFocusSession: (config) => ipcRenderer.invoke("start-focus-session", config),
   stopFocusSession: () => ipcRenderer.invoke("stop-focus-session"),
   getFocusActive: () => ipcRenderer.invoke("get-focus-active"),
+  onFocusStateChanged: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("focus-state-changed", handler);
+    return () => ipcRenderer.removeListener("focus-state-changed", handler);
+  },
   getBlocklist: () => ipcRenderer.invoke("get-blocklist"),
   toggleBlockApp: (id) => ipcRenderer.invoke("toggle-block-app", id),
   setBlocklist: (list) => ipcRenderer.invoke("set-blocklist", list),

@@ -1,11 +1,14 @@
 const { execFile } = require('node:child_process');
 const { Notification } = require('electron');
+const { DEFAULT_CATEGORIES, getLocalDateKey } = require('./tracker');
 
 const PROTECTED_PROCESSES = [
   'electron', 'distrack', 'baymax', 'mochi', 'explorer', 'taskmgr', 'dwm', 'svchost',
   'powershell', 'pwsh', 'cmd', 'conhost', 'antigravity', 'systemsettings',
   'applicationframehost', 'shellexperiencehost', 'startmenuexperiencehost',
-  'runtimebroker', 'ctfmon', 'searchhost'
+  'runtimebroker', 'ctfmon', 'searchhost', 'system', 'idle', 'smss', 'csrss',
+  'wininit', 'services', 'lsass', 'winlogon', 'spoolsv', 'fontdrvhost', 'sihost',
+  'registry', 'memory compression', 'audiodg', 'wlanext', 'textinputhost'
 ];
 
 class AppBlocker {
@@ -20,21 +23,21 @@ class AppBlocker {
     this.onDistractionAlert = onDistractionAlert || (() => {});
     this.isActive = false;
     this.pollTimer = null;
-    this.mode = 'Deep Silence';
+    this.mode = 'Strict Lock';
     this.recentlyBlocked = new Set();
     this.pendingCloses = new Map();
   }
 
   start(config = {}) {
     this.isActive = true;
-    this.mode = config.mode || 'Deep Silence';
+    this.mode = config.mode || 'Strict Lock';
     this.recentlyBlocked.clear();
     this.pendingCloses.clear();
     console.log(`[Blocker] Started in ${this.mode} mode`);
 
     this.enforce();
     if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = setInterval(() => this.enforce(), 4000);
+    this.pollTimer = setInterval(() => this.enforce(), 1200);
   }
 
   stop() {
@@ -58,39 +61,74 @@ class AppBlocker {
     this.pendingCloses.clear();
   }
 
+  getProcessCategory(procName) {
+    const key = procName.toLowerCase();
+    const userCats = this.store.get('appCategories', {});
+    if (userCats[key]) return userCats[key];
+
+    try {
+      const dateKey = getLocalDateKey();
+      const usage = this.store.get(`usageData.${dateKey}`, {});
+      if (usage[key] && usage[key].category) return usage[key].category;
+    } catch (e) {}
+
+    return DEFAULT_CATEGORIES[key] || null;
+  }
+
   getBlockedProcessNames() {
     const categories = this.store.get('appCategories', {});
     const blocklist = this.store.get('blocklist', []);
-    let blocked = [];
+    let usage = {};
+    try {
+      const dateKey = getLocalDateKey();
+      usage = this.store.get(`usageData.${dateKey}`, {});
+    } catch (e) {}
+
+    const allKnown = new Set([
+      ...Object.keys(categories),
+      ...Object.keys(usage),
+      ...Object.keys(DEFAULT_CATEGORIES),
+      ...blocklist.map(b => b.toLowerCase())
+    ]);
+
+    const blocked = new Set();
 
     if (this.mode === 'Strict Lock') {
-      blocked = Object.entries(categories)
-        .filter(([_, cat]) => cat !== 'productive')
-        .map(([name]) => name.toLowerCase());
+      // In Strict Lock mode, any app not categorized as 'productive' is blocked!
+      for (const app of allKnown) {
+        const cat = this.getProcessCategory(app);
+        if (cat !== 'productive') {
+          blocked.add(app);
+        }
+      }
     } else if (this.mode === 'Light Focus') {
-      blocked = Object.entries(categories)
-        .filter(([_, cat]) => cat === 'wasteful')
-        .map(([name]) => name.toLowerCase());
+      // In Light Focus mode, block only wasteful apps
+      for (const app of allKnown) {
+        const cat = this.getProcessCategory(app);
+        if (cat === 'wasteful') {
+          blocked.add(app);
+        }
+      }
     } else {
-      // Deep Silence — custom blocklist + all wasteful apps
-      const wasteful = Object.entries(categories)
-        .filter(([_, cat]) => cat === 'wasteful')
-        .map(([name]) => name.toLowerCase());
-      const customBlocked = blocklist.map(b => b.toLowerCase());
-      blocked = Array.from(new Set([...customBlocked, ...wasteful]));
+      // Deep Silence (default): custom blocklist + all wasteful apps
+      for (const app of blocklist) {
+        blocked.add(app.toLowerCase());
+      }
+      for (const app of allKnown) {
+        const cat = this.getProcessCategory(app);
+        if (cat === 'wasteful') {
+          blocked.add(app);
+        }
+      }
     }
 
-    return blocked.filter(b => !PROTECTED_PROCESSES.includes(b.toLowerCase()));
+    return Array.from(blocked).filter(b => !PROTECTED_PROCESSES.includes(b));
   }
 
   enforce() {
     if (!this.isActive) return;
 
-    const blocked = this.getBlockedProcessNames();
-    if (blocked.length === 0) {
-      this.clearPendingCloses();
-      return;
-    }
+    const blockedList = this.getBlockedProcessNames();
 
     execFile('tasklist.exe', ['/FO', 'CSV', '/NH'], { windowsHide: true }, (err, stdout) => {
       if (err || !stdout) return;
@@ -103,11 +141,24 @@ class AppBlocker {
         if (!match) continue;
         const procName = match[1].replace(/\.exe$/i, '').toLowerCase();
 
-        if (blocked.includes(procName)) {
-          runningBlockedProcs.add(procName);
+        if (PROTECTED_PROCESSES.includes(procName)) continue;
+
+        if (this.mode === 'Strict Lock') {
+          // In Strict Lock, if it's explicitly blocked OR if it's running and not marked productive
+          const cat = this.getProcessCategory(procName);
+          if (cat !== 'productive' && (blockedList.includes(procName) || DEFAULT_CATEGORIES[procName] || cat !== null)) {
+            runningBlockedProcs.add(procName);
+          } else if (blockedList.includes(procName)) {
+            runningBlockedProcs.add(procName);
+          }
+        } else {
+          if (blockedList.includes(procName)) {
+            runningBlockedProcs.add(procName);
+          }
         }
       }
 
+      // Check if previously warned apps have been closed
       for (const procName of this.pendingCloses.keys()) {
         if (!runningBlockedProcs.has(procName)) {
           const entry = this.pendingCloses.get(procName);
@@ -120,6 +171,7 @@ class AppBlocker {
         }
       }
 
+      // Handle running blocked processes
       for (const procName of runningBlockedProcs) {
         this.handleBlockedProcess(procName);
       }
@@ -132,7 +184,7 @@ class AppBlocker {
       return;
     }
 
-    console.log(`[Blocker] Detected distraction app during focus session: ${procName}. Warning user.`);
+    console.log(`[Blocker] Detected distraction app during focus session (${this.mode}): ${procName}`);
 
     try {
       this.onDistractionAlert(procName);
@@ -140,6 +192,13 @@ class AppBlocker {
       console.warn('[Blocker] Distraction alert handler error:', alertErr);
     }
 
+    // In Strict Lock mode: terminate immediately with /F!
+    if (this.mode === 'Strict Lock') {
+      this.forceKillProcess(procName);
+      return;
+    }
+
+    // Deep Silence / Light Focus: 4-second warning before force kill
     execFile('taskkill.exe', ['/IM', `${procName}.exe`], { windowsHide: true }, () => {
       const settings = this.store.get('settings', { notifications: true });
 
@@ -147,7 +206,7 @@ class AppBlocker {
         try {
           new Notification({
             title: 'Baymax — Focus Session Active',
-            body: `"${procName}" will be closed in 10 seconds. Focus on your work!`,
+            body: `"${procName}" will be closed in 4 seconds. Focus on your work!`,
           }).show();
         } catch (e) {}
       }
@@ -159,7 +218,7 @@ class AppBlocker {
 
     const timer = setTimeout(() => {
       this.forceKillProcess(procName);
-    }, 10000);
+    }, 4000);
 
     this.pendingCloses.set(procName, { warnedAt: Date.now(), timer });
   }
@@ -167,7 +226,7 @@ class AppBlocker {
   forceKillProcess(procName) {
     if (!this.isActive || PROTECTED_PROCESSES.includes(procName.toLowerCase())) return;
 
-    console.log(`[Blocker] Timer expired. Force closing: ${procName}`);
+    console.log(`[Blocker] Force killing: ${procName}`);
 
     execFile('taskkill.exe', ['/IM', `${procName}.exe`, '/F'], { windowsHide: true }, (err, stdout, stderr) => {
       this.pendingCloses.delete(procName);
@@ -182,7 +241,7 @@ class AppBlocker {
             try {
               new Notification({
                 title: 'Baymax — Permission Required',
-                body: `Baymax requires Administrator privileges to block "${procName}".`,
+                body: `Baymax requires Administrator privileges to close "${procName}".`,
               }).show();
             } catch (e) {}
           }
@@ -196,7 +255,7 @@ class AppBlocker {
 
       if (this.recentlyBlocked.has(procName)) return;
       this.recentlyBlocked.add(procName);
-      setTimeout(() => this.recentlyBlocked.delete(procName), 30000);
+      setTimeout(() => this.recentlyBlocked.delete(procName), 15000);
 
       console.log(`[Blocker] Force killed: ${procName}`);
 

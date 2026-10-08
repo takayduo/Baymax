@@ -2,9 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { AppUsage, AppCategory, initialApps } from '../data/mockData';
 import { calculateFocusScore } from '../utils/logic';
 import type { FocusSession, AppSettings, DailyTotal } from '../types/electron';
-import { auth, db, isFirebaseConfigured } from '../utils/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+// Local-first architecture: Electron IPC + local storage (No cloud dependencies)
 
 const isElectron = !!window.electronAPI;
 
@@ -21,7 +19,20 @@ interface AppContextType {
   focusScore: number;
   updateAppCategory: (id: string, newCategory: AppCategory) => void;
   isFocusModeActive: boolean;
-  startFocusSession: (config: { mode: string }, bypassBackend?: boolean) => void;
+  focusDuration: number;
+  focusBreakDuration: number;
+  focusTimeRemaining: number;
+  focusTimerMode: 'classic' | 'pomodoro';
+  pomodoroState: 'work' | 'break';
+  focusSelectedMode: string;
+  setFocusDuration: (secs: number) => void;
+  setFocusBreakDuration: (secs: number) => void;
+  setFocusTimerMode: (m: 'classic' | 'pomodoro') => void;
+  setPomodoroState: (s: 'work' | 'break') => void;
+  setFocusSelectedMode: (m: string) => void;
+  adjustFocusDuration: (deltaMins: number) => void;
+  resetFocusTimer: () => void;
+  startFocusSession: (config?: { mode?: string; durationMinutes?: number }, bypassBackend?: boolean) => void;
   stopFocusSession: (bypassBackend?: boolean) => void;
   blocklist: string[];
   toggleBlockApp: (id: string) => void;
@@ -57,6 +68,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isOnboarded, setIsOnboardedState] = useState(true);
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly'>('daily');
   const timeframeRef = useRef(timeframe);
+
+  // Focus timer persistent state (survives tab switching and navigation)
+  const [focusDuration, setFocusDurationState] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('baymax_focus_duration');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+      }
+    } catch {}
+    return 25 * 60;
+  });
+  const [focusBreakDuration, setFocusBreakDuration] = useState<number>(5 * 60);
+  const [focusTimerMode, setFocusTimerMode] = useState<'classic' | 'pomodoro'>('classic');
+  const [pomodoroState, setPomodoroState] = useState<'work' | 'break'>('work');
+  const [focusSelectedMode, setFocusSelectedModeState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('baymax_focus_mode') || 'Strict Lock';
+    } catch {
+      return 'Strict Lock';
+    }
+  });
+  const [focusTimeRemaining, setFocusTimeRemaining] = useState<number>(() => focusDuration);
+  const focusEndTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     timeframeRef.current = timeframe;
@@ -112,137 +147,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return `${year}-${month}-${day}`;
   };
 
-  // Safe helper to sync to cloud without disrupting local functionality if Firestore is disabled
-  const safeSyncToCloud = useCallback((data: any) => {
-    if (!isFirebaseConfigured || !auth.currentUser) return;
-    try {
-      setDoc(doc(db, 'users', auth.currentUser.uid), data, { merge: true }).catch((err) => {
-        console.warn('[Firebase] Cloud backup deferred (local-first mode active):', err.code || err.message);
-      });
-    } catch (e) {
-      // ignore synchronous errors
-    }
-  }, []);
-
-  // ── Firebase Synchronization ──
-  useEffect(() => {
-    if (!isFirebaseConfigured) return;
-
-    let unsubDoc: (() => void) | null = null;
-
-    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      if (unsubDoc) {
-        unsubDoc();
-        unsubDoc = null;
-      }
-
-      if (firebaseUser) {
-        // Read local storage to see if we already verified this user
-        let isLocallyVerified = false;
-        try {
-          const saved = localStorage.getItem('distrack_user');
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (parsed.email === firebaseUser.email && parsed.emailVerified === true) {
-              isLocallyVerified = true;
-            }
-          }
-        } catch {}
-
-        const profile = {
-          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Google User',
-          email: firebaseUser.email || '',
-          picture: firebaseUser.photoURL || '',
-          emailVerified: isLocallyVerified || firebaseUser.emailVerified,
-        };
-        setUserProfileState(profile);
-        localStorage.setItem('distrack_user', JSON.stringify(profile));
-        if (isElectron) {
-          window.electronAPI!.setUserProfile(profile);
-        }
-
-        // If the user is not verified yet, check if their status has changed on the server
-        if (!profile.emailVerified) {
-          firebaseUser.reload().then(() => {
-            if (auth.currentUser?.emailVerified) {
-              const updatedProfile = {
-                ...profile,
-                emailVerified: true
-              };
-              setUserProfileState(updatedProfile);
-              localStorage.setItem('distrack_user', JSON.stringify(updatedProfile));
-              if (isElectron) {
-                window.electronAPI!.setUserProfile(updatedProfile);
-              }
-            }
-          }).catch(console.error);
-        }
-
-        // Subscribe to Firestore document updates with graceful error handling
-        try {
-          const docRef = doc(db, 'users', firebaseUser.uid);
-          unsubDoc = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-
-              // Sync settings
-              if (data.settings && JSON.stringify(data.settings) !== JSON.stringify(settingsRef.current)) {
-                setSettings(data.settings);
-                if (isElectron) window.electronAPI!.updateSettings(data.settings);
-              }
-
-              // Sync blocklist
-              if (data.blocklist && JSON.stringify(data.blocklist) !== JSON.stringify(blocklistRef.current)) {
-                setBlocklist(data.blocklist);
-                if (isElectron) window.electronAPI!.setBlocklist(data.blocklist);
-              }
-
-              // Sync focus sessions
-              if (data.focusSessions && JSON.stringify(data.focusSessions) !== JSON.stringify(focusSessionsRef.current)) {
-                setFocusSessions(data.focusSessions);
-                if (isElectron) window.electronAPI!.setFocusSessions(data.focusSessions);
-              }
-
-              // Sync app categories
-              if (data.appCategories && isElectron) {
-                window.electronAPI!.getAppCategories().then(currentCats => {
-                  if (JSON.stringify(data.appCategories) !== JSON.stringify(currentCats)) {
-                    Object.entries(data.appCategories).forEach(([procName, cat]) => {
-                      window.electronAPI!.updateAppCategory(procName, cat as any);
-                    });
-                  }
-                });
-              }
-            } else {
-              console.log('[Firebase] Document not found. Initializing cloud backup...');
-              setDoc(docRef, {
-                settings: settingsRef.current,
-                blocklist: blocklistRef.current,
-                focusSessions: focusSessionsRef.current,
-              }, { merge: true }).catch((err) => {
-                console.warn('[Firebase] Initial cloud backup deferred:', err.code || err.message);
-              });
-            }
-          }, (err) => {
-            console.warn('[Firebase] Cloud sync stream unavailable (operating in local-first mode):', err.message);
-          });
-        } catch (err: any) {
-          console.warn('[Firebase] Firestore subscription error:', err.message);
-        }
-      } else {
-        setUserProfileState({ name: '', email: '', picture: '' });
-        localStorage.removeItem('distrack_user');
-        if (isElectron) {
-          window.electronAPI!.setUserProfile({ name: '', email: '', picture: '' });
-        }
-      }
-    });
-
-    return () => {
-      unsubscribeAuth();
-      if (unsubDoc) unsubDoc();
-    };
-  }, [isElectron]);
+  // Local-first: all state saved via Electron IPC and local persistence
+  const safeSyncToCloud = useCallback((_data: any) => {}, []);
 
   // ── Initial data load ──
   useEffect(() => {
@@ -365,19 +271,72 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [safeSyncToCloud]);
 
-  const startFocusSession = useCallback((config: { mode: string }, bypassBackend?: boolean) => {
-    if (isElectron && !bypassBackend) {
-      window.electronAPI!.startFocusSession(config);
+  const setFocusDuration = useCallback((secs: number) => {
+    const valid = Math.max(60, Math.round(secs));
+    setFocusDurationState(valid);
+    try { localStorage.setItem('baymax_focus_duration', String(valid)); } catch {}
+    if (!isFocusModeActive) {
+      setFocusTimeRemaining(valid);
     }
-    setIsFocusModeActive(true);
+  }, [isFocusModeActive]);
+
+  const setFocusSelectedMode = useCallback((mode: string) => {
+    setFocusSelectedModeState(mode);
+    try { localStorage.setItem('baymax_focus_mode', mode); } catch {}
   }, []);
 
+  const adjustFocusDuration = useCallback((deltaMinutes: number) => {
+    if (isFocusModeActive) return;
+    setFocusDurationState(prev => {
+      const next = Math.max(60, prev + deltaMinutes * 60);
+      try { localStorage.setItem('baymax_focus_duration', String(next)); } catch {}
+      setFocusTimeRemaining(next);
+      return next;
+    });
+  }, [isFocusModeActive]);
+
   const stopFocusSession = useCallback((bypassBackend?: boolean) => {
-    if (isElectron && !bypassBackend) {
-      window.electronAPI!.stopFocusSession();
-    }
     setIsFocusModeActive(false);
-  }, []);
+    focusEndTimeRef.current = null;
+    setFocusTimeRemaining(focusDuration);
+
+    if (isElectron && !bypassBackend) {
+      window.electronAPI!.stopFocusSession().catch(console.error);
+    }
+  }, [focusDuration, isElectron]);
+
+  const resetFocusTimer = useCallback(() => {
+    if (isFocusModeActive) {
+      stopFocusSession();
+    }
+    setPomodoroState('work');
+    setFocusTimeRemaining(focusDuration);
+    focusEndTimeRef.current = null;
+  }, [isFocusModeActive, focusDuration, stopFocusSession]);
+
+  const startFocusSession = useCallback((config?: { mode?: string; durationMinutes?: number }, bypassBackend?: boolean) => {
+    const sessionMode = config?.mode || focusSelectedMode;
+    let durationSecs = focusDuration;
+    if (config?.durationMinutes && config.durationMinutes > 0) {
+      durationSecs = Math.round(config.durationMinutes * 60);
+      setFocusDurationState(durationSecs);
+      try { localStorage.setItem('baymax_focus_duration', String(durationSecs)); } catch {}
+    }
+
+    if (config?.mode) {
+      setFocusSelectedModeState(config.mode);
+      try { localStorage.setItem('baymax_focus_mode', config.mode); } catch {}
+    }
+
+    const targetSecs = (focusTimerMode === 'pomodoro' && pomodoroState === 'break') ? focusBreakDuration : durationSecs;
+    focusEndTimeRef.current = Date.now() + (targetSecs * 1000);
+    setFocusTimeRemaining(targetSecs);
+    setIsFocusModeActive(true);
+
+    if (isElectron && !bypassBackend) {
+      window.electronAPI!.startFocusSession({ mode: sessionMode }).catch(console.error);
+    }
+  }, [focusSelectedMode, focusDuration, focusTimerMode, pomodoroState, focusBreakDuration, isElectron]);
 
   const toggleBlockApp = useCallback((id: string) => {
     if (isElectron) {
@@ -411,6 +370,81 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
   }, [safeSyncToCloud]);
+
+  // Global focus timer ticking effect — runs regardless of which tab is active!
+  useEffect(() => {
+    let interval: number | undefined;
+
+    if (isFocusModeActive && focusEndTimeRef.current) {
+      interval = window.setInterval(() => {
+        const rem = Math.max(0, Math.ceil((focusEndTimeRef.current! - Date.now()) / 1000));
+        setFocusTimeRemaining(rem);
+
+        if (rem <= 0) {
+          const completedMins = Math.max(1, Math.round(focusDuration / 60));
+          addFocusSession({
+            durationMinutes: completedMins,
+            date: new Date().toISOString(),
+            mode: focusTimerMode === 'pomodoro' ? `Pomodoro (${pomodoroState})` : focusSelectedMode,
+          });
+
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Baymax — Focus Session Completed', {
+              body: focusTimerMode === 'pomodoro' && pomodoroState === 'work'
+                ? 'Great focus! Take a well-deserved break.'
+                : `Completed ${completedMins} minute${completedMins > 1 ? 's' : ''} of deep work.`,
+            });
+          }
+
+          if (focusTimerMode === 'pomodoro') {
+            if (pomodoroState === 'work') {
+              setPomodoroState('break');
+              const breakSecs = focusBreakDuration;
+              focusEndTimeRef.current = Date.now() + breakSecs * 1000;
+              setFocusTimeRemaining(breakSecs);
+              if (isElectron) {
+                window.electronAPI!.stopFocusSession().catch(console.error);
+              }
+            } else {
+              setPomodoroState('work');
+              setIsFocusModeActive(false);
+              focusEndTimeRef.current = null;
+              setFocusTimeRemaining(focusDuration);
+              if (isElectron) {
+                window.electronAPI!.stopFocusSession().catch(console.error);
+              }
+            }
+          } else {
+            setIsFocusModeActive(false);
+            focusEndTimeRef.current = null;
+            setFocusTimeRemaining(focusDuration);
+            if (isElectron) {
+              window.electronAPI!.stopFocusSession().catch(console.error);
+            }
+          }
+        }
+      }, 1000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isFocusModeActive, focusDuration, focusBreakDuration, focusTimerMode, pomodoroState, focusSelectedMode, addFocusSession, isElectron]);
+
+  // Sync with Electron backend when AI or Island toggles focus
+  useEffect(() => {
+    if (!isElectron) return;
+    const cleanup = (window.electronAPI as any)?.onFocusStateChanged?.((data: any) => {
+      if (data?.active) {
+        startFocusSession(data.config, true);
+      } else {
+        stopFocusSession(true);
+      }
+    });
+    return () => {
+      if (typeof cleanup === 'function') cleanup();
+    };
+  }, [startFocusSession, stopFocusSession, isElectron]);
 
   const scanApps = useCallback(async (): Promise<AppUsage[]> => {
     if (isElectron) {
@@ -483,6 +517,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider value={{
       apps, focusScore, updateAppCategory,
       isFocusModeActive, startFocusSession, stopFocusSession,
+      focusDuration, focusBreakDuration, focusTimeRemaining,
+      focusTimerMode, pomodoroState, focusSelectedMode,
+      setFocusDuration, setFocusBreakDuration, setFocusTimerMode,
+      setPomodoroState, setFocusSelectedMode, adjustFocusDuration,
+      resetFocusTimer,
       blocklist, toggleBlockApp,
       focusSessions, addFocusSession,
       scanApps, settings, updateSettings: updateSettingsFn,

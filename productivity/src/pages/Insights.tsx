@@ -1,15 +1,15 @@
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { formatTime } from '../utils/logic';
 
 export default function Insights() {
   const { apps, focusSessions } = useAppContext();
 
   const COLORS = {
-    productive: 'var(--primary)',
-    neutral: '#6b7280',
-    wasteful: '#ff4444',
+    productive: '#10b981',
+    neutral: '#71717a',
+    wasteful: '#f43f5e',
   };
 
   const usageByCategory = apps.reduce((acc, app) => {
@@ -17,6 +17,8 @@ export default function Insights() {
     acc[cat] += (app.timeSpentMinutes || 0);
     return acc;
   }, { productive: 0, neutral: 0, wasteful: 0 });
+
+  const totalMins = usageByCategory.productive + usageByCategory.neutral + usageByCategory.wasteful;
 
   const pieData = [
     { name: 'Productive', value: usageByCategory.productive, color: COLORS.productive },
@@ -35,141 +37,145 @@ export default function Insights() {
     .slice(0, 3);
 
   return (
-    <div className="p-6 lg:p-10 w-full max-w-7xl mx-auto pb-24 lg:pb-10 flex flex-col gap-6 lg:gap-8">
-      <header className="mb-2 flex-shrink-0">
-        <h1 className="text-2xl font-serif tracking-tight text-primary mb-2">Deep Insights</h1>
-        <p className="text-xs font-sans text-on-surface-variant uppercase tracking-wider">Analyze your digital habits</p>
-      </header>
+    <div className="p-4 sm:p-5 w-full h-full flex flex-col justify-between select-none font-sans overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-shrink-0 mb-3">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight text-white">Focus & Activity Insights</h2>
+          <p className="text-[11px] text-zinc-400">Deep behavioral breakdown and focus session records</p>
+        </div>
+        <span className="text-[11px] font-mono text-zinc-400 bg-white/5 border border-white/5 px-2.5 py-1 rounded-lg">
+          Total Recorded: {formatTime(totalMins)}
+        </span>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Left Column: Time Distribution & Session History */}
-        <div className="col-span-1 min-w-0 flex flex-col gap-6 lg:gap-8">
-          <div className="glass-card p-6 flex flex-col min-h-[320px]">
-            <h3 className="font-serif text-xl mb-2">Time Distribution</h3>
+      {/* Main Grid: Pie Chart on Left, Breakdown & Sessions on Right */}
+      <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
+        {/* Left Column: Time Distribution Pie Chart */}
+        <div className="col-span-6 glass-card p-4 rounded-xl border border-white/10 bg-[#121316] flex flex-col items-center justify-between min-h-0">
+          <div className="w-full flex items-center justify-between mb-1 flex-shrink-0">
+            <span className="text-xs font-semibold text-white">Time Distribution</span>
+            <span className="text-[10px] text-zinc-400 font-mono">
+              {totalMins > 0 ? `${Math.round((usageByCategory.productive / totalMins) * 100)}% productive` : '0%'}
+            </span>
+          </div>
+
+          <div className="flex-1 w-full min-h-[160px] flex items-center justify-center">
             {pieData.length > 0 ? (
-              <div className="flex-1 flex flex-col justify-between">
-                <div className="flex-grow flex items-center justify-center min-h-[200px] py-2">
-                  <PieChart width={200} height={200}>
-                    <Pie data={pieData} cx="50%" cy="50%" innerRadius="55%" outerRadius="80%" paddingAngle={2} dataKey="value" stroke="none">
-                      {pieData.map((entry, index) => (
-                         <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value: number) => formatTime(value)}
-                      contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--outline-variant)', borderRadius: '0', color: 'var(--on-surface)' }}
-                      itemStyle={{ color: 'var(--on-surface)', fontFamily: 'monospace', fontSize: '12px' }}
-                    />
-                  </PieChart>
-                </div>
-                <div className="flex justify-center flex-wrap gap-x-6 gap-y-2 mt-2 pb-1 flex-shrink-0 select-none">
-                  {pieData.map((entry, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 flex-shrink-0" style={{ backgroundColor: entry.color }}></div>
-                      <span className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold">
-                        {entry.name}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={160}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="50%"
+                    outerRadius="75%"
+                    paddingAngle={3}
+                    dataKey="value"
+                    stroke="none"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(val: number) => formatTime(val)}
+                    contentStyle={{
+                      backgroundColor: '#18191D',
+                      borderColor: 'rgba(255,255,255,0.1)',
+                      borderRadius: '8px',
+                      color: '#F5F6F8',
+                      fontSize: '11px',
+                      fontFamily: 'monospace'
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
             ) : (
-              <div className="flex-1 flex items-center justify-center opacity-40 py-8">
-                <div className="text-center">
-                  <span className="material-symbols-outlined text-3xl mb-2 block">pie_chart</span>
-                  <p className="text-[10px] uppercase tracking-widest">No data yet</p>
-                </div>
-              </div>
+              <div className="text-xs text-zinc-500">No activity data recorded yet</div>
             )}
           </div>
 
-          <div className="glass-card p-6 flex flex-col min-h-[380px] overflow-hidden">
-            <h3 className="font-serif text-xl mb-4">Focus Session History</h3>
-            {!focusSessions || focusSessions.length === 0 ? (
-              <div className="text-center py-6 opacity-50 flex-1 flex flex-col justify-center">
-                <span className="material-symbols-outlined text-3xl mb-2 block">history</span>
-                <p className="text-[10px] font-sans uppercase tracking-widest">No sessions recorded yet.</p>
+          {/* Legend */}
+          <div className="flex items-center gap-4 flex-shrink-0 mt-2">
+            {pieData.map((entry, idx) => (
+              <div key={idx} className="flex items-center gap-1.5 text-[11px]">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                <span className="text-zinc-400">{entry.name}</span>
+                <span className="font-mono text-white text-[10px]">
+                  ({totalMins > 0 ? Math.round((entry.value / totalMins) * 100) : 0}%)
+                </span>
               </div>
-            ) : (
-              <div className="overflow-x-auto overflow-y-auto flex-1 pr-2 custom-scrollbar">
-                <table className="w-full text-left border-collapse">
-                  <thead className="sticky top-0 bg-surface-dim z-10">
-                    <tr className="border-b border-outline-variant">
-                      <th className="pb-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant font-mono">Date</th>
-                      <th className="pb-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant font-mono text-center">Mode</th>
-                      <th className="pb-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant font-mono text-right">Duration</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-outline-variant">
-                    {focusSessions.map((session) => (
-                      <tr key={session.id} className="hover:bg-surface-bright transition-colors">
-                        <td className="py-3 text-xs font-sans text-primary">
-                          {new Date(session.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                        <td className="py-3 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant text-center">
-                          {session.mode}
-                        </td>
-                        <td className="py-3 text-xs font-sans text-primary font-mono text-right">
-                          {session.durationMinutes} min
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            ))}
           </div>
         </div>
 
-        {/* Right Column: Top Productive Pillars & Major Distractions */}
-        <div className="col-span-1 min-w-0 flex flex-col gap-6 lg:gap-8">
-          <div className="glass-card p-6 flex flex-col min-h-[320px] overflow-hidden">
-            <h3 className="font-serif text-xl mb-4">Top Productive Pillars</h3>
-            <div className="flex flex-col gap-3 lg:gap-4 overflow-y-auto pr-1 flex-1">
-              {productiveApps.length > 0 ? productiveApps.map((app, index) => (
-                <React.Fragment key={app.id}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <span className="font-mono text-xs opacity-40">0{index + 1}</span>
-                      {app.icon && app.icon.startsWith('data:') ? (
-                        <img src={app.icon} className="w-5 h-5 object-contain" alt="" />
-                      ) : (
-                        <span className="material-symbols-outlined text-primary text-lg">{app.icon || 'apps'}</span>
-                      )}
-                      <span className="font-sans text-primary tracking-wide">{app.name}</span>
+        {/* Right Column: Top Productive vs Distracting & Sessions */}
+        <div className="col-span-6 flex flex-col gap-3 min-h-0">
+          {/* Top Apps Highlights */}
+          <div className="glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col flex-1 min-h-0">
+            <span className="text-xs font-semibold text-white mb-2 flex-shrink-0">Key Drivers</span>
+            <div className="grid grid-cols-2 gap-2 flex-1 overflow-y-auto">
+              {/* Productive Highlights */}
+              <div className="p-2 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+                <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider block mb-1">
+                  Productive
+                </span>
+                {productiveApps.length > 0 ? (
+                  productiveApps.map((a) => (
+                    <div key={a.id} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="text-zinc-300 truncate font-medium">{a.name}</span>
+                      <span className="font-mono text-[10px] text-emerald-400">{formatTime(a.timeSpentMinutes)}</span>
                     </div>
-                    <span className="font-mono text-xs">{formatTime(app.timeSpentMinutes)}</span>
-                  </div>
-                  {index < productiveApps.length - 1 && <div className="w-full h-[1px] bg-outline-variant"></div>}
-                </React.Fragment>
-              )) : (
-                 <p className="text-[10px] uppercase tracking-widest text-on-surface-variant">No productive apps recorded yet.</p>
-              )}
+                  ))
+                ) : (
+                  <span className="text-[10px] text-zinc-500">None logged yet</span>
+                )}
+              </div>
+
+              {/* Distraction Highlights */}
+              <div className="p-2 rounded-lg bg-rose-500/5 border border-rose-500/20">
+                <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider block mb-1">
+                  Distractions
+                </span>
+                {distractingApps.length > 0 ? (
+                  distractingApps.map((a) => (
+                    <div key={a.id} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="text-zinc-300 truncate font-medium">{a.name}</span>
+                      <span className="font-mono text-[10px] text-rose-400">{formatTime(a.timeSpentMinutes)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-[10px] text-zinc-500">None logged yet</span>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="glass-card p-6 border-error/50 relative overflow-hidden flex flex-col min-h-[380px]">
-             <div className="absolute top-0 right-0 w-32 h-32 bg-error/5 blur-3xl rounded-full pointer-events-none"></div>
-            <h3 className="font-serif text-xl mb-4 text-error flex-shrink-0">Major Distractions</h3>
-            <div className="flex flex-col gap-3 lg:gap-4 overflow-y-auto pr-1 flex-1 relative z-10">
-              {distractingApps.length > 0 ? distractingApps.map((app, index) => (
-                <React.Fragment key={app.id}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <span className="font-mono text-xs opacity-40 text-error">0{index + 1}</span>
-                      {app.icon && app.icon.startsWith('data:') ? (
-                        <img src={app.icon} className="w-5 h-5 object-contain" alt="" />
-                      ) : (
-                        <span className="material-symbols-outlined text-error text-lg">{app.icon || 'apps'}</span>
-                      )}
-                      <span className="font-sans text-primary tracking-wide">{app.name}</span>
+          {/* Recent Focus Sessions */}
+          <div className="glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col h-36 flex-shrink-0">
+            <div className="flex items-center justify-between mb-1.5 flex-shrink-0">
+              <span className="text-xs font-semibold text-white">Recent Focus Sessions</span>
+              <span className="text-[10px] text-zinc-400 font-mono">{focusSessions.length} total</span>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+              {focusSessions.length > 0 ? (
+                focusSessions.slice(0, 5).map((s) => (
+                  <div key={s.id} className="p-1.5 rounded-lg bg-white/5 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[13px] text-emerald-400">check_circle</span>
+                      <span className="text-white font-medium">{s.mode || 'Focus'}</span>
                     </div>
-                    <span className="font-mono text-xs text-error">{formatTime(app.timeSpentMinutes)}</span>
+                    <div className="flex items-center gap-2 font-mono text-[10px] text-zinc-400">
+                      <span>{s.durationMinutes} mins</span>
+                      <span>{new Date(s.date).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
+                    </div>
                   </div>
-                  {index < distractingApps.length - 1 && <div className="w-full h-[1px] bg-outline-variant"></div>}
-                </React.Fragment>
-              )) : (
-                <p className="text-[10px] uppercase tracking-widest text-on-surface-variant">No distractions recorded. Great job!</p>
+                ))
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs text-zinc-500">
+                  No focus sessions completed yet
+                </div>
               )}
             </div>
           </div>

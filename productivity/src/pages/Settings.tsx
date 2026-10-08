@@ -17,128 +17,104 @@ export default function Settings() {
   }, []);
 
   return (
-    <div className="p-6 lg:p-10 max-w-4xl mx-auto w-full lg:h-full lg:overflow-hidden lg:flex lg:flex-col pb-24 lg:pb-10 space-y-6">
-      <header className="mb-2 flex-shrink-0">
-        <h1 className="text-2xl font-serif tracking-tight text-primary mb-2">Settings</h1>
-        <p className="text-xs font-sans text-on-surface-variant uppercase tracking-wider">Configure your experience</p>
+    <div className="p-4 sm:p-5 max-w-3xl mx-auto w-full h-full flex flex-col justify-start space-y-4 select-none font-sans overflow-hidden">
+      <header className="flex-shrink-0">
+        <h1 className="text-base font-semibold tracking-tight text-white">Settings</h1>
+        <p className="text-[11px] text-zinc-400">Configure your productivity and focus preferences</p>
       </header>
 
-      <div className="space-y-6 overflow-y-auto pr-1 flex-1">
-        {/* General Settings */}
-        <section className="glass-card p-6 sm:p-8">
-          <h2 className="font-serif text-xl mb-6 text-primary">General</h2>
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-sans tracking-wide text-primary">Appearance</p>
-                <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-1">Select your preferred theme</p>
-              </div>
-              <div className="relative inline-block text-left" ref={themeDropdownRef}>
-                <button
-                  onClick={() => setIsThemeDropdownOpen(!isThemeDropdownOpen)}
-                  className="flex items-center justify-between gap-3 bg-surface border border-outline-variant px-4 py-2 text-xs uppercase tracking-widest font-bold text-primary outline-none cursor-pointer min-w-[120px]"
-                >
-                  <span className="capitalize">{settings.theme}</span>
-                  <span className={`material-symbols-outlined text-[14px] transition-transform duration-300 ${isThemeDropdownOpen ? 'rotate-180' : ''}`}>
-                    keyboard_arrow_down
-                  </span>
-                </button>
-
-                {isThemeDropdownOpen && (
-                  <div className="absolute right-0 mt-1 w-full bg-surface border border-outline-variant shadow-xl z-50 py-1 rounded-none animate-fadeIn">
-                    <button
-                      onClick={() => { updateSettings({ theme: 'system' }); setIsThemeDropdownOpen(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors hover:bg-surface-bright ${settings.theme === 'system' ? 'text-primary bg-surface-bright/50' : 'text-primary/60 hover:text-primary'}`}
-                    >
-                      System
-                    </button>
-                    <button
-                      onClick={() => { updateSettings({ theme: 'dark' }); setIsThemeDropdownOpen(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors hover:bg-surface-bright ${settings.theme === 'dark' ? 'text-primary bg-surface-bright/50' : 'text-primary/60 hover:text-primary'}`}
-                    >
-                      Dark
-                    </button>
-                    <button
-                      onClick={() => { updateSettings({ theme: 'light' }); setIsThemeDropdownOpen(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors hover:bg-surface-bright ${settings.theme === 'light' ? 'text-primary bg-surface-bright/50' : 'text-primary/60 hover:text-primary'}`}
-                    >
-                      Light
-                    </button>
-                  </div>
-                )}
-              </div>
+      <div className="space-y-3 flex-1 overflow-y-auto pr-1">
+        {/* Appearance Settings */}
+        <section className="glass-card p-4 rounded-xl border border-white/10 bg-[#121316]">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-3 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[14px] text-zinc-400">palette</span>
+            Appearance
+          </h2>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-white">Theme</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">Select interface color scheme</p>
             </div>
-
-            <div className="w-full h-[1px] bg-outline-variant"></div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-sans tracking-wide text-primary">Launch on Startup</p>
-                <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-1">
-                  {isElectron ? 'Start Distrack automatically when you log in' : 'Start Distrack automatically (requires desktop app)'}
-                </p>
-              </div>
+            <div className="relative inline-block text-left" ref={themeDropdownRef}>
               <button
-                onClick={() => updateSettings({ launchOnStartup: !settings.launchOnStartup })}
-                className={`w-10 h-6 border transition-colors relative ${settings.launchOnStartup ? 'bg-white border-white' : 'bg-transparent border-outline-variant'}`}
+                onClick={() => setIsThemeDropdownOpen(!isThemeDropdownOpen)}
+                className="flex items-center justify-between gap-2 bg-[#1A1C20] border border-white/10 px-3 py-1.5 text-[11px] font-medium text-white rounded-lg outline-none cursor-pointer min-w-[100px] hover:bg-white/10 transition-colors"
               >
-                <div className={`absolute top-0.5 w-4 h-4 bg-white transition-all ${settings.launchOnStartup ? 'left-5 bg-black' : 'left-0.5'}`}></div>
+                <span className="capitalize">{settings.theme}</span>
+                <span className={`material-symbols-outlined text-[14px] text-zinc-400 transition-transform duration-200 ${isThemeDropdownOpen ? 'rotate-180' : ''}`}>
+                  keyboard_arrow_down
+                </span>
               </button>
+
+              {isThemeDropdownOpen && (
+                <div className="absolute right-0 mt-1 w-full bg-[#18191D] border border-white/10 shadow-2xl z-50 py-1 rounded-lg">
+                  <button
+                    onClick={() => { updateSettings({ theme: 'system' }); setIsThemeDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-white/10 ${settings.theme === 'system' ? 'text-white bg-white/10' : 'text-zinc-400 hover:text-white'}`}
+                  >
+                    System
+                  </button>
+                  <button
+                    onClick={() => { updateSettings({ theme: 'dark' }); setIsThemeDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-white/10 ${settings.theme === 'dark' ? 'text-white bg-white/10' : 'text-zinc-400 hover:text-white'}`}
+                  >
+                    Dark
+                  </button>
+                  <button
+                    onClick={() => { updateSettings({ theme: 'light' }); setIsThemeDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-white/10 ${settings.theme === 'light' ? 'text-white bg-white/10' : 'text-zinc-400 hover:text-white'}`}
+                  >
+                    Light
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </section>
 
         {/* Notifications */}
-        <section className="glass-card p-6 sm:p-8">
-          <h2 className="font-serif text-xl mb-6 text-primary">Notifications</h2>
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-sans tracking-wide text-primary">Push Notifications</p>
-                <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-1">
-                  {isElectron ? 'Get notified when focus sessions end or apps are blocked' : 'Receive alerts for focus sessions'}
-                </p>
-              </div>
-              <button
-                onClick={() => updateSettings({ notifications: !settings.notifications })}
-                className={`w-10 h-6 border transition-colors relative ${settings.notifications ? 'bg-white border-white' : 'bg-transparent border-outline-variant'}`}
-              >
-                <div className={`absolute top-0.5 w-4 h-4 bg-white transition-all ${settings.notifications ? 'left-5 bg-black' : 'left-0.5'}`}></div>
-              </button>
+        <section className="glass-card p-4 rounded-xl border border-white/10 bg-[#121316]">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-3 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[14px] text-zinc-400">notifications</span>
+            Notifications
+          </h2>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-white">Focus Alerts & Distraction Prompts</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">
+                {isElectron ? 'Notify when focus sessions complete or blocked apps open' : 'Show alerts for focus sessions'}
+              </p>
             </div>
+            <button
+              onClick={() => updateSettings({ notifications: !settings.notifications })}
+              className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${settings.notifications ? 'bg-white' : 'bg-zinc-800 border border-white/10'}`}
+            >
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${settings.notifications ? 'left-[18px] bg-black' : 'left-0.5 bg-zinc-400'}`}></div>
+            </button>
           </div>
         </section>
 
         {/* Danger Zone */}
-        <section className="glass-card p-6 sm:p-8 border-error/20">
-          <h2 className="font-serif text-xl mb-6 text-error">Danger Zone</h2>
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-sans tracking-wide text-primary">Delete Data</p>
-                <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-1">Clear all usage history and focus sessions</p>
-              </div>
-              <button
-                onClick={() => {
-                  if (window.confirm('Are you sure? This will permanently delete all your tracking data and session history.')) {
-                    clearData();
-                  }
-                }}
-                className="px-6 py-2 border border-error text-error text-[10px] uppercase tracking-widest font-bold hover:bg-error/10 transition-colors"
-              >
-                Clear Data
-              </button>
+        <section className="glass-card p-4 rounded-xl border border-red-500/20 bg-[#121316]">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-rose-400 mb-3 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[14px] text-rose-400">warning</span>
+            Data & Privacy
+          </h2>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium text-white">Reset Activity Data</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">Permanently clear app usage history and recorded sessions</p>
             </div>
-          </div>
-        </section>
-
-        {/* About */}
-        <section className="glass-card p-6 sm:p-8">
-          <h2 className="font-serif text-xl mb-4 text-primary">About</h2>
-          <div className="text-xs text-on-surface-variant space-y-2">
-            <p><span className="font-bold text-primary">Distrack</span> — Digital Mindfulness</p>
-            <p>Version 1.0.0</p>
-            <p className="text-[10px] uppercase tracking-widest mt-4 opacity-60">Built with Electron + React + Vite</p>
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to clear all productivity data? This cannot be undone.')) {
+                  clearData();
+                }
+              }}
+              className="px-3 py-1.5 border border-rose-500/40 text-rose-400 text-[11px] font-medium rounded-lg hover:bg-rose-500/10 transition-colors cursor-pointer"
+            >
+              Clear Data
+            </button>
           </div>
         </section>
       </div>

@@ -2392,6 +2392,8 @@ CRITICAL IDENTITY & TASK OWNERSHIP RULES:
 14. If asked to search Google or the web (e.g. "search...", "who is...", "what is the score of...", "google..."): Say e.g. "Searching that for you!" and append [WEB_SEARCH: search_query].
 15. If asked to open a website or URL: Say e.g. "Opening that website right now!" and append [BROWSER_OPEN: website_url].
 16. If asked to adjust volume, mute, or media controls: Say e.g. "Got it!" and append [MEDIA_CONTROL: command_or_volume].
+17. If asked to start a focus or flow session (e.g. "start focus session for 1 hour", "focus session start karo", "focus mode on"): Say e.g. "Starting your focus session now. Time to lock in!" and append [START_FOCUS: {"durationMinutes": <minutes>, "mode": "Strict Lock"}].
+18. If asked to stop or end focus mode: Say e.g. "Ending your focus session!" and append [STOP_FOCUS].
 Be sweet, playful, and helpful!`;
 }
 
@@ -2400,6 +2402,26 @@ async function executeActionTags(rawReply) {
   const partnerRole = userRole === "me" ? "her" : "me";
   const currentUserName = userRole === "me" ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
   const partnerUserName = userRole === "me" ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+
+  // Execute [START_FOCUS: ...]
+  const focusStartMatch = /\[START_FOCUS:\s*({[^}]+})\]/i.exec(rawReply);
+  if (focusStartMatch) {
+    try {
+      const parsed = JSON.parse(focusStartMatch[1]);
+      const mins = Number(parsed.durationMinutes) || 25;
+      const mode = parsed.mode || "Strict Lock";
+      if (productivityBlocker) productivityBlocker.start({ mode });
+      broadcastToProductivity("focus-state-changed", { active: true, config: { mode, durationMinutes: mins } });
+    } catch (e) {
+      console.warn("Parse START_FOCUS error:", e);
+    }
+  }
+
+  // Execute [STOP_FOCUS]
+  if (/\[STOP_FOCUS\]/i.test(rawReply)) {
+    if (productivityBlocker) productivityBlocker.stop();
+    broadcastToProductivity("focus-state-changed", { active: false });
+  }
 
   // Execute [SEND_CHAT: ...]
   const chatMatch = /\[SEND_CHAT:\s*({[^}]+})\]/i.exec(rawReply);
@@ -3497,16 +3519,23 @@ ipcMain.handle("get-app-categories", () => {
   return productivityStore ? productivityStore.get("appCategories", {}) : {};
 });
 
-ipcMain.handle("update-app-category", (_, processName, category) => {
+ipcMain.handle("update-app-category", (_, processNameOrData, category) => {
   if (!productivityStore) return true;
+  let processName = processNameOrData;
+  let cat = category;
+  if (typeof processNameOrData === "object" && processNameOrData !== null) {
+    processName = processNameOrData.id || processNameOrData.processName || processNameOrData.name;
+    cat = processNameOrData.category;
+  }
+  if (!processName) return true;
   const cats = productivityStore.get("appCategories", {});
-  cats[processName.toLowerCase()] = category;
+  cats[processName.toLowerCase()] = cat;
   productivityStore.set("appCategories", cats);
   const dateKey = getLocalDateKey();
   const usage = productivityStore.get(`usageData.${dateKey}`, {});
   const key = processName.toLowerCase();
   if (usage[key]) {
-    usage[key].category = category;
+    usage[key].category = cat;
     productivityStore.set(`usageData.${dateKey}`, usage);
   }
   return true;

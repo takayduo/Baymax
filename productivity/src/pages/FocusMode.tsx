@@ -1,36 +1,33 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
-
-const quotes = [
-  "Simplicity is the ultimate sophistication.",
-  "Focus is a matter of deciding what things you're not going to do.",
-  "The successful warrior is the average man, with laser-like focus.",
-  "Starve your distractions, feed your focus.",
-  "Where your attention goes, your time goes."
-];
 
 export default function FocusMode() {
   const {
-    apps, isFocusModeActive, startFocusSession, stopFocusSession,
-    blocklist, toggleBlockApp, addFocusSession, isElectron,
+    apps,
+    isFocusModeActive,
+    startFocusSession,
+    stopFocusSession,
+    blocklist,
+    toggleBlockApp,
+    isElectron,
+    focusDuration,
+    focusBreakDuration,
+    focusTimeRemaining,
+    focusTimerMode,
+    pomodoroState,
+    focusSelectedMode,
+    setFocusDuration,
+    setFocusSelectedMode,
+    setFocusTimerMode,
+    setPomodoroState,
+    adjustFocusDuration,
+    resetFocusTimer,
   } = useAppContext();
 
-  const [timerMode, setTimerMode] = useState<'classic' | 'pomodoro'>('classic');
-  const [pomodoroState, setPomodoroState] = useState<'work' | 'break'>('work');
-
-  const [workTime, setWorkTime] = useState(25 * 60);
-  const [breakTime, setBreakTime] = useState(5 * 60);
-
-  const [timeLeft, setTimeLeft] = useState(workTime);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [customInput, setCustomInput] = useState('');
-  const [customItems, setCustomItems] = useState<{id: string, name: string}[]>([]);
   const [isEditingTime, setIsEditingTime] = useState(false);
   const [tempTimeInput, setTempTimeInput] = useState('');
-
-  const [currentQuoteIndex, setCurrentQuoteIndex] = useState(0);
-  const [initialDuration, setInitialDuration] = useState(25 * 60);
-  const [selectedMode, setSelectedMode] = useState('Deep Silence');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,94 +36,9 @@ export default function FocusMode() {
         setIsDropdownOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  useEffect(() => {
-    const quoteInterval = setInterval(() => {
-      setCurrentQuoteIndex((prev) => (prev + 1) % quotes.length);
-    }, 10000);
-    return () => clearInterval(quoteInterval);
-  }, []);
-
-  useEffect(() => {
-    let interval: number | undefined;
-
-    if (isFocusModeActive && timeLeft > 0) {
-      interval = window.setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
-      }, 1000);
-    } else if (timeLeft === 0 && isFocusModeActive) {
-      const mins = Math.max(1, Math.round(initialDuration / 60));
-      // Record completed session
-      addFocusSession({
-        durationMinutes: mins,
-        date: new Date().toISOString(),
-        mode: timerMode === 'pomodoro' ? `Pomodoro (${pomodoroState})` : selectedMode
-      });
-
-      // Show notification if supported
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Distrack — Focus Session Completed', {
-          body: timerMode === 'pomodoro' && pomodoroState === 'work'
-            ? 'Great focus! Take a well-deserved break.'
-            : `Completed ${mins} minute${mins > 1 ? 's' : ''} of deep work.`,
-        });
-      }
-
-      if (timerMode === 'pomodoro') {
-        if (pomodoroState === 'work') {
-          // Transition to break
-          setPomodoroState('break');
-          setTimeLeft(breakTime);
-          setInitialDuration(breakTime);
-          // Stop backend blocker during break phase
-          if (isElectron) {
-            window.electronAPI!.stopFocusSession().catch(console.error);
-          }
-        } else {
-          // Break ended, reset to work state and stop session
-          setPomodoroState('work');
-          setTimeLeft(workTime);
-          setInitialDuration(workTime);
-          stopFocusSession();
-        }
-      } else {
-        stopFocusSession();
-      }
-    }
-
-    return () => { if (interval) clearInterval(interval); };
-  }, [isFocusModeActive, timeLeft, timerMode, pomodoroState, initialDuration, selectedMode, addFocusSession, stopFocusSession, isElectron, breakTime, workTime]);
-
-  const handleStartStop = () => {
-    if (!isFocusModeActive) {
-      setInitialDuration(timeLeft);
-      if (timerMode === 'pomodoro' && pomodoroState === 'break') {
-        startFocusSession({ mode: selectedMode }, true); // Bypass backend blocker during break
-      } else {
-        startFocusSession({ mode: selectedMode });
-      }
-    } else {
-      stopFocusSession();
-    }
-  };
-
-  const resetTimer = () => {
-    if (isFocusModeActive) stopFocusSession();
-    if (timerMode === 'pomodoro') {
-      setPomodoroState('work');
-      setTimeLeft(workTime);
-    } else {
-      setTimeLeft(25 * 60);
-    }
-  };
-
-  const adjustTime = (minutes: number) => {
-    if (isFocusModeActive) return;
-    setTimeLeft(prev => Math.max(60, prev + minutes * 60));
-  };
 
   const formatTimer = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -134,325 +46,268 @@ export default function FocusMode() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const handleStartStop = () => {
+    if (!isFocusModeActive) {
+      startFocusSession({ mode: focusSelectedMode, durationMinutes: Math.round(focusDuration / 60) });
+    } else {
+      stopFocusSession();
+    }
+  };
+
   const handleTimeInputSubmit = () => {
     setIsEditingTime(false);
     const parts = tempTimeInput.split(':');
-    let mins = 0, secs = 0;
-    if (parts.length === 2) { mins = parseInt(parts[0]) || 0; secs = parseInt(parts[1]) || 0; }
-    else if (parts.length === 1) { mins = parseInt(parts[0]) || 0; }
+    let mins = 0;
+    let secs = 0;
+    if (parts.length === 2) {
+      mins = parseInt(parts[0], 10) || 0;
+      secs = parseInt(parts[1], 10) || 0;
+    } else if (parts.length === 1) {
+      mins = parseInt(parts[0], 10) || 0;
+    }
     if (mins >= 0 && secs >= 0 && secs < 60) {
-      const newTime = mins * 60 + secs;
-      setTimeLeft(newTime);
-      if (timerMode === 'pomodoro') {
-        if (pomodoroState === 'work') setWorkTime(newTime);
-        else setBreakTime(newTime);
-      }
+      const totalSecs = Math.max(60, mins * 60 + secs);
+      setFocusDuration(totalSecs);
     }
   };
 
-  const handleTimeInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') handleTimeInputSubmit();
-    else if (e.key === 'Escape') setIsEditingTime(false);
-  };
-
-  const blockCandidates = apps.filter(app => app.category !== 'productive');
-
-  const addCustomItem = () => {
-    if (customInput.trim()) {
-      const id = customInput.trim().toLowerCase();
-      setCustomItems(prev => [{id, name: customInput.trim()}, ...prev]);
-      toggleBlockApp(id);
-      setCustomInput('');
-    }
-  };
+  const presets = [5, 15, 25, 45, 60];
+  const blockCandidates = apps.filter((app) => app.category !== 'productive');
 
   return (
-    <div className="p-4 lg:p-6 max-w-7xl mx-auto w-full pb-20 lg:pb-6 space-y-4">
-      <header className="mb-2 flex-shrink-0">
-        <h1 className="text-2xl font-serif tracking-tight text-primary mb-2">Deep Work Session</h1>
-        <p className="text-xs font-sans text-on-surface-variant uppercase tracking-wider">
-          {isElectron ? 'Block distractions — apps will be killed if opened' : 'Block distractions and immerse yourself'}
-        </p>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* ── Timer Panel (White) ── */}
-        <div className={`lg:col-span-2 bg-surface text-primary p-6 lg:p-8 flex flex-col items-center justify-between relative overflow-hidden transition-all duration-1000 border min-h-[520px] ${
-          !isFocusModeActive 
-            ? 'border-outline-variant shadow-lg' 
-            : timerMode === 'pomodoro' && pomodoroState === 'break'
-            ? 'border-emerald-500/40 shadow-[0_0_50px_-12px_rgba(16,185,129,0.35)] animate-pulse'
-            : 'border-rose-500/40 shadow-[0_0_50px_-12px_rgba(244,63,94,0.35)]'
-        }`}>
-          <div className="absolute top-[-20%] right-[-10%] w-64 h-64 border border-primary opacity-5 rounded-full"></div>
-
-          <div className="relative z-10 flex flex-col items-center w-full flex-1 justify-center">
-            {/* Title */}
-            <h3 className="font-serif italic text-xl lg:text-2xl mb-3">Focus Session</h3>
-
-            {/* Mode Tabs */}
-            <div className="flex items-center gap-4 mb-3">
-              <button
-                onClick={() => { if (isFocusModeActive) return; setTimerMode('classic'); setTimeLeft(25 * 60); }}
-                className={`text-[10px] font-bold uppercase tracking-[0.2em] px-3 py-1 border transition-colors ${timerMode === 'classic' ? 'border-primary bg-primary text-background' : 'border-transparent text-primary/40 hover:text-primary hover:border-primary/20'}`}
-              >Classic</button>
-              <button
-                onClick={() => { if (isFocusModeActive) return; setTimerMode('pomodoro'); setPomodoroState('work'); setTimeLeft(workTime); }}
-                className={`text-[10px] font-bold uppercase tracking-[0.2em] px-3 py-1 border transition-colors ${timerMode === 'pomodoro' ? 'border-primary bg-primary text-background' : 'border-transparent text-primary/40 hover:text-primary hover:border-primary/20'}`}
-              >Pomodoro</button>
-            </div>
-
-            {/* Mode Selector */}
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-40">
-                {timerMode === 'pomodoro' ? `Phase: ${pomodoroState.toUpperCase()}` : 'Mode:'}
-              </span>
-              {timerMode === 'classic' && !isFocusModeActive ? (
-                <div className="relative inline-block" ref={dropdownRef}>
-                  <button
-                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    className="flex items-center gap-1 bg-transparent border-b border-primary pb-0.5 text-[10px] font-bold uppercase tracking-[0.2em] outline-none cursor-pointer text-primary"
-                  >
-                    <span>{selectedMode}</span>
-                    <span className={`material-symbols-outlined text-[12px] transition-transform duration-300 ${isDropdownOpen ? 'rotate-180' : ''}`}>
-                      keyboard_arrow_down
-                    </span>
-                  </button>
-
-                  {isDropdownOpen && (
-                    <div className="absolute left-1/2 -translate-x-1/2 mt-1.5 w-44 bg-surface border border-outline-variant shadow-xl z-50 py-1 rounded-none animate-fadeIn">
-                      <button
-                        onClick={() => { setSelectedMode('Deep Silence'); setIsDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-2.5 text-[9px] font-bold uppercase tracking-[0.2em] transition-colors hover:bg-surface-bright ${selectedMode === 'Deep Silence' ? 'text-primary bg-surface-bright/50' : 'text-primary/60 hover:text-primary'}`}
-                      >
-                        DEEP SILENCE
-                      </button>
-                      <button
-                        onClick={() => { setSelectedMode('Light Focus'); setIsDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-2.5 text-[9px] font-bold uppercase tracking-[0.2em] transition-colors hover:bg-surface-bright ${selectedMode === 'Light Focus' ? 'text-primary bg-surface-bright/50' : 'text-primary/60 hover:text-primary'}`}
-                      >
-                        LIGHT FOCUS
-                      </button>
-                      <button
-                        onClick={() => { setSelectedMode('Strict Lock'); setIsDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-2.5 text-[9px] font-bold uppercase tracking-[0.2em] transition-colors hover:bg-surface-bright ${selectedMode === 'Strict Lock' ? 'text-primary bg-surface-bright/50' : 'text-primary/60 hover:text-primary'}`}
-                      >
-                        STRICT LOCK
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : timerMode === 'classic' ? (
-                <span className="text-[10px] font-bold uppercase tracking-[0.2em]">{selectedMode}</span>
-              ) : null}
-            </div>
-
-            <div className="h-12 flex items-center justify-center mb-4 w-full">
-              {timerMode === 'classic' && (
-                <p className="text-[9px] uppercase tracking-widest opacity-40 max-w-[280px] text-center leading-relaxed">
-                  {selectedMode === 'Deep Silence' && (isElectron ? "Uses your custom blocklist. Blocked apps will be killed if opened." : "Uses your custom blocklist. A balanced approach for everyday work.")}
-                  {selectedMode === 'Light Focus' && (isElectron ? "Kills only wasteful-categorized apps. Neutral apps stay open." : "Blocks only wasteful apps. Neutral apps remain accessible.")}
-                  {selectedMode === 'Strict Lock' && (isElectron ? "Kills ALL non-productive apps automatically. No exceptions." : "Blocks ALL non-productive apps automatically. No exceptions.")}
-                </p>
-              )}
-
-              {timerMode === 'pomodoro' && (
-                <div className="flex items-center gap-8">
-                  <div className="flex flex-col items-center">
-                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-2">Work</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => { setWorkTime(prev => Math.max(60, prev - 60 * 5)); if (pomodoroState === 'work') setTimeLeft(prev => Math.max(60, prev - 60 * 5)); }}
-                        className={`opacity-30 hover:opacity-100 transition-opacity ${isFocusModeActive ? 'invisible pointer-events-none' : ''}`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">remove</span>
-                      </button>
-                      <span className="font-mono text-sm">{formatTimer(workTime)}</span>
-                      <button
-                        onClick={() => { setWorkTime(prev => prev + 60 * 5); if (pomodoroState === 'work') setTimeLeft(prev => prev + 60 * 5); }}
-                        className={`opacity-30 hover:opacity-100 transition-opacity ${isFocusModeActive ? 'invisible pointer-events-none' : ''}`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">add</span>
-                      </button>
-                    </div>
-                  </div>
-                  <div className="w-px h-8 bg-primary/10"></div>
-                  <div className="flex flex-col items-center">
-                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-2">Break</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => { setBreakTime(prev => Math.max(60, prev - 60)); if (pomodoroState === 'break') setTimeLeft(prev => Math.max(60, prev - 60)); }}
-                        className={`opacity-30 hover:opacity-100 transition-opacity ${isFocusModeActive ? 'invisible pointer-events-none' : ''}`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">remove</span>
-                      </button>
-                      <span className="font-mono text-sm">{formatTimer(breakTime)}</span>
-                      <button
-                        onClick={() => { setBreakTime(prev => prev + 60); if (pomodoroState === 'break') setTimeLeft(prev => prev + 60); }}
-                        className={`opacity-30 hover:opacity-100 transition-opacity ${isFocusModeActive ? 'invisible pointer-events-none' : ''}`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">add</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Timer Display Flanked by Buttons */}
-            <div className="flex items-center gap-6 mb-6 flex-shrink-0 select-none">
-              <button
-                onClick={() => adjustTime(-5)}
-                className={`p-2 opacity-40 hover:opacity-100 text-primary transition-all duration-300 ${isFocusModeActive ? 'opacity-0 pointer-events-none' : ''}`}
-                title="Decrease Time"
-              >
-                <span className="material-symbols-outlined text-2xl">remove</span>
-              </button>
-
-              {/* Circular SVG Progress Ring */}
-              <div className="relative w-48 h-48 lg:w-52 lg:h-52 flex items-center justify-center">
-                <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 200 200">
-                  {/* Track Circle */}
-                  <circle
-                    cx="100"
-                    cy="100"
-                    r="90"
-                    stroke="var(--outline-variant)"
-                    strokeWidth="4"
-                    fill="none"
-                  />
-                  {/* Progress Circle */}
-                  <circle
-                    cx="100"
-                    cy="100"
-                    r="90"
-                    stroke={
-                      !isFocusModeActive
-                        ? 'var(--primary)'
-                        : timerMode === 'pomodoro' && pomodoroState === 'break'
-                        ? '#10b981'
-                        : '#f43f5e'
-                    }
-                    strokeWidth="6"
-                    fill="none"
-                    strokeDasharray="565.48"
-                    strokeDashoffset={initialDuration > 0 ? 565.48 - (565.48 * timeLeft) / initialDuration : 0}
-                    className="transition-all duration-1000 ease-out"
-                    strokeLinecap="round"
-                  />
-                </svg>
-
-                <div className="absolute inset-0 z-10 flex items-center justify-center">
-                  {isEditingTime ? (
-                    <input type="text" autoFocus value={tempTimeInput}
-                      onChange={(e) => setTempTimeInput(e.target.value)}
-                      onBlur={handleTimeInputSubmit}
-                      onKeyDown={handleTimeInputKeyDown}
-                      className="text-3xl lg:text-4xl font-mono tracking-tighter text-center bg-transparent border-b-2 border-primary outline-none w-24 lg:w-28"
-                    />
-                  ) : (
-                    <span
-                      onClick={() => { if (isFocusModeActive) return; setTempTimeInput(formatTimer(timeLeft)); setIsEditingTime(true); }}
-                      className={`text-3xl lg:text-4xl font-mono tracking-tighter transition-opacity duration-300 ${!isFocusModeActive ? 'cursor-pointer hover:opacity-100' : ''} ${isFocusModeActive ? 'opacity-100' : 'opacity-80'}`}
-                    >
-                      {formatTimer(timeLeft)}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <button
-                onClick={() => adjustTime(5)}
-                className={`p-2 opacity-40 hover:opacity-100 text-primary transition-all duration-300 ${isFocusModeActive ? 'opacity-0 pointer-events-none' : ''}`}
-                title="Increase Time"
-              >
-                <span className="material-symbols-outlined text-2xl">add</span>
-              </button>
-            </div>
-
-            {/* Controls */}
-            <div className="flex flex-col items-center gap-3">
-              <button onClick={handleStartStop}
-                className="border-2 border-primary px-12 py-3 text-[10px] font-bold uppercase tracking-[0.3em] hover:bg-primary hover:text-background transition-colors flex items-center justify-center gap-3 min-w-[180px]"
-              >
-                {isFocusModeActive ? 'Pause' : 'Engage'}
-              </button>
-              <button onClick={resetTimer} className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60 hover:opacity-100 transition-opacity">Reset</button>
-            </div>
-          </div>
-
-          {/* Quote at bottom */}
-          <div className="w-full text-center mt-4">
-            <p className="text-xs font-serif italic opacity-50 transition-opacity duration-1000 ease-in-out">
-              "{quotes[currentQuoteIndex]}"
-            </p>
-          </div>
+    <div className="p-4 sm:p-5 w-full h-full flex flex-col justify-between select-none font-sans overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-shrink-0 mb-3">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight text-white">Focus Session</h2>
+          <p className="text-[11px] text-zinc-400">
+            {focusSelectedMode === 'Strict Lock'
+              ? 'Strict Lock terminates all non-productive apps immediately.'
+              : focusSelectedMode === 'Light Focus'
+              ? 'Blocks wasteful distractions while keeping neutral apps active.'
+              : 'Blocks custom blocklist and wasteful distractions.'}
+          </p>
         </div>
 
-        {/* ── Blocklist Panel (Dark) ── */}
-        <div className="col-span-1 glass-card p-6 flex flex-col min-h-[520px]">
-          <div className="flex justify-between items-center mb-6">
-              <h3 className="font-serif text-xl">Blocklist</h3>
-              <span className="text-[10px] border border-outline px-2 py-0.5 text-on-surface-variant uppercase">Restricted</span>
+        {/* Mode selector pills */}
+        <div className="flex items-center gap-1.5" ref={dropdownRef}>
+          <div className="flex items-center gap-1 bg-[#141518] border border-white/10 p-0.5 rounded-lg">
+            {(['Strict Lock', 'Deep Silence', 'Light Focus'] as const).map((mode) => (
+              <button
+                key={mode}
+                disabled={isFocusModeActive}
+                onClick={() => setFocusSelectedMode(mode)}
+                className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-all cursor-pointer disabled:opacity-50 ${
+                  focusSelectedMode === mode
+                    ? 'bg-white/15 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
           </div>
+        </div>
+      </div>
 
-          <div className="flex gap-2 mb-4">
-            <input
-              type="text" placeholder="Add process name..."
-              value={customInput} onChange={(e) => setCustomInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addCustomItem()}
-              className="flex-1 bg-surface border border-outline-variant px-3 py-2 text-xs font-mono text-primary outline-none focus:border-primary transition-colors min-w-0"
-            />
-            <button onClick={addCustomItem}
-              className="bg-white text-black px-4 flex items-center justify-center hover:bg-surface-bright hover:text-primary border-2 border-transparent transition-colors"
+      {/* Main Grid: Timer on Left, Blocked Apps on Right */}
+      <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
+        {/* Left: Timer Box */}
+        <div className={`col-span-7 glass-card p-4 rounded-xl border flex flex-col items-center justify-between min-h-0 transition-colors ${
+          !isFocusModeActive
+            ? 'border-white/10 bg-[#121316]'
+            : focusSelectedMode === 'Strict Lock'
+            ? 'border-rose-500/40 bg-[#160E11] shadow-[0_0_30px_-10px_rgba(244,63,94,0.3)]'
+            : 'border-emerald-500/40 bg-[#0E1511] shadow-[0_0_30px_-10px_rgba(16,185,129,0.3)]'
+        }`}>
+          {/* Top Timer Type (Classic / Pomodoro) */}
+          <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+            <button
+              disabled={isFocusModeActive}
+              onClick={() => setFocusTimerMode('classic')}
+              className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all cursor-pointer disabled:opacity-50 ${
+                focusTimerMode === 'classic' ? 'bg-white/15 text-white' : 'text-zinc-400 hover:text-white'
+              }`}
             >
-              <span className="material-symbols-outlined text-[16px]">add</span>
+              Classic Timer
+            </button>
+            <button
+              disabled={isFocusModeActive}
+              onClick={() => setFocusTimerMode('pomodoro')}
+              className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all cursor-pointer disabled:opacity-50 ${
+                focusTimerMode === 'pomodoro' ? 'bg-white/15 text-white' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              Pomodoro {isFocusModeActive && `(${pomodoroState})`}
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-0.5 pr-2 custom-scrollbar border-t border-outline-variant pt-2 mt-2">
-            {[...customItems, ...blockCandidates].map(app => {
-              const appIcon = 'icon' in app ? (app as any).icon : 'public';
+          {/* Central Countdown Clock */}
+          <div className="flex flex-col items-center justify-center my-auto">
+            {isEditingTime && !isFocusModeActive ? (
+              <input
+                type="text"
+                value={tempTimeInput}
+                onChange={(e) => setTempTimeInput(e.target.value)}
+                onBlur={handleTimeInputSubmit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleTimeInputSubmit();
+                  if (e.key === 'Escape') setIsEditingTime(false);
+                }}
+                autoFocus
+                placeholder="MM:SS"
+                className="text-6xl font-mono font-bold text-center tracking-tight bg-transparent border-b-2 border-white/30 text-white outline-none w-56"
+              />
+            ) : (
+              <div
+                onClick={() => {
+                  if (!isFocusModeActive) {
+                    setTempTimeInput(formatTimer(focusTimeRemaining));
+                    setIsEditingTime(true);
+                  }
+                }}
+                className={`text-6xl font-mono font-bold tracking-tight select-none cursor-pointer hover:opacity-90 transition-opacity ${
+                  isFocusModeActive ? 'text-white' : 'text-zinc-100'
+                }`}
+                title={!isFocusModeActive ? 'Click to edit duration' : undefined}
+              >
+                {formatTimer(focusTimeRemaining)}
+              </div>
+            )}
 
-              let isBlocked = blocklist.includes(app.id);
-              let isForced = false;
-
-              if (timerMode === 'classic') {
-                if (selectedMode === 'Strict Lock') { isBlocked = true; isForced = true; }
-                else if (selectedMode === 'Light Focus') {
-                  if ('category' in app && (app as any).category === 'neutral') { isBlocked = false; isForced = true; }
-                  else { isBlocked = true; isForced = true; }
-                }
-              }
-
-              return (
-                <div key={app.id}
-                  className={`flex items-center justify-between p-4 transition-colors ${isForced ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'} ${isBlocked ? 'bg-error/10' : 'hover:bg-surface-bright'}`}
-                  onClick={() => { if (!isForced) toggleBlockApp(app.id); }}
-                >
-                  <div className="flex items-center gap-4 truncate">
-                    {appIcon && appIcon.startsWith('data:') ? (
-                      <img src={appIcon} className="w-5 h-5 object-contain flex-shrink-0" alt="" />
-                    ) : (
-                      <span className={`material-symbols-outlined text-lg flex-shrink-0 ${isBlocked ? 'text-error' : 'text-on-surface-variant'}`}>{appIcon || 'apps'}</span>
-                    )}
-                    <span className={`font-sans tracking-wide truncate ${isBlocked ? 'text-primary' : 'text-primary/60'}`}>{app.name}</span>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    {isForced && <span className="material-symbols-outlined text-[14px] text-on-surface-variant opacity-60" title="Locked by current mode">lock</span>}
-                    <div className={`w-3 h-3 rounded-none border border-outline transition-colors ${isBlocked ? 'bg-error border-error' : 'bg-transparent'} ${isForced ? 'opacity-50' : ''}`}></div>
-                  </div>
-                </div>
-              );
-            })}
+            <span className="text-[11px] text-zinc-400 mt-1 font-medium">
+              {isFocusModeActive
+                ? `Active in ${focusSelectedMode} Mode`
+                : 'Click time or choose preset below'}
+            </span>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-outline-variant flex items-start gap-4">
-            <p className="text-[10px] uppercase tracking-widest text-on-surface-variant leading-relaxed">
-              {isElectron
-                ? 'When a session starts, Distrack will kill blocked apps if they are opened.'
-                : 'When a session starts, Distrack simulates a system-level block on the selected apps.'}
-            </p>
+          {/* Preset Buttons row */}
+          {!isFocusModeActive && (
+            <div className="flex items-center gap-1.5 mb-2">
+              <button
+                onClick={() => adjustFocusDuration(-5)}
+                className="px-2 py-1 text-[10px] font-medium rounded bg-white/5 hover:bg-white/10 text-zinc-300 transition-colors cursor-pointer"
+              >
+                -5m
+              </button>
+              {presets.map((mins) => (
+                <button
+                  key={mins}
+                  onClick={() => setFocusDuration(mins * 60)}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-all cursor-pointer ${
+                    Math.round(focusDuration / 60) === mins
+                      ? 'bg-white/20 text-white font-bold border border-white/20'
+                      : 'bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  {mins}m
+                </button>
+              ))}
+              <button
+                onClick={() => adjustFocusDuration(5)}
+                className="px-2 py-1 text-[10px] font-medium rounded bg-white/5 hover:bg-white/10 text-zinc-300 transition-colors cursor-pointer"
+              >
+                +5m
+              </button>
+            </div>
+          )}
+
+          {/* Action Buttons: Start / Stop & Reset */}
+          <div className="flex items-center gap-2 w-full max-w-xs">
+            <button
+              onClick={handleStartStop}
+              className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm ${
+                isFocusModeActive
+                  ? 'bg-rose-500 hover:bg-rose-600 text-white'
+                  : 'bg-white text-black hover:bg-zinc-200'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[15px] leading-none">
+                {isFocusModeActive ? 'stop' : 'play_arrow'}
+              </span>
+              <span>{isFocusModeActive ? 'Stop Session' : 'Start Focus'}</span>
+            </button>
+
+            {!isFocusModeActive && (
+              <button
+                onClick={resetFocusTimer}
+                className="px-3 py-2 text-xs font-medium rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                title="Reset Timer"
+              >
+                <span className="material-symbols-outlined text-[14px] leading-none">replay</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Blocked Apps / Candidate Apps List */}
+        <div className="col-span-5 glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col min-h-0">
+          <div className="flex items-center justify-between mb-2 flex-shrink-0">
+            <div>
+              <span className="text-xs font-semibold text-white">Blocked Apps</span>
+              <p className="text-[10px] text-zinc-400">
+                {focusSelectedMode === 'Strict Lock'
+                  ? 'All non-productive apps auto-blocked'
+                  : 'Toggle apps to block during sessions'}
+              </p>
+            </div>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 font-mono text-zinc-300">
+              {focusSelectedMode === 'Strict Lock' ? 'Strict' : `${blocklist.length} blocked`}
+            </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+            {blockCandidates.length > 0 ? (
+              blockCandidates.map((app) => {
+                const isBlocked = focusSelectedMode === 'Strict Lock' || blocklist.includes(app.id) || app.category === 'wasteful';
+                return (
+                  <div
+                    key={app.id}
+                    className="p-2 rounded-lg bg-white/5 border border-white/5 flex items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {app.icon && app.icon.startsWith('data:') ? (
+                        <img src={app.icon} className="w-4 h-4 object-contain rounded flex-shrink-0" alt="" />
+                      ) : (
+                        <span className="material-symbols-outlined text-[14px] text-zinc-400 flex-shrink-0">
+                          {app.icon || 'apps'}
+                        </span>
+                      )}
+                      <span className="text-xs text-white truncate font-medium">{app.name}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium uppercase ${
+                        app.category === 'wasteful'
+                          ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                          : 'bg-zinc-500/15 text-zinc-300 border border-zinc-500/30'
+                      }`}>
+                        {app.category}
+                      </span>
+
+                      {focusSelectedMode !== 'Strict Lock' && (
+                        <button
+                          onClick={() => toggleBlockApp(app.id)}
+                          className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${
+                            isBlocked ? 'text-rose-400 hover:bg-rose-500/20' : 'text-zinc-500 hover:bg-white/10'
+                          }`}
+                          title={isBlocked ? 'Unblock app' : 'Block app'}
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {isBlocked ? 'block' : 'add'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="h-full flex items-center justify-center text-xs text-zinc-500">
+                No distraction apps detected yet
+              </div>
+            )}
           </div>
         </div>
       </div>
