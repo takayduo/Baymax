@@ -172,6 +172,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Local-first: all state saved via Electron IPC and local persistence
   const safeSyncToCloud = useCallback((_data: any) => {}, []);
 
+  const handleFocusStateUpdate = useCallback((data: any) => {
+    if (!data) return;
+    if (typeof data === 'boolean') {
+      setIsFocusModeActive(data);
+      if (!data) focusEndTimeRef.current = null;
+      return;
+    }
+    if (data.active) {
+      const durMins = data.durationMinutes || data.config?.durationMinutes || 25;
+      const durSecs = Math.round(durMins * 60);
+      const mode = data.mode || data.config?.mode || 'Strict Lock';
+
+      setFocusDurationState(durSecs);
+      setFocusSelectedModeState(mode);
+      try {
+        localStorage.setItem('baymax_focus_duration', String(durSecs));
+        localStorage.setItem('baymax_focus_mode', mode);
+      } catch {}
+
+      if (data.endTime && data.endTime > Date.now()) {
+        focusEndTimeRef.current = data.endTime;
+        const rem = Math.max(0, Math.ceil((data.endTime - Date.now()) / 1000));
+        setFocusTimeRemaining(rem);
+      } else if (data.remainingSeconds != null && data.remainingSeconds > 0) {
+        focusEndTimeRef.current = Date.now() + (data.remainingSeconds * 1000);
+        setFocusTimeRemaining(data.remainingSeconds);
+      } else {
+        if (!focusEndTimeRef.current || focusEndTimeRef.current <= Date.now()) {
+          focusEndTimeRef.current = Date.now() + (durSecs * 1000);
+          setFocusTimeRemaining(durSecs);
+        }
+      }
+      setIsFocusModeActive(true);
+    } else {
+      setIsFocusModeActive(false);
+      focusEndTimeRef.current = null;
+    }
+  }, []);
+
   // ── Initial data load ──
   useEffect(() => {
     const api = getElectronAPI();
@@ -248,26 +287,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       // Handle focus status from backend
       if (focusStatus) {
-        if (typeof focusStatus === 'boolean') {
-          setIsFocusModeActive(focusStatus);
-        } else if (focusStatus.active) {
-          setIsFocusModeActive(true);
-          if (focusStatus.durationMinutes) {
-            const durSecs = Math.round(focusStatus.durationMinutes * 60);
-            setFocusDurationState(durSecs);
-          }
-          if (focusStatus.mode) {
-            setFocusSelectedModeState(focusStatus.mode);
-          }
-          if (focusStatus.endTime && focusStatus.endTime > Date.now()) {
-            focusEndTimeRef.current = focusStatus.endTime;
-            const rem = Math.max(0, Math.ceil((focusStatus.endTime - Date.now()) / 1000));
-            setFocusTimeRemaining(rem);
-          } else if (focusStatus.remainingSeconds) {
-            focusEndTimeRef.current = Date.now() + (focusStatus.remainingSeconds * 1000);
-            setFocusTimeRemaining(focusStatus.remainingSeconds);
-          }
-        }
+        handleFocusStateUpdate(focusStatus);
       }
 
       if (profile && profile.name) setUserProfileState(profile);
@@ -282,6 +302,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const ex = map.get(t.id);
           if (ex) {
             ex.timeSpentMinutes = t.timeSpentMinutes;
+            ex.totalSeconds = t.totalSeconds;
             if (t.icon && !ex.icon) ex.icon = t.icon;
           } else {
             map.set(t.id, { ...t });
@@ -294,45 +315,98 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     };
 
-    // Listen for live tracking updates from the tracker
-    const unsub = api.onTrackingUpdate((data) => {
-      if (timeframeRef.current === 'weekly') {
-        api.getTrackedApps('weekly').then((trackedApps) => {
-          if (trackedApps) {
-            setApps(trackedApps);
-            setFocusScore(calculateFocusScore(trackedApps));
-            syncUsageToKnown(trackedApps);
-          }
-        });
-      } else {
+    // 1. Listen for cross-frame postMessages from parent window
+    const onMessage = (event: MessageEvent) => {
+      const { type, data } = event.data || {};
+      if (type === 'baymax:focus-state-changed') {
+        handleFocusStateUpdate(data);
+      } else if (type === 'baymax:tracking-update') {
         if (data && data.apps) {
           setApps(data.apps);
           setFocusScore(calculateFocusScore(data.apps));
           syncUsageToKnown(data.apps);
         }
-      }
-    });
-    cleanupRef.current = unsub;
-
-    // Fast 3-second polling interval to guarantee live screen time updates
-    const liveSyncTimer = setInterval(() => {
-      api.getTrackedApps(timeframeRef.current).then((latestApps) => {
-        if (latestApps && latestApps.length > 0) {
-          setApps(latestApps);
-          setFocusScore(calculateFocusScore(latestApps));
-          syncUsageToKnown(latestApps);
+      } else if (type === 'baymax:daily-totals') {
+        if (Array.isArray(data) && data.length > 0) {
+          setDailyTotals(data);
         }
-      }).catch(() => {});
-      api.getDailyTotals().then((t) => {
-        if (t) setDailyTotals(t);
-      }).catch(() => {});
-    }, 3000);
+      }
+    };
+    window.addEventListener('message', onMessage);
+
+    // Request fresh state from parent
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'baymax:request-sync' }, '*');
+      }
+    } catch (_e) {}
+
+    // 2. Safe registration of Electron IPC listeners
+    try {
+      if (typeof api.onTrackingUpdate === 'function') {
+        const unsub = api.onTrackingUpdate((data) => {
+          if (timeframeRef.current === 'weekly') {
+            api.getTrackedApps('weekly').then((trackedApps) => {
+              if (trackedApps) {
+                setApps(trackedApps);
+                setFocusScore(calculateFocusScore(trackedApps));
+                syncUsageToKnown(trackedApps);
+              }
+            }).catch(() => {});
+          } else {
+            if (data && data.apps) {
+              setApps(data.apps);
+              setFocusScore(calculateFocusScore(data.apps));
+              syncUsageToKnown(data.apps);
+            }
+          }
+        });
+        cleanupRef.current = unsub;
+      }
+    } catch (e) {
+      console.warn('onTrackingUpdate hook fallback to polling', e);
+    }
+
+    // 3. Fast 1.5-second live polling interval to guarantee screen time & focus timer synchronization
+    const liveSyncTimer = setInterval(async () => {
+      const curApi = getElectronAPI();
+      if (!curApi) return;
+
+      // Keep focus mode countdown and button state in sync
+      try {
+        if (typeof curApi.getFocusActive === 'function') {
+          const fStatus = await curApi.getFocusActive();
+          if (fStatus) handleFocusStateUpdate(fStatus);
+        }
+      } catch (_e) {}
+
+      // Keep screen time counting live every second
+      try {
+        if (typeof curApi.getTrackedApps === 'function') {
+          const latestApps = await curApi.getTrackedApps(timeframeRef.current);
+          if (latestApps && latestApps.length > 0) {
+            setApps(latestApps);
+            setFocusScore(calculateFocusScore(latestApps));
+            syncUsageToKnown(latestApps);
+          }
+        }
+      } catch (_e) {}
+
+      // Keep daily totals chart fresh
+      try {
+        if (typeof curApi.getDailyTotals === 'function') {
+          const totals = await curApi.getDailyTotals();
+          if (totals && totals.length > 0) setDailyTotals(totals);
+        }
+      } catch (_e) {}
+    }, 1500);
 
     return () => {
+      window.removeEventListener('message', onMessage);
       if (cleanupRef.current) cleanupRef.current();
       clearInterval(liveSyncTimer);
     };
-  }, []);
+  }, [handleFocusStateUpdate]);
 
   // Refresh data when timeframe changes
   useEffect(() => {
@@ -555,39 +629,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const api = getElectronAPI();
     if (!api) return;
-    const cleanup = (api as any)?.onFocusStateChanged?.((data: any) => {
-      if (data?.active) {
-        const durMins = data.durationMinutes || data.config?.durationMinutes || 25;
-        const durSecs = Math.round(durMins * 60);
-        const mode = data.mode || data.config?.mode || focusSelectedMode;
-
-        setFocusDurationState(durSecs);
-        setFocusSelectedModeState(mode);
-        try {
-          localStorage.setItem('baymax_focus_duration', String(durSecs));
-          localStorage.setItem('baymax_focus_mode', mode);
-        } catch {}
-
-        if (data.endTime && data.endTime > Date.now()) {
-          focusEndTimeRef.current = data.endTime;
-          const rem = Math.max(0, Math.ceil((data.endTime - Date.now()) / 1000));
-          setFocusTimeRemaining(rem);
-        } else if (data.remainingSeconds) {
-          focusEndTimeRef.current = Date.now() + (data.remainingSeconds * 1000);
-          setFocusTimeRemaining(data.remainingSeconds);
-        } else {
-          focusEndTimeRef.current = Date.now() + (durSecs * 1000);
-          setFocusTimeRemaining(durSecs);
-        }
-        setIsFocusModeActive(true);
-      } else {
-        stopFocusSession(true);
+    let cleanup: any;
+    try {
+      if (typeof (api as any).onFocusStateChanged === 'function') {
+        cleanup = (api as any).onFocusStateChanged((data: any) => {
+          handleFocusStateUpdate(data);
+        });
       }
-    });
+    } catch (e) {
+      console.warn('onFocusStateChanged subscription error:', e);
+    }
     return () => {
       if (typeof cleanup === 'function') cleanup();
     };
-  }, [focusSelectedMode, stopFocusSession]);
+  }, [handleFocusStateUpdate]);
 
   const scanApps = useCallback(async (): Promise<AppUsage[]> => {
     const api = getElectronAPI();

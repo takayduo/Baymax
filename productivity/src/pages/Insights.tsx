@@ -14,7 +14,8 @@ export default function Insights() {
 
   const usageByCategory = apps.reduce((acc, app) => {
     const cat = (app.category && acc[app.category] !== undefined) ? app.category : 'neutral';
-    acc[cat] += (app.timeSpentMinutes || 0);
+    const secs = app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60;
+    acc[cat] += Math.round(secs / 60);
     return acc;
   }, { productive: 0, neutral: 0, wasteful: 0 });
 

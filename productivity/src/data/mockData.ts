@@ -4,6 +4,7 @@ export interface AppUsage {
   id: string;
   name: string;
   timeSpentMinutes: number;
+  totalSeconds?: number;
   category: AppCategory;
   type: string;
   icon: string;

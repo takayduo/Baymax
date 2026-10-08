@@ -6,12 +6,13 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, Tooltip as RechartsTooltip, 
 export default function Dashboard() {
   const { apps, focusScore, dailyTotals, timeframe, setTimeframe, focusSessions } = useAppContext();
 
-  const screenTimeMinutes = apps.reduce((acc, app) => acc + app.timeSpentMinutes, 0);
-  const productiveTimeMinutes = apps.filter(a => a.category === 'productive').reduce((acc, app) => acc + app.timeSpentMinutes, 0);
-  const intentionalityScore = screenTimeMinutes > 0 ? Math.round((productiveTimeMinutes / screenTimeMinutes) * 100) : 0;
-  const h = Math.floor(screenTimeMinutes / 60);
-  const m = Math.floor(screenTimeMinutes % 60);
-  const screenTime = screenTimeMinutes > 0 ? `${h}h ${m}m` : '0h 0m';
+  const totalSeconds = apps.reduce((acc, app) => acc + (app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60), 0);
+  const productiveSeconds = apps.filter(a => a.category === 'productive').reduce((acc, app) => acc + (app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60), 0);
+  const productiveTimeMinutes = Math.round(productiveSeconds / 60);
+  const intentionalityScore = totalSeconds > 0 ? Math.round((productiveSeconds / totalSeconds) * 100) : 0;
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const screenTime = totalSeconds > 0 ? `${h}h ${m}m` : '0h 0m';
 
   const topApps = [...apps]
     .sort((a, b) => b.timeSpentMinutes - a.timeSpentMinutes)

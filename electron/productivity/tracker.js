@@ -185,11 +185,39 @@ class AppTracker {
     this.currentForeground = null;
     this.lastDistractionWarnTime = 0;
     this.heartbeatTimer = null;
+    this.cleanStore();
+  }
+
+  cleanStore() {
+    try {
+      const JUNK_REGEX = /^(charmap|cleanmgr|mdsched|iscsicpl|odbcad32|regedit|recoverydrive|perfmon|msinfo32|msconfig|dfrgui|psr|quickassist|wfs|runupd.*|thermalconsole.*|git-bash|git-cmd|git-gui|javacpl|appvlp|setlang|msoev|robloxstudioinstaller|launcherpatcher|wondershare.*|livecaptions|magnify|narrator|osk|voiceaccess|antigravity.*)$/i;
+      const known = this.store.get('knownApps', {});
+      let knownChanged = false;
+      for (const key of Object.keys(known)) {
+        if (JUNK_REGEX.test(key) || SYSTEM_IGNORED_PROCS.includes(key)) {
+          delete known[key];
+          knownChanged = true;
+        }
+      }
+      if (knownChanged) this.store.set('knownApps', known);
+
+      const dateKey = getLocalDateKey();
+      const usageData = this.store.get(`usageData.${dateKey}`, {});
+      let usageChanged = false;
+      for (const [key, d] of Object.entries(usageData)) {
+        if (JUNK_REGEX.test(key) || SYSTEM_IGNORED_PROCS.includes(key) || ((d.totalSeconds || 0) === 0 && !DEFAULT_CATEGORIES[key])) {
+          delete usageData[key];
+          usageChanged = true;
+        }
+      }
+      if (usageChanged) this.store.set(`usageData.${dateKey}`, usageData);
+    } catch (e) {}
   }
 
   start() {
     if (this.isTracking) return;
     this.isTracking = true;
+    this.cleanStore();
     this.lastPollTime = Date.now();
     console.log('[Tracker] Started with live auto-flush');
 
@@ -289,7 +317,7 @@ class AppTracker {
                 usageData[appKey] = {
                   processName: proc.ProcessName,
                   windowTitle: proc.MainWindowTitle || proc.ProcessName,
-                  totalSeconds: 1,
+                  totalSeconds: 0,
                   category: categories[appKey] || this.getCategory(appKey),
                   lastActive: now,
                   icon: iconDataUrl,
@@ -302,13 +330,14 @@ class AppTracker {
             }
 
             const cat = categories[appKey] || usageData[appKey]?.category || this.getCategory(appKey);
-            const totalSecs = usageData[appKey]?.totalSeconds || 1;
+            const totalSecs = usageData[appKey]?.totalSeconds || 0;
             if (!known[appKey] || !known[appKey].icon) {
               known[appKey] = {
                 id: appKey,
                 name: proc.ProcessName,
                 windowTitle: proc.MainWindowTitle || proc.ProcessName,
-                timeSpentMinutes: Math.ceil(totalSecs / 60),
+                totalSeconds: totalSecs,
+                timeSpentMinutes: Math.round(totalSecs / 60),
                 category: cat,
                 type: 'application',
                 icon: iconDataUrl || known[appKey]?.icon || ICON_MAP[appKey] || 'apps',
@@ -436,17 +465,21 @@ class AppTracker {
 
   formatApps(usageData) {
     return Object.entries(usageData)
-      .map(([key, d]) => ({
-        id: key,
-        name: d.processName,
-        windowTitle: d.windowTitle,
-        timeSpentMinutes: Math.ceil(d.totalSeconds / 60),
-        category: this.getCategory(key),
-        type: 'application',
-        icon: d.icon || ICON_MAP[key] || 'apps',
-      }))
-      .filter(a => a.timeSpentMinutes > 0)
-      .sort((a, b) => b.timeSpentMinutes - a.timeSpentMinutes);
+      .map(([key, d]) => {
+        const totalSecs = d.totalSeconds || 0;
+        return {
+          id: key,
+          name: d.processName,
+          windowTitle: d.windowTitle,
+          totalSeconds: totalSecs,
+          timeSpentMinutes: Math.round(totalSecs / 60),
+          category: this.getCategory(key),
+          type: 'application',
+          icon: d.icon || ICON_MAP[key] || 'apps',
+        };
+      })
+      .filter(a => (a.totalSeconds || 0) > 0 || (a.timeSpentMinutes || 0) > 0)
+      .sort((a, b) => (b.totalSeconds || 0) - (a.totalSeconds || 0));
   }
 
   getTodayApps() {
@@ -497,6 +530,7 @@ class AppTracker {
   }
 
   getKnownApps() {
+    this.cleanStore();
     const known = this.store.get('knownApps', {});
     const dateKey = getLocalDateKey();
     const usageData = this.store.get(`usageData.${dateKey}`, {});
@@ -506,18 +540,21 @@ class AppTracker {
     for (const [key, d] of Object.entries(usageData)) {
       if (SYSTEM_IGNORED_PROCS.includes(key)) continue;
       const cat = categories[key] || d.category || this.getCategory(key);
-      const mins = Math.ceil((d.totalSeconds || 0) / 60);
+      const totalSecs = d.totalSeconds || 0;
+      const mins = Math.round(totalSecs / 60);
       if (!known[key]) {
         known[key] = {
           id: key,
           name: d.processName,
           windowTitle: d.windowTitle || d.processName,
+          totalSeconds: totalSecs,
           timeSpentMinutes: mins,
           category: cat,
           type: 'application',
           icon: d.icon || ICON_MAP[key] || 'apps',
         };
       } else {
+        known[key].totalSeconds = totalSecs;
         known[key].timeSpentMinutes = mins;
         if (d.icon && !known[key].icon) known[key].icon = d.icon;
         known[key].category = cat;
@@ -525,8 +562,8 @@ class AppTracker {
     }
 
     return Object.values(known).sort((a, b) => {
-      if (b.timeSpentMinutes !== a.timeSpentMinutes) {
-        return b.timeSpentMinutes - a.timeSpentMinutes;
+      if ((b.timeSpentMinutes || 0) !== (a.timeSpentMinutes || 0)) {
+        return (b.timeSpentMinutes || 0) - (a.timeSpentMinutes || 0);
       }
       return a.name.localeCompare(b.name);
     });
@@ -662,7 +699,8 @@ class AppTracker {
                 id: key,
                 name: item.name || item.processName,
                 windowTitle: item.name || item.processName,
-                timeSpentMinutes: Math.ceil(totalSecs / 60),
+                totalSeconds: totalSecs,
+                timeSpentMinutes: Math.round(totalSecs / 60),
                 category: cat,
                 type: 'application',
                 icon: iconDataUrl || known[key]?.icon || ICON_MAP[key] || 'apps',

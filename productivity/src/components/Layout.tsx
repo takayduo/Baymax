@@ -13,9 +13,9 @@ const navItems = [
 
 export default function Layout() {
   const { isFocusModeActive, focusTimeRemaining, focusSelectedMode, stopFocusSession, apps } = useAppContext();
-  const screenTimeMinutes = apps.reduce((acc, app) => acc + app.timeSpentMinutes, 0);
-  const h = Math.floor(screenTimeMinutes / 60);
-  const m = Math.floor(screenTimeMinutes % 60);
+  const totalSeconds = apps.reduce((acc, app) => acc + (app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60), 0);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
 
   const formatTimer = (seconds: number) => {
     const mins = Math.floor(seconds / 60);

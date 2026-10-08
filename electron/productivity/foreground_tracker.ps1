@@ -82,7 +82,10 @@ namespace BaymaxTracker {
                                 pName != "searchhost" &&
                                 pName != "startmenuexperiencehost" &&
                                 pName != "textinputhost" &&
-                                pName != "applicationframehost") {
+                                pName != "applicationframehost" &&
+                                pName != "electron" &&
+                                pName != "mochi" &&
+                                pName != "baymax") {
                                 string path = "";
                                 try { path = proc.MainModule.FileName; } catch {}
                                 found = "{\"n\":\"" + proc.ProcessName + "\",\"t\":\"" + title.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\",\"p\":" + pid + ",\"path\":\"" + path.Replace("\\", "\\\\") + "\"}";
