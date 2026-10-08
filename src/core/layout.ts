@@ -25,7 +25,8 @@ export type IslandViewName =
   | "greeting"
   | "partner-file"
   | "couple-chat"
-  | "remote-control";
+  | "remote-control"
+  | "productivity";
 
 export type BotStateName =
   | "idle"
@@ -52,10 +53,10 @@ export interface ViewLayout {
   agentMode: AgentLayoutMode;
 }
 
-// The window is a fixed 720×320 (largest view) like the macOS panel; the island is
+// The window is a 1040x640 transparent overlay; the island is
 // drawn inside it, glued to the top edge and horizontally centred.
-export const PANEL_W = 720;
-export const PANEL_H = 320;
+export const PANEL_W = 1040;
+export const PANEL_H = 640;
 
 // No notch on a PC: these are the hidden/compact sizes from docs/SPEC.md.
 export const NOTCH_W = 184;
@@ -92,6 +93,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   greeting: { height: 150, botX: 320, botY: 90, botDiameter: 0, agentMode: "none" },
   "couple-chat": { height: 280, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   "remote-control": { height: 260, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
+  productivity: { height: 580, botX: 42, botY: null, botDiameter: 0, agentMode: "none" },
 };
 
 // The upload views above are only the fallback geometry. Once a file is actually
@@ -116,6 +118,9 @@ export function islandSize(
     case "compact":
       return { w: COMPACT_W, h: NOTCH_H };
     case "expanded": {
+      if (view === "productivity") {
+        return { w: 980, h: 580 };
+      }
       const h = view === "prompt"
         ? chatPromptHeight(chatCount)
         : view === "couple-chat"

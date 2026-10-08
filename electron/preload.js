@@ -93,12 +93,54 @@ contextBridge.exposeInMainWorld("electronAPI", {
   markLvExecuteAction: (name, parameters) => ipcRenderer.invoke("marklv-execute-action", { name, parameters }),
   markLvLaunchHud: () => ipcRenderer.invoke("marklv-launch-hud"),
 
-  // Productivity & Focus Engine (Baymax)
+  // Productivity & Focus Engine (Distrack inside Baymax)
   openProductivityWindow: () => ipcRenderer.invoke("open-productivity-window"),
+  getTrackedApps: (timeframe) => ipcRenderer.invoke("get-tracked-apps", timeframe),
+  getDailyTotals: () => ipcRenderer.invoke("get-daily-totals"),
+  getAppCategories: () => ipcRenderer.invoke("get-app-categories"),
+  updateAppCategory: (data) => ipcRenderer.invoke("update-app-category", data),
+  scanRunningApps: () => ipcRenderer.invoke("scan-running-apps"),
+  getFocusSessions: () => ipcRenderer.invoke("get-focus-sessions"),
+  addFocusSession: (session) => ipcRenderer.invoke("add-focus-session", session),
+  setFocusSessions: (sessions) => ipcRenderer.invoke("set-focus-sessions", sessions),
   startFocusSession: (config) => ipcRenderer.invoke("start-focus-session", config),
   stopFocusSession: () => ipcRenderer.invoke("stop-focus-session"),
+  getFocusActive: () => ipcRenderer.invoke("get-focus-active"),
+  getBlocklist: () => ipcRenderer.invoke("get-blocklist"),
+  toggleBlockApp: (id) => ipcRenderer.invoke("toggle-block-app", id),
+  setBlocklist: (list) => ipcRenderer.invoke("set-blocklist", list),
+  getSettings: () => ipcRenderer.invoke("get-settings"),
+  updateSettings: (settings) => ipcRenderer.invoke("update-settings", settings),
+  clearData: () => ipcRenderer.invoke("clear-data"),
+  isOnboarded: () => ipcRenderer.invoke("is-onboarded"),
+  setOnboarded: () => ipcRenderer.invoke("set-onboarded"),
+  getUserProfile: () => ipcRenderer.invoke("get-user-profile"),
+  setUserProfile: (profile) => ipcRenderer.invoke("set-user-profile", profile),
+  killProcess: (processName) => ipcRenderer.invoke("kill-process", processName),
+  googleSignIn: () => ipcRenderer.invoke("google-sign-in"),
+  sendOtpEmail: (email) => ipcRenderer.invoke("send-otp-email", email),
   getProductivityStats: (timeframe) => ipcRenderer.invoke("get-tracked-apps", timeframe),
   getProductivityDailyTotals: () => ipcRenderer.invoke("get-daily-totals"),
+  onTrackingUpdate: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("tracking-update", handler);
+    return () => ipcRenderer.removeListener("tracking-update", handler);
+  },
+  onFocusDistractionWarning: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("productivity-distraction-warning", handler);
+    return () => ipcRenderer.removeListener("productivity-distraction-warning", handler);
+  },
+  onAppCloseWarning: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("app-close-warning", handler);
+    return () => ipcRenderer.removeListener("app-close-warning", handler);
+  },
+  onAppBlocked: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("app-blocked", handler);
+    return () => ipcRenderer.removeListener("app-blocked", handler);
+  },
 
   // Events from Main Process
   on: (channel, callback) => {

@@ -166,6 +166,10 @@ async function main() {
         setPaused(false);
         island.alert(State.defaultView());
         break;
+      case "open-productivity":
+        setPaused(false);
+        island.alert("productivity");
+        break;
       case "pause":
         setPaused(!State.paused);
         if (State.paused) island.fsm.forceHidden();

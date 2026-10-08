@@ -54,21 +54,10 @@ export default function TopBar() {
                   setProfileOpen(false);
                   navigate('/settings');
                 }}
-                className="text-left px-4 py-3 text-[10px] uppercase tracking-widest hover:bg-surface-bright border-b border-outline-variant transition-colors text-on-surface hover:text-primary flex items-center justify-between w-full"
+                className="text-left px-4 py-3 text-[10px] uppercase tracking-widest hover:bg-surface-bright transition-colors text-on-surface hover:text-primary flex items-center justify-between w-full"
               >
                 Settings
                 <span className="material-symbols-outlined text-[16px]">settings</span>
-              </button>
-              <button 
-                onClick={() => { 
-                  setProfileOpen(false); 
-                  setUserProfile({ name: '', email: '' });
-                  navigate('/auth'); 
-                }}
-                className="text-left px-4 py-3 text-[10px] uppercase tracking-widest hover:bg-error/10 hover:text-error transition-colors text-on-surface flex items-center justify-between w-full"
-              >
-                Logout
-                <span className="material-symbols-outlined text-[16px]">logout</span>
               </button>
             </div>
           )}

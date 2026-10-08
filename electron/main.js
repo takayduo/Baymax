@@ -995,8 +995,8 @@ function startMouseTracking() {
 function createOverlayWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth } = primaryDisplay.workAreaSize;
-  const panelWidth = 720;
-  const panelHeight = 340;
+  const panelWidth = 1040;
+  const panelHeight = 640;
   const x = Math.round((screenWidth - panelWidth) / 2);
   const y = 0;
 
@@ -1017,6 +1017,9 @@ function createOverlayWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: true,
+      webSecurity: false,
+      allowRunningInsecureContent: true,
     },
   });
 
@@ -1247,8 +1250,14 @@ function setupTray() {
       },
     },
     {
-      label: "Productivity & Focus (Distrack)…",
-      click: () => createProductivityWindow(),
+      label: "Productivity & Focus (Baymax)…",
+      click: () => {
+        if (overlayWin && !overlayWin.isDestroyed()) {
+          overlayWin.show();
+          overlayWin.focus();
+          overlayWin.webContents.send("tray", "open-productivity");
+        }
+      },
     },
     {
       label: "Settings…",
@@ -2263,7 +2272,7 @@ ipcMain.handle("reposition", () => {
   if (overlayWin && !overlayWin.isDestroyed()) {
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth } = primaryDisplay.workAreaSize;
-    const panelWidth = 720;
+    const panelWidth = 1040;
     const x = Math.round((screenWidth - panelWidth) / 2);
     overlayWin.setPosition(x, 0);
   }

@@ -20,6 +20,11 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      if (!window.electronAPI && window.parent && window.parent.electronAPI) {
+        window.electronAPI = window.parent.electronAPI;
+      }
+    </script>
     <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

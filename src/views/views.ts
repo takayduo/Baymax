@@ -14,6 +14,7 @@ import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations
 import { buildSchedule } from "./schedule";
 import { buildCoupleChat } from "./coupleChat";
 import { buildRemoteControl } from "./remoteControl";
+import { buildProductivity } from "./productivity";
 import { Bridge } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { VoiceManager } from "../core/voice";
@@ -121,10 +122,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
     {
       class: "tab",
       title: "Productivity & Focus Workspace (Baymax)",
-      onclick: () => {
-        actions.blip();
-        void Bridge.openProductivityWindow();
-      },
+      onclick: () => go("productivity"),
     },
     svg(ICONS.timer, 13)
   );
@@ -160,6 +158,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabCouple.title = `Chat with ${partnerName}`;
       tabRemote.title = `Remote Co-Pilot — ${partnerName} 🖥️`;
       tabSched.classList.toggle("on", v === "schedule");
+      tabProductivity.classList.toggle("on", v === "productivity");
       tabDrop.classList.toggle("on", v === "upload");
 
       if (State.remoteAccessStatus === "incoming_request") {
@@ -706,6 +705,7 @@ export function buildViews(
   map.set("partner-file", buildPartnerFile(actions));
   map.set("couple-chat", buildCoupleChat(actions));
   map.set("remote-control", buildRemoteControl(actions));
+  map.set("productivity", buildProductivity(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
   map.set("mail", buildPlaceholder("Sending by email isn't in this version.", ""));
   map.set("searching", buildPlaceholder("Claude is searching…", ""));

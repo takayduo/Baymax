@@ -65,20 +65,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [userProfile, setUserProfileState] = useState<UserProfile>(() => {
     try {
       const saved = localStorage.getItem('distrack_user');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.name) return parsed;
+      }
     } catch {}
-    return { name: '', email: '' };
+    return { name: 'Badsha', email: 'user@baymax.local', emailVerified: true };
   });
   const cleanupRef = useRef<(() => void) | null>(null);
 
   const setUserProfile = useCallback((p: UserProfile) => {
-    setUserProfileState(p);
-    localStorage.setItem('distrack_user', JSON.stringify(p));
+    const valid = {
+      name: p.name || 'Badsha',
+      email: p.email || 'user@baymax.local',
+      emailVerified: true,
+      picture: p.picture
+    };
+    setUserProfileState(valid);
+    localStorage.setItem('distrack_user', JSON.stringify(valid));
     if (isElectron) {
-      window.electronAPI!.setUserProfile(p);
-    }
-    if (!p.name && isFirebaseConfigured) {
-      auth.signOut().catch(console.error);
+      window.electronAPI!.setUserProfile(valid);
     }
   }, []);
 
