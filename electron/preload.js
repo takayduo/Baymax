@@ -141,6 +141,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("app-blocked", handler);
     return () => ipcRenderer.removeListener("app-blocked", handler);
   },
+  onAppCloseWarningCancelled: (callback) => {
+    const handler = (_event, data) => callback ? callback(data) : null;
+    ipcRenderer.on("app-close-warning-cancelled", handler);
+    return () => ipcRenderer.removeListener("app-close-warning-cancelled", handler);
+  },
+  onAppBlockFailedPrivilege: (callback) => {
+    const handler = (_event, data) => callback ? callback(data) : null;
+    ipcRenderer.on("app-block-failed-privilege", handler);
+    return () => ipcRenderer.removeListener("app-block-failed-privilege", handler);
+  },
+  sendOTPEmail: (email, otp) => ipcRenderer.invoke("send-otp-email", { email, otp }),
 
   // Events from Main Process
   on: (channel, callback) => {

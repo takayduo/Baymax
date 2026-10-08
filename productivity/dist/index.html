@@ -17,16 +17,33 @@
         font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
       }
     </style>
-    <script type="module" crossorigin src="./assets/index-zpapXEbJ.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CB41Wsq_.css">
-  </head>
-  <body>
-    <div id="root"></div>
     <script>
       if (!window.electronAPI && window.parent && window.parent.electronAPI) {
         window.electronAPI = window.parent.electronAPI;
       }
-    </script>
+      if (window.electronAPI) {
+        if (!window.electronAPI.onAppCloseWarningCancelled) {
+          window.electronAPI.onAppCloseWarningCancelled = () => () => {};
+        }
+        if (!window.electronAPI.onAppBlockFailedPrivilege) {
+          window.electronAPI.onAppBlockFailedPrivilege = () => () => {};
+        }
+        if (!window.electronAPI.onAppCloseWarning) {
+          window.electronAPI.onAppCloseWarning = () => () => {};
+        }
+        if (!window.electronAPI.onAppBlocked) {
+          window.electronAPI.onAppBlocked = () => () => {};
+        }
+        if (!window.electronAPI.onTrackingUpdate) {
+          window.electronAPI.onTrackingUpdate = () => () => {};
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="./assets/index-BGRis0Rx.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CB41Wsq_.css">
+  </head>
+  <body>
+    <div id="root"></div>
   </body>
 </html>
 

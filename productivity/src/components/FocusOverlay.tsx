@@ -13,74 +13,79 @@ export default function FocusOverlay() {
     if (!window.electronAPI) return;
 
     // 1. Listen for app-close-warning
-    const unsubWarning = window.electronAPI.onAppCloseWarning((appName) => {
-      // Clear any active timers
-      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-      if (blockedTimerRef.current) clearTimeout(blockedTimerRef.current);
+    const unsubWarning = typeof window.electronAPI.onAppCloseWarning === 'function'
+      ? window.electronAPI.onAppCloseWarning((appName) => {
+          if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+          if (blockedTimerRef.current) clearTimeout(blockedTimerRef.current);
 
-      setBlockedAppName(null);
-      setPrivilegeFailedApp(null);
-      setActiveWarningApp(appName);
-      setCountdown(10);
+          setBlockedAppName(null);
+          setPrivilegeFailedApp(null);
+          setActiveWarningApp(appName);
+          setCountdown(10);
 
-      // Start the 10-second countdown
-      countdownTimerRef.current = setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    });
+          countdownTimerRef.current = setInterval(() => {
+            setCountdown((prev) => {
+              if (prev <= 1) {
+                if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+                return 0;
+              }
+              return prev - 1;
+            });
+          }, 1000);
+        })
+      : () => {};
 
     // 2. Listen for app-close-warning-cancelled (e.g. user manually soft-closed the app)
-    const unsubCancel = window.electronAPI.onAppCloseWarningCancelled((appName) => {
-      setActiveWarningApp((current) => {
-        if (current?.toLowerCase() === appName.toLowerCase()) {
+    const unsubCancel = typeof window.electronAPI.onAppCloseWarningCancelled === 'function'
+      ? window.electronAPI.onAppCloseWarningCancelled((appName) => {
+          setActiveWarningApp((current) => {
+            if (current?.toLowerCase() === appName.toLowerCase()) {
+              if (countdownTimerRef.current) {
+                clearInterval(countdownTimerRef.current);
+                countdownTimerRef.current = null;
+              }
+              return null;
+            }
+            return current;
+          });
+        })
+      : () => {};
+
+    // 3. Listen for app-blocked (app successfully force-killed)
+    const unsubBlocked = typeof window.electronAPI.onAppBlocked === 'function'
+      ? window.electronAPI.onAppBlocked((appName) => {
           if (countdownTimerRef.current) {
             clearInterval(countdownTimerRef.current);
             countdownTimerRef.current = null;
           }
-          return null;
-        }
-        return current;
-      });
-    });
+          setActiveWarningApp(null);
+          setPrivilegeFailedApp(null);
+          setBlockedAppName(appName);
 
-    // 3. Listen for app-blocked (app successfully force-killed)
-    const unsubBlocked = window.electronAPI.onAppBlocked((appName) => {
-      if (countdownTimerRef.current) {
-        clearInterval(countdownTimerRef.current);
-        countdownTimerRef.current = null;
-      }
-      setActiveWarningApp(null);
-      setPrivilegeFailedApp(null);
-      setBlockedAppName(appName);
-
-      // Show the success banner for 3 seconds
-      blockedTimerRef.current = setTimeout(() => {
-        setBlockedAppName(null);
-      }, 3000);
-    });
+          blockedTimerRef.current = setTimeout(() => {
+            setBlockedAppName(null);
+          }, 3000);
+        })
+      : () => {};
 
     // 4. Listen for app-block-failed-privilege (app couldn't be closed due to privileges)
-    const unsubPrivilege = window.electronAPI.onAppBlockFailedPrivilege((appName) => {
-      if (countdownTimerRef.current) {
-        clearInterval(countdownTimerRef.current);
-        countdownTimerRef.current = null;
-      }
-      setActiveWarningApp(null);
-      setBlockedAppName(null);
-      setPrivilegeFailedApp(appName);
-    });
+    const unsubPrivilege = typeof window.electronAPI.onAppBlockFailedPrivilege === 'function'
+      ? window.electronAPI.onAppBlockFailedPrivilege((appName) => {
+          if (countdownTimerRef.current) {
+            clearInterval(countdownTimerRef.current);
+            countdownTimerRef.current = null;
+          }
+          setActiveWarningApp(null);
+          setBlockedAppName(null);
+          setPrivilegeFailedApp(appName);
+        })
+      : () => {};
 
     return () => {
-      unsubWarning();
-      unsubCancel();
-      unsubBlocked();
-      unsubPrivilege();
+      if (unsubWarning) unsubWarning();
+      if (unsubCancel) unsubCancel();
+      if (unsubBlocked) unsubBlocked();
+      if (unsubPrivilege) unsubPrivilege();
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       if (blockedTimerRef.current) clearTimeout(blockedTimerRef.current);
     };
