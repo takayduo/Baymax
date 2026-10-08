@@ -16,6 +16,14 @@ export function buildProductivity(_actions: ViewActions): ViewHost {
     allow: "camera; microphone; display-capture",
   }) as HTMLIFrameElement;
 
+  iframe.addEventListener("load", () => {
+    try {
+      if ((window as any).electronAPI && iframe.contentWindow) {
+        (iframe.contentWindow as any).electronAPI = (window as any).electronAPI;
+      }
+    } catch (_e) {}
+  });
+
   const container = h(
     "div",
     {

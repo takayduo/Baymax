@@ -311,7 +311,7 @@ class AppTracker {
       const blocklist = this.store.get('blocklist', []);
       const isBlocked = cat === 'wasteful' || blocklist.includes(appKey);
       if (isBlocked) {
-        if (now - this.lastDistractionWarnTime > 25000) {
+        if (now - this.lastDistractionWarnTime > 60000) {
           this.lastDistractionWarnTime = now;
           this.onFocusDistractionFn(processName);
         }

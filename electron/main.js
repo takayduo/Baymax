@@ -53,7 +53,7 @@ const {
   ICON_MAP,
   getLocalDateKey,
 } = require("./productivity/tracker");
-const { AppBlocker } = require("./productivity/blocker");
+const { AppBlocker, isProtectedProcess } = require("./productivity/blocker");
 
 // Enable Windows Graphics Capture (WGC) for reliable capture across hybrid/multi-GPU systems
 app.commandLine.appendSwitch("enable-features", "WebRtcAllowWgcScreenCapturer,WebRtcAllowWgcWindowCapturer");
@@ -1138,40 +1138,53 @@ function broadcastToProductivity(channel, ...args) {
 }
 
 let lastDistractionAlertTime = 0;
+let lastVoiceAlertTime = 0;
 function handleFocusDistractionAlert(procName) {
+  if (!procName) return;
+  const cleanProc = procName.toLowerCase().replace(/\.exe$/i, "").trim();
+
+  // Guard against any system / background process
+  if (isProtectedProcess(cleanProc)) return;
+
   const now = Date.now();
-  if (now - lastDistractionAlertTime < 25000) return;
+  // Global cooldown for native notifications: at least 45 seconds
+  if (now - lastDistractionAlertTime < 45000) return;
   lastDistractionAlertTime = now;
 
   const isMe = (activeSettings.userRole || "me") === "me";
   const userName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+  const displayName = cleanProc.charAt(0).toUpperCase() + cleanProc.slice(1);
 
-  console.log(`[Productivity] Alerting user: ${userName} opened distraction app ${procName}`);
+  console.log(`[Productivity] Alerting user: ${userName} opened distraction app ${displayName}`);
 
   // 1. Send warning to overlay island
   if (overlayWin && !overlayWin.isDestroyed()) {
     overlayWin.webContents.send("productivity-distraction-warning", {
-      app: procName,
+      app: displayName,
       userName: userName,
     });
   }
 
   // 2. Windows Native Notification
-  if (Notification.isSupported()) {
+  const settings = productivityStore ? productivityStore.get("settings", { notifications: true }) : { notifications: true };
+  if (settings.notifications && Notification.isSupported()) {
     try {
       new Notification({
-        title: "⚠️ Baymax — Focus On Your Work!",
-        body: `Hey ${userName}, "${procName}" is blocked! Focus session is active.`,
+        title: "Baymax — Focus Active",
+        body: `Hey ${userName}, "${displayName}" is blocked during your focus session.`,
         silent: false,
       }).show();
     } catch (e) {}
   }
 
-  // 3. Spoken voice intervention via Live Assistant
-  sendToLiveEngine({
-    cmd: "text",
-    text: `[FOCUS REMINDER]: The user ${userName} opened the distraction app '${procName}' during an active focus session. Tell them directly to focus on their work right now.`
-  });
+  // 3. Spoken voice intervention via Live Assistant (at most once every 60 seconds)
+  if (now - lastVoiceAlertTime > 60000) {
+    lastVoiceAlertTime = now;
+    sendToLiveEngine({
+      cmd: "text",
+      text: `[FOCUS REMINDER]: The user ${userName} opened ${displayName} during an active focus session. Say once gently and concisely: "Hey ${userName}, ${displayName} is blocked during your focus session. Let's stay focused on work."`
+    });
+  }
 }
 
 function createProductivityWindow() {

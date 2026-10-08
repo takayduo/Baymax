@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getElectronAPI } from '../context/AppContext';
 
 export default function FocusOverlay() {
   const [activeWarningApp, setActiveWarningApp] = useState<string | null>(null);
@@ -10,11 +11,12 @@ export default function FocusOverlay() {
   const blockedTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (!window.electronAPI) return;
+    const api = getElectronAPI();
+    if (!api) return;
 
     // 1. Listen for app-close-warning
-    const unsubWarning = typeof window.electronAPI.onAppCloseWarning === 'function'
-      ? window.electronAPI.onAppCloseWarning((appName) => {
+    const unsubWarning = typeof api.onAppCloseWarning === 'function'
+      ? api.onAppCloseWarning((appName: string) => {
           if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
           if (blockedTimerRef.current) clearTimeout(blockedTimerRef.current);
 
@@ -36,8 +38,8 @@ export default function FocusOverlay() {
       : () => {};
 
     // 2. Listen for app-close-warning-cancelled (e.g. user manually soft-closed the app)
-    const unsubCancel = typeof window.electronAPI.onAppCloseWarningCancelled === 'function'
-      ? window.electronAPI.onAppCloseWarningCancelled((appName) => {
+    const unsubCancel = typeof api.onAppCloseWarningCancelled === 'function'
+      ? api.onAppCloseWarningCancelled((appName: string) => {
           setActiveWarningApp((current) => {
             if (current?.toLowerCase() === appName.toLowerCase()) {
               if (countdownTimerRef.current) {
@@ -52,8 +54,8 @@ export default function FocusOverlay() {
       : () => {};
 
     // 3. Listen for app-blocked (app successfully force-killed)
-    const unsubBlocked = typeof window.electronAPI.onAppBlocked === 'function'
-      ? window.electronAPI.onAppBlocked((appName) => {
+    const unsubBlocked = typeof api.onAppBlocked === 'function'
+      ? api.onAppBlocked((appName: string) => {
           if (countdownTimerRef.current) {
             clearInterval(countdownTimerRef.current);
             countdownTimerRef.current = null;
@@ -69,8 +71,8 @@ export default function FocusOverlay() {
       : () => {};
 
     // 4. Listen for app-block-failed-privilege (app couldn't be closed due to privileges)
-    const unsubPrivilege = typeof window.electronAPI.onAppBlockFailedPrivilege === 'function'
-      ? window.electronAPI.onAppBlockFailedPrivilege((appName) => {
+    const unsubPrivilege = typeof api.onAppBlockFailedPrivilege === 'function'
+      ? api.onAppBlockFailedPrivilege((appName: string) => {
           if (countdownTimerRef.current) {
             clearInterval(countdownTimerRef.current);
             countdownTimerRef.current = null;

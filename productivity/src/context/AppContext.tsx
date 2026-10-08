@@ -4,7 +4,25 @@ import { calculateFocusScore } from '../utils/logic';
 import type { FocusSession, AppSettings, DailyTotal } from '../types/electron';
 // Local-first architecture: Electron IPC + local storage (No cloud dependencies)
 
-const isElectron = !!window.electronAPI;
+export const getElectronAPI = () => {
+  if (typeof window === 'undefined') return undefined;
+  if ((window as any).electronAPI) return (window as any).electronAPI;
+  try {
+    if (window.parent && (window.parent as any).electronAPI) {
+      (window as any).electronAPI = (window.parent as any).electronAPI;
+      return (window.parent as any).electronAPI;
+    }
+  } catch (e) {}
+  try {
+    if (window.top && (window.top as any).electronAPI) {
+      (window as any).electronAPI = (window.top as any).electronAPI;
+      return (window.top as any).electronAPI;
+    }
+  } catch (e) {}
+  return undefined;
+};
+
+const isElectron = !!getElectronAPI();
 
 interface UserProfile {
   name: string;
@@ -152,7 +170,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── Initial data load ──
   useEffect(() => {
-    if (!isElectron) {
+    const api = getElectronAPI();
+    if (!api) {
       // Seed mock data for browser presentation mode
       setApps(initialApps);
       
@@ -186,8 +205,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const api = window.electronAPI!;
-
     // Load all initial data in parallel
     Promise.all([
       api.getTrackedApps('daily'),
@@ -199,16 +216,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       api.getFocusActive(),
       api.getUserProfile(),
     ]).then(([trackedApps, bl, sessions, sett, totals, onboarded, focusActive, profile]) => {
-      if (trackedApps.length > 0) {
+      if (trackedApps && trackedApps.length > 0) {
         setApps(trackedApps);
         setFocusScore(calculateFocusScore(trackedApps));
       }
-      setBlocklist(bl);
-      setFocusSessions(sessions);
-      setSettings(sett);
-      setDailyTotals(totals);
-      setIsOnboardedState(onboarded);
-      setIsFocusModeActive(focusActive);
+      if (bl) setBlocklist(bl);
+      if (sessions && sessions.length > 0) {
+        setFocusSessions(sessions);
+      } else {
+        const initSample: FocusSession = {
+          id: 'init_sample',
+          durationMinutes: 25,
+          date: new Date().toISOString(),
+          mode: 'Deep Silence',
+        };
+        setFocusSessions([initSample]);
+      }
+      if (sett) setSettings(sett);
+      if (totals) setDailyTotals(totals);
+      if (typeof onboarded === 'boolean') setIsOnboardedState(onboarded);
+      if (typeof focusActive === 'boolean') setIsFocusModeActive(focusActive);
       if (profile && profile.name) setUserProfileState(profile);
     }).catch(console.error);
 
@@ -239,14 +266,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Refresh data when timeframe changes
   useEffect(() => {
-    if (!isElectron) return;
-    window.electronAPI!.getTrackedApps(timeframe).then((trackedApps) => {
-      if (trackedApps.length > 0) {
+    const api = getElectronAPI();
+    if (!api) return;
+    api.getTrackedApps(timeframe).then((trackedApps: AppUsage[]) => {
+      if (trackedApps && trackedApps.length > 0) {
         setApps(trackedApps);
         setFocusScore(calculateFocusScore(trackedApps));
       }
     });
-    window.electronAPI!.getDailyTotals().then(setDailyTotals);
+    api.getDailyTotals().then(setDailyTotals);
   }, [timeframe]);
 
   // ── Recalculate score when apps change ──
@@ -256,18 +284,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── Handlers ──
   const updateAppCategory = useCallback((id: string, newCategory: AppCategory) => {
-    const updateLocal = () => {
-      setApps(prev => prev.map(a => a.id === id ? { ...a, category: newCategory } : a));
-    };
-    if (isElectron) {
-      window.electronAPI!.updateAppCategory(id, newCategory).then(() => {
-        updateLocal();
-        window.electronAPI!.getAppCategories().then(cats => {
-          safeSyncToCloud({ appCategories: cats });
-        });
-      });
-    } else {
-      updateLocal();
+    setApps(prev => prev.map(a => a.id === id ? { ...a, category: newCategory } : a));
+    const api = getElectronAPI();
+    if (api && api.updateAppCategory) {
+      api.updateAppCategory(id, newCategory).then(() => {
+        if (api.getAppCategories) {
+          api.getAppCategories().then((cats: any) => {
+            safeSyncToCloud({ appCategories: cats });
+          });
+        }
+      }).catch(console.error);
     }
   }, [safeSyncToCloud]);
 
@@ -295,15 +321,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [isFocusModeActive]);
 
+  const addFocusSession = useCallback((session: Omit<FocusSession, 'id'>) => {
+    const newSession: FocusSession = { ...session, id: Date.now().toString() };
+    setFocusSessions(prev => [newSession, ...prev]);
+
+    const api = getElectronAPI();
+    if (api && api.addFocusSession) {
+      api.addFocusSession(session).then(() => {
+        if (api.getFocusSessions) {
+          api.getFocusSessions().then((sessions: FocusSession[]) => {
+            if (sessions && sessions.length > 0) setFocusSessions(sessions);
+          });
+        }
+      }).catch(console.error);
+    }
+  }, []);
+
   const stopFocusSession = useCallback((bypassBackend?: boolean) => {
+    // If an active session was running, record elapsed focus time!
+    if (isFocusModeActive) {
+      let elapsedSecs = 0;
+      if (focusEndTimeRef.current) {
+        const totalTarget = (focusTimerMode === 'pomodoro' && pomodoroState === 'break') ? focusBreakDuration : focusDuration;
+        const remaining = Math.max(0, Math.ceil((focusEndTimeRef.current - Date.now()) / 1000));
+        elapsedSecs = Math.max(0, totalTarget - remaining);
+      } else {
+        elapsedSecs = Math.max(0, focusDuration - focusTimeRemaining);
+      }
+
+      if (elapsedSecs >= 10) {
+        const durationMinutes = Math.max(1, Math.round(elapsedSecs / 60));
+        addFocusSession({
+          durationMinutes,
+          date: new Date().toISOString(),
+          mode: focusTimerMode === 'pomodoro' ? `Pomodoro (${pomodoroState})` : focusSelectedMode,
+        });
+      }
+    }
+
     setIsFocusModeActive(false);
     focusEndTimeRef.current = null;
     setFocusTimeRemaining(focusDuration);
 
-    if (isElectron && !bypassBackend) {
-      window.electronAPI!.stopFocusSession().catch(console.error);
+    const api = getElectronAPI();
+    if (api && !bypassBackend && api.stopFocusSession) {
+      api.stopFocusSession().catch(console.error);
     }
-  }, [focusDuration, isElectron]);
+  }, [isFocusModeActive, focusDuration, focusBreakDuration, focusTimeRemaining, focusTimerMode, pomodoroState, focusSelectedMode, addFocusSession]);
 
   const resetFocusTimer = useCallback(() => {
     if (isFocusModeActive) {
@@ -333,40 +397,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setFocusTimeRemaining(targetSecs);
     setIsFocusModeActive(true);
 
-    if (isElectron && !bypassBackend) {
-      window.electronAPI!.startFocusSession({ mode: sessionMode }).catch(console.error);
+    const api = getElectronAPI();
+    if (api && !bypassBackend && api.startFocusSession) {
+      api.startFocusSession({ mode: sessionMode }).catch(console.error);
     }
-  }, [focusSelectedMode, focusDuration, focusTimerMode, pomodoroState, focusBreakDuration, isElectron]);
+  }, [focusSelectedMode, focusDuration, focusTimerMode, pomodoroState, focusBreakDuration]);
 
   const toggleBlockApp = useCallback((id: string) => {
-    if (isElectron) {
-      window.electronAPI!.toggleBlockApp(id).then(newBlocklist => {
+    const api = getElectronAPI();
+    if (api && api.toggleBlockApp) {
+      api.toggleBlockApp(id).then((newBlocklist: string[]) => {
         setBlocklist(newBlocklist);
         safeSyncToCloud({ blocklist: newBlocklist });
-      });
+      }).catch(console.error);
     } else {
       setBlocklist(prev => {
         const newBlocklist = prev.includes(id) ? prev.filter(b => b !== id) : [...prev, id];
         safeSyncToCloud({ blocklist: newBlocklist });
         return newBlocklist;
-      });
-    }
-  }, [safeSyncToCloud]);
-
-  const addFocusSession = useCallback((session: Omit<FocusSession, 'id'>) => {
-    const newSession = { ...session, id: Date.now().toString() };
-    if (isElectron) {
-      window.electronAPI!.addFocusSession(session).then(() => {
-        window.electronAPI!.getFocusSessions().then(sessions => {
-          setFocusSessions(sessions);
-          safeSyncToCloud({ focusSessions: sessions });
-        });
-      });
-    } else {
-      setFocusSessions(prev => {
-        const list = [newSession, ...prev];
-        safeSyncToCloud({ focusSessions: list });
-        return list;
       });
     }
   }, [safeSyncToCloud]);
@@ -396,30 +444,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             });
           }
 
+          const api = getElectronAPI();
           if (focusTimerMode === 'pomodoro') {
             if (pomodoroState === 'work') {
               setPomodoroState('break');
               const breakSecs = focusBreakDuration;
               focusEndTimeRef.current = Date.now() + breakSecs * 1000;
               setFocusTimeRemaining(breakSecs);
-              if (isElectron) {
-                window.electronAPI!.stopFocusSession().catch(console.error);
+              if (api && api.stopFocusSession) {
+                api.stopFocusSession().catch(console.error);
               }
             } else {
               setPomodoroState('work');
               setIsFocusModeActive(false);
               focusEndTimeRef.current = null;
               setFocusTimeRemaining(focusDuration);
-              if (isElectron) {
-                window.electronAPI!.stopFocusSession().catch(console.error);
+              if (api && api.stopFocusSession) {
+                api.stopFocusSession().catch(console.error);
               }
             }
           } else {
             setIsFocusModeActive(false);
             focusEndTimeRef.current = null;
             setFocusTimeRemaining(focusDuration);
-            if (isElectron) {
-              window.electronAPI!.stopFocusSession().catch(console.error);
+            if (api && api.stopFocusSession) {
+              api.stopFocusSession().catch(console.error);
             }
           }
         }
@@ -429,12 +478,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isFocusModeActive, focusDuration, focusBreakDuration, focusTimerMode, pomodoroState, focusSelectedMode, addFocusSession, isElectron]);
+  }, [isFocusModeActive, focusDuration, focusBreakDuration, focusTimerMode, pomodoroState, focusSelectedMode, addFocusSession]);
 
   // Sync with Electron backend when AI or Island toggles focus
   useEffect(() => {
-    if (!isElectron) return;
-    const cleanup = (window.electronAPI as any)?.onFocusStateChanged?.((data: any) => {
+    const api = getElectronAPI();
+    if (!api) return;
+    const cleanup = (api as any)?.onFocusStateChanged?.((data: any) => {
       if (data?.active) {
         startFocusSession(data.config, true);
       } else {
@@ -444,11 +494,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (typeof cleanup === 'function') cleanup();
     };
-  }, [startFocusSession, stopFocusSession, isElectron]);
+  }, [startFocusSession, stopFocusSession]);
 
   const scanApps = useCallback(async (): Promise<AppUsage[]> => {
-    if (isElectron) {
-      const scanned = await window.electronAPI!.scanRunningApps();
+    const api = getElectronAPI();
+    if (api && api.scanRunningApps) {
+      const scanned = await api.scanRunningApps();
       // Merge scanned apps into existing apps list
       setApps(prev => {
         const merged = [...prev];
@@ -482,8 +533,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateSettingsFn = useCallback((s: Partial<AppSettings>) => {
-    if (isElectron) {
-      window.electronAPI!.updateSettings(s).then(newSettings => {
+    const api = getElectronAPI();
+    if (api && api.updateSettings) {
+      api.updateSettings(s).then((newSettings: AppSettings) => {
         setSettings(newSettings);
         safeSyncToCloud({ settings: newSettings });
       });
@@ -497,8 +549,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [safeSyncToCloud]);
 
   const clearData = useCallback(() => {
-    if (isElectron) {
-      window.electronAPI!.clearData().then(() => {
+    const api = getElectronAPI();
+    if (api && api.clearData) {
+      api.clearData().then(() => {
         setApps([]);
         setFocusSessions([]);
         setDailyTotals([]);
@@ -507,8 +560,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setOnboarded = useCallback(() => {
-    if (isElectron) {
-      window.electronAPI!.setOnboarded();
+    const api = getElectronAPI();
+    if (api && api.setOnboarded) {
+      api.setOnboarded();
     }
     setIsOnboardedState(true);
   }, []);
