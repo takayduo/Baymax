@@ -7,6 +7,7 @@ export default function Dashboard() {
   const { apps, focusScore, dailyTotals, timeframe, setTimeframe, focusSessions } = useAppContext();
 
   const totalSeconds = apps.reduce((acc, app) => acc + (app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60), 0);
+  const screenTimeMinutes = Math.round(totalSeconds / 60);
   const productiveSeconds = apps.filter(a => a.category === 'productive').reduce((acc, app) => acc + (app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60), 0);
   const productiveTimeMinutes = Math.round(productiveSeconds / 60);
   const intentionalityScore = totalSeconds > 0 ? Math.round((productiveSeconds / totalSeconds) * 100) : 0;
