@@ -274,7 +274,15 @@ if (Test-Path "$installFolder\node_modules\esbuild\install.js") {
 Write-Host "[6/6] Creating Desktop Shortcut..." -ForegroundColor Yellow
 $desktopPath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Desktop)
 $shortcutPath = Join-Path $desktopPath "Baymax.lnk"
-$altShortcutPath = Join-Path $desktopPath "Mochi Ultra.lnk"
+
+# Clean up old Mochi shortcuts
+foreach ($oldLnk in @("Mochi Ultra.lnk", "Mochi Eye.lnk", "Mochi.lnk")) {
+    $oldPath = Join-Path $desktopPath $oldLnk
+    if (Test-Path $oldPath) {
+        Remove-Item -Force $oldPath -ErrorAction SilentlyContinue
+    }
+}
+
 $electronExe = Join-Path $installFolder "node_modules\electron\dist\electron.exe"
 
 $wsh = New-Object -ComObject WScript.Shell
@@ -295,22 +303,6 @@ if (Test-Path $iconFile) {
 }
 $shortcut.Description = "Baymax — Autonomous AI Desktop Companion & Productivity Engine"
 $shortcut.Save()
-
-# Also create Mochi Ultra.lnk for compatibility
-$shortcut2 = $wsh.CreateShortcut($altShortcutPath)
-if (Test-Path $electronExe) {
-    $shortcut2.TargetPath = $electronExe
-    $shortcut2.Arguments = "."
-} else {
-    $shortcut2.TargetPath = "cmd.exe"
-    $shortcut2.Arguments = "/c `"$installFolder\Launch Baymax.bat`""
-}
-$shortcut2.WorkingDirectory = $installFolder
-if (Test-Path $iconFile) {
-    $shortcut2.IconLocation = "$iconFile,0"
-}
-$shortcut2.Description = "Baymax — Autonomous AI Desktop Companion"
-$shortcut2.Save()
 
 Write-Host "      [OK] Desktop shortcut created: $shortcutPath" -ForegroundColor Green
 
