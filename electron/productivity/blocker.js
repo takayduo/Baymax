@@ -47,18 +47,23 @@ class AppBlocker {
     this.pendingCloses = new Map();
     this.failedKills = new Set();
     this.lastProcessAlertTimes = new Map();
-    this.lastDistractionAlertTime = 0;
+    this.durationMinutes = 0;
+    this.startTime = null;
+    this.endTime = null;
   }
 
   start(config = {}) {
     this.isActive = true;
     this.mode = config.mode || 'Strict Lock';
+    this.durationMinutes = Number(config.durationMinutes) || 25;
+    this.startTime = Date.now();
+    this.endTime = this.startTime + (this.durationMinutes * 60 * 1000);
     this.recentlyBlocked.clear();
     this.pendingCloses.clear();
     this.failedKills.clear();
     this.lastProcessAlertTimes.clear();
     this.lastDistractionAlertTime = 0;
-    console.log(`[Blocker] Started in ${this.mode} mode`);
+    console.log(`[Blocker] Started in ${this.mode} mode (${this.durationMinutes}m, ends at ${new Date(this.endTime).toLocaleTimeString()})`);
 
     this.enforce();
     if (this.pollTimer) clearInterval(this.pollTimer);
@@ -67,6 +72,9 @@ class AppBlocker {
 
   stop() {
     this.isActive = false;
+    this.durationMinutes = 0;
+    this.startTime = null;
+    this.endTime = null;
     this.recentlyBlocked.clear();
     this.failedKills.clear();
     this.clearPendingCloses();
@@ -75,6 +83,18 @@ class AppBlocker {
       this.pollTimer = null;
     }
     console.log('[Blocker] Stopped');
+  }
+
+  getStatus() {
+    const remainingSeconds = this.endTime ? Math.max(0, Math.round((this.endTime - Date.now()) / 1000)) : 0;
+    return {
+      active: this.isActive,
+      mode: this.mode,
+      durationMinutes: this.durationMinutes || 25,
+      startTime: this.startTime,
+      endTime: this.endTime,
+      remainingSeconds,
+    };
   }
 
   clearPendingCloses() {

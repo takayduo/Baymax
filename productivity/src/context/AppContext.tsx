@@ -57,6 +57,7 @@ interface AppContextType {
   focusSessions: FocusSession[];
   addFocusSession: (session: Omit<FocusSession, 'id'>) => void;
   scanApps: () => Promise<AppUsage[]>;
+  scanAllApps: () => Promise<AppUsage[]>;
   settings: AppSettings;
   updateSettings: (s: Partial<AppSettings>) => void;
   clearData: () => void;
@@ -215,7 +216,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       api.isOnboarded(),
       api.getFocusActive(),
       api.getUserProfile(),
-    ]).then(([trackedApps, bl, sessions, sett, totals, onboarded, focusActive, profile]) => {
+    ]).then(([trackedApps, bl, sessions, sett, totals, onboarded, focusStatus, profile]) => {
       if (trackedApps && trackedApps.length > 0) {
         setApps(trackedApps);
         setFocusScore(calculateFocusScore(trackedApps));
@@ -235,7 +236,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (sett) setSettings(sett);
       if (totals) setDailyTotals(totals);
       if (typeof onboarded === 'boolean') setIsOnboardedState(onboarded);
-      if (typeof focusActive === 'boolean') setIsFocusModeActive(focusActive);
+
+      // Handle focus status from backend
+      if (focusStatus) {
+        if (typeof focusStatus === 'boolean') {
+          setIsFocusModeActive(focusStatus);
+        } else if (focusStatus.active) {
+          setIsFocusModeActive(true);
+          if (focusStatus.durationMinutes) {
+            const durSecs = Math.round(focusStatus.durationMinutes * 60);
+            setFocusDurationState(durSecs);
+          }
+          if (focusStatus.mode) {
+            setFocusSelectedModeState(focusStatus.mode);
+          }
+          if (focusStatus.endTime && focusStatus.endTime > Date.now()) {
+            focusEndTimeRef.current = focusStatus.endTime;
+            const rem = Math.max(0, Math.ceil((focusStatus.endTime - Date.now()) / 1000));
+            setFocusTimeRemaining(rem);
+          } else if (focusStatus.remainingSeconds) {
+            focusEndTimeRef.current = Date.now() + (focusStatus.remainingSeconds * 1000);
+            setFocusTimeRemaining(focusStatus.remainingSeconds);
+          }
+        }
+      }
+
       if (profile && profile.name) setUserProfileState(profile);
     }).catch(console.error);
 
@@ -243,24 +268,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const unsub = api.onTrackingUpdate((data) => {
       if (timeframeRef.current === 'weekly') {
         api.getTrackedApps('weekly').then((trackedApps) => {
-          setApps(trackedApps);
-          setFocusScore(calculateFocusScore(trackedApps));
+          if (trackedApps) {
+            setApps(trackedApps);
+            setFocusScore(calculateFocusScore(trackedApps));
+          }
         });
       } else {
-        setApps(data.apps);
-        setFocusScore(calculateFocusScore(data.apps));
+        if (data && data.apps) {
+          setApps(data.apps);
+          setFocusScore(calculateFocusScore(data.apps));
+        }
       }
     });
     cleanupRef.current = unsub;
 
-    // Also poll for daily totals every 30 seconds to keep the chart fresh
-    const totalsTimer = setInterval(() => {
-      api.getDailyTotals().then(setDailyTotals);
-    }, 30000);
+    // Fast 3-second polling interval to guarantee live screen time updates
+    const liveSyncTimer = setInterval(() => {
+      api.getTrackedApps(timeframeRef.current).then((latestApps) => {
+        if (latestApps && latestApps.length > 0) {
+          setApps(latestApps);
+          setFocusScore(calculateFocusScore(latestApps));
+        }
+      }).catch(() => {});
+      api.getDailyTotals().then((t) => {
+        if (t) setDailyTotals(t);
+      }).catch(() => {});
+    }, 3000);
 
     return () => {
       if (cleanupRef.current) cleanupRef.current();
-      clearInterval(totalsTimer);
+      clearInterval(liveSyncTimer);
     };
   }, []);
 
@@ -399,7 +436,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const api = getElectronAPI();
     if (api && !bypassBackend && api.startFocusSession) {
-      api.startFocusSession({ mode: sessionMode }).catch(console.error);
+      api.startFocusSession({ mode: sessionMode, durationMinutes: Math.round(durationSecs / 60) }).catch(console.error);
     }
   }, [focusSelectedMode, focusDuration, focusTimerMode, pomodoroState, focusBreakDuration]);
 
@@ -486,7 +523,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!api) return;
     const cleanup = (api as any)?.onFocusStateChanged?.((data: any) => {
       if (data?.active) {
-        startFocusSession(data.config, true);
+        const durMins = data.durationMinutes || data.config?.durationMinutes || 25;
+        const durSecs = Math.round(durMins * 60);
+        const mode = data.mode || data.config?.mode || focusSelectedMode;
+
+        setFocusDurationState(durSecs);
+        setFocusSelectedModeState(mode);
+        try {
+          localStorage.setItem('baymax_focus_duration', String(durSecs));
+          localStorage.setItem('baymax_focus_mode', mode);
+        } catch {}
+
+        if (data.endTime && data.endTime > Date.now()) {
+          focusEndTimeRef.current = data.endTime;
+          const rem = Math.max(0, Math.ceil((data.endTime - Date.now()) / 1000));
+          setFocusTimeRemaining(rem);
+        } else if (data.remainingSeconds) {
+          focusEndTimeRef.current = Date.now() + (data.remainingSeconds * 1000);
+          setFocusTimeRemaining(data.remainingSeconds);
+        } else {
+          focusEndTimeRef.current = Date.now() + (durSecs * 1000);
+          setFocusTimeRemaining(durSecs);
+        }
+        setIsFocusModeActive(true);
       } else {
         stopFocusSession(true);
       }
@@ -494,7 +553,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (typeof cleanup === 'function') cleanup();
     };
-  }, [startFocusSession, stopFocusSession]);
+  }, [focusSelectedMode, stopFocusSession]);
 
   const scanApps = useCallback(async (): Promise<AppUsage[]> => {
     const api = getElectronAPI();
@@ -530,6 +589,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       return mockScanned;
     }
+  }, []);
+
+  const scanAllApps = useCallback(async (): Promise<AppUsage[]> => {
+    const api = getElectronAPI();
+    if (api && (api as any).scanAllApps) {
+      try {
+        const scanned = await (api as any).scanAllApps();
+        if (scanned && scanned.length > 0) {
+          setApps(prev => {
+            const merged = [...prev];
+            for (const app of scanned) {
+              if (!merged.find(a => a.id === app.id)) {
+                merged.push(app);
+              }
+            }
+            return merged;
+          });
+        }
+        return scanned || [];
+      } catch (e) {
+        console.error('Scan all installed apps failed:', e);
+        return [];
+      }
+    }
+    return [];
   }, []);
 
   const updateSettingsFn = useCallback((s: Partial<AppSettings>) => {
@@ -578,7 +662,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       resetFocusTimer,
       blocklist, toggleBlockApp,
       focusSessions, addFocusSession,
-      scanApps, settings, updateSettings: updateSettingsFn,
+      scanApps, scanAllApps, settings, updateSettings: updateSettingsFn,
       clearData, isElectron, dailyTotals,
       isOnboarded, setOnboarded,
       timeframe, setTimeframe,

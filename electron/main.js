@@ -1130,6 +1130,11 @@ function broadcastToProductivity(channel, ...args) {
       productivityWin.webContents.send(channel, ...args);
     } catch (e) {}
   }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.webContents.send(channel, ...args);
+    } catch (e) {}
+  }
   if (overlayWin && !overlayWin.isDestroyed()) {
     try {
       overlayWin.webContents.send(channel, ...args);
@@ -1821,12 +1826,17 @@ function handleLiveEngineEvent(msg) {
     case 'focus_session_command': {
       const action = msg.action || 'start';
       if (action === 'start') {
-        const duration = Number(msg.duration_minutes) || 60;
-        const mode = msg.mode || 'Deep Silence';
+        const duration = Number(msg.duration_minutes) || 5;
+        const mode = msg.mode || 'Strict Lock';
         if (productivityBlocker) {
           productivityBlocker.start({ mode, durationMinutes: duration });
         }
-        broadcastToProductivity('focus-state-changed', { active: true, duration, mode });
+        const status = productivityBlocker ? productivityBlocker.getStatus() : { active: true, durationMinutes: duration, mode };
+        broadcastToProductivity('focus-state-changed', {
+          active: true,
+          ...status,
+          config: { durationMinutes: duration, mode },
+        });
       } else if (action === 'stop') {
         if (productivityBlocker) {
           productivityBlocker.stop();
@@ -2423,8 +2433,9 @@ async function executeActionTags(rawReply) {
       const parsed = JSON.parse(focusStartMatch[1]);
       const mins = Number(parsed.durationMinutes) || 25;
       const mode = parsed.mode || "Strict Lock";
-      if (productivityBlocker) productivityBlocker.start({ mode });
-      broadcastToProductivity("focus-state-changed", { active: true, config: { mode, durationMinutes: mins } });
+      if (productivityBlocker) productivityBlocker.start({ mode, durationMinutes: mins });
+      const status = productivityBlocker ? productivityBlocker.getStatus() : { active: true, durationMinutes: mins, mode };
+      broadcastToProductivity("focus-state-changed", { active: true, ...status, config: { mode, durationMinutes: mins } });
     } catch (e) {
       console.warn("Parse START_FOCUS error:", e);
     }
@@ -3618,7 +3629,8 @@ ipcMain.handle("set-focus-sessions", (_, sessions) => {
 
 ipcMain.handle("start-focus-session", (_, config) => {
   if (productivityBlocker) productivityBlocker.start(config);
-  broadcastToProductivity("focus-state-changed", { active: true, config });
+  const status = productivityBlocker ? productivityBlocker.getStatus() : { active: true, config };
+  broadcastToProductivity("focus-state-changed", { active: true, ...status, config });
   return true;
 });
 
@@ -3629,7 +3641,14 @@ ipcMain.handle("stop-focus-session", () => {
 });
 
 ipcMain.handle("get-focus-active", () => {
-  return productivityBlocker ? productivityBlocker.isActive : false;
+  return productivityBlocker ? productivityBlocker.getStatus() : { active: false };
+});
+
+ipcMain.handle("scan-all-installed-apps", async () => {
+  if (productivityTracker) {
+    return await productivityTracker.scanAllInstalledApps();
+  }
+  return [];
 });
 
 ipcMain.handle("get-blocklist", () => {

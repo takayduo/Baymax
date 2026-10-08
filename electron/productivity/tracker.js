@@ -142,23 +142,27 @@ Add-Type -MemberDefinition '
 ' -Name 'U' -Namespace 'W' -ErrorAction SilentlyContinue
 
 while($true) {
-  $h=[W.U]::GetForegroundWindow()
-  if ($h -ne [IntPtr]::Zero) {
-    $p=[uint32]0
-    [W.U]::GetWindowThreadProcessId($h,[ref]$p)|Out-Null
-    if ($p -gt 0) {
-      $pr=Get-Process -Id $p -ErrorAction SilentlyContinue
-      if ($pr) {
-        $sb=New-Object System.Text.StringBuilder 512
-        [W.U]::GetWindowText($h, $sb, $sb.Capacity)|Out-Null
-        $t=$sb.ToString()
-        $path=""
-        try { $path=$pr.Path } catch {}
-        @{n=$pr.ProcessName;t=$t;p=[int]$p;path=$path}|ConvertTo-Json -Compress
+  try {
+    $h = [W.U]::GetForegroundWindow()
+    if ($h -ne [IntPtr]::Zero) {
+      $p = [uint32]0
+      [W.U]::GetWindowThreadProcessId($h, [ref]$p) | Out-Null
+      if ($p -gt 0) {
+        $pr = Get-Process -Id $p -ErrorAction SilentlyContinue
+        if ($pr) {
+          $sb = New-Object System.Text.StringBuilder 512
+          [W.U]::GetWindowText($h, $sb, $sb.Capacity) | Out-Null
+          $t = $sb.ToString()
+          $path = ""
+          try { $path = $pr.Path } catch {}
+          $json = @{ n = $pr.ProcessName; t = $t; p = [int]$p; path = $path } | ConvertTo-Json -Compress
+          [Console]::WriteLine($json)
+          [Console]::Out.Flush()
+        }
       }
     }
-  }
-  Start-Sleep -Seconds 2
+  } catch {}
+  Start-Sleep -Milliseconds 1500
 }
 `;
 
@@ -180,27 +184,50 @@ class AppTracker {
     this.hasInitialScan = false;
     this.currentForeground = null;
     this.lastDistractionWarnTime = 0;
+    this.heartbeatTimer = null;
   }
 
   start() {
     if (this.isTracking) return;
     this.isTracking = true;
     this.lastPollTime = Date.now();
-    console.log('[Tracker] Started');
+    console.log('[Tracker] Started with live auto-flush');
 
     this.initialScan();
+    this.spawnTrackerProcess();
+
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.isTracking) return;
+      const now = Date.now();
+      if (this.lastPollTime && now - this.lastPollTime > 6000) {
+        if (!this.psProcess || this.psProcess.killed) {
+          console.warn('[Tracker] Heartbeat noticed dead process, respawning...');
+          this.spawnTrackerProcess();
+        }
+      }
+    }, 4000);
+  }
+
+  spawnTrackerProcess() {
+    if (!this.isTracking) return;
+    if (this.psProcess) {
+      try { this.psProcess.kill(); } catch (e) {}
+      this.psProcess = null;
+    }
 
     this.psProcess = spawn('powershell.exe', [
       '-NoProfile', '-NoLogo', '-NonInteractive', '-Command', PS_SCRIPT
     ], { windowsHide: true });
 
     this.psProcess.stdout.on('data', (data) => {
-      const output = data.toString().trim();
+      const output = data.toString();
       const lines = output.split('\n');
       for (const line of lines) {
-        if (!line.trim()) continue;
+        const trimmed = line.trim();
+        if (!trimmed) continue;
         try {
-          const info = JSON.parse(line.trim());
+          const info = JSON.parse(trimmed);
           if (info && info.n) {
             this.recordActivity(info.n, info.t, info.path);
           }
@@ -210,6 +237,13 @@ class AppTracker {
 
     this.psProcess.on('error', (err) => {
       console.warn('[Tracker] PowerShell process error:', err.message);
+    });
+
+    this.psProcess.on('exit', (code, signal) => {
+      if (this.isTracking) {
+        console.warn(`[Tracker] PowerShell process exited (${code}), auto-restarting in 1s...`);
+        setTimeout(() => this.spawnTrackerProcess(), 1000);
+      }
     });
   }
 
@@ -422,10 +456,125 @@ class AppTracker {
     return this.currentForeground;
   }
 
+  async scanAllInstalledApps() {
+    return new Promise((resolve) => {
+      const script = `
+        $wsh = New-Object -ComObject WScript.Shell
+        $shortcuts = Get-ChildItem -Path "$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs", "$env:AppData\\Microsoft\\Windows\\Start Menu\\Programs" -Filter "*.lnk" -Recurse -ErrorAction SilentlyContinue
+        $apps = @()
+        $seen = New-Object System.Collections.Generic.HashSet[string]
+
+        foreach ($s in $shortcuts) {
+          try {
+            $t = $wsh.CreateShortcut($s.FullName).TargetPath
+            if ($t -and (Test-Path $t) -and ($t.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase))) {
+              $pName = [System.IO.Path]::GetFileNameWithoutExtension($t)
+              $key = $pName.ToLower()
+              if (-not $seen.Contains($key) -and -not ($key -match "unins|setup|helper|crash|report|update")) {
+                $seen.Add($key) | Out-Null
+                $apps += @{
+                  processName = $pName;
+                  name = $s.BaseName;
+                  path = $t;
+                }
+              }
+            }
+          } catch {}
+        }
+        $apps | ConvertTo-Json -Compress
+      `;
+
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NoLogo', '-NonInteractive', '-Command', script],
+        { windowsHide: true, timeout: 15000, maxBuffer: 10 * 1024 * 1024 },
+        async (err, stdout) => {
+          if (err || !stdout || !stdout.trim()) {
+            console.warn('[Tracker] scanAllInstalledApps failed:', err ? err.message : 'no output');
+            resolve([]);
+            return;
+          }
+
+          try {
+            let data = JSON.parse(stdout.trim());
+            if (!Array.isArray(data)) data = [data];
+
+            const dateKey = getLocalDateKey();
+            const usageData = this.store.get(`usageData.${dateKey}`, {});
+            const categories = this.store.get('appCategories', {});
+            let changed = false;
+
+            const promises = data.map(async (item) => {
+              if (!item || !item.processName) return null;
+              const key = item.processName.toLowerCase();
+              if (SYSTEM_IGNORED_PROCS.includes(key)) return null;
+
+              let iconDataUrl = null;
+              if (item.path) {
+                try {
+                  const img = await app.getFileIcon(item.path, { size: 'normal' });
+                  iconDataUrl = img.toDataURL();
+                } catch (e) {}
+              }
+
+              if (!usageData[key]) {
+                usageData[key] = {
+                  processName: item.name || item.processName,
+                  windowTitle: item.name || item.processName,
+                  totalSeconds: 0,
+                  category: this.getCategory(key),
+                  lastActive: Date.now(),
+                  icon: iconDataUrl,
+                };
+                changed = true;
+              } else if (iconDataUrl && !usageData[key].icon) {
+                usageData[key].icon = iconDataUrl;
+                changed = true;
+              }
+
+              return {
+                id: key,
+                name: item.name || item.processName,
+                windowTitle: item.name || item.processName,
+                timeSpentMinutes: Math.ceil((usageData[key].totalSeconds || 0) / 60),
+                category: categories[key] || this.getCategory(key),
+                type: 'application',
+                icon: iconDataUrl || ICON_MAP[key] || 'apps',
+              };
+            });
+
+            const resolved = await Promise.all(promises);
+            const valid = resolved.filter(Boolean);
+
+            if (changed) {
+              this.store.set(`usageData.${dateKey}`, usageData);
+              try {
+                this.broadcaster('tracking-update', {
+                  dateKey,
+                  apps: this.formatApps(usageData),
+                });
+              } catch (e) {}
+            }
+
+            console.log(`[Tracker] scanAllInstalledApps found ${valid.length} apps`);
+            resolve(valid);
+          } catch (e) {
+            console.error('[Tracker] scanAllInstalledApps parse error:', e.message);
+            resolve([]);
+          }
+        }
+      );
+    });
+  }
+
   stop() {
     this.isTracking = false;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     if (this.psProcess) {
-      this.psProcess.kill();
+      try { this.psProcess.kill(); } catch (e) {}
       this.psProcess = null;
     }
     console.log('[Tracker] Stopped');

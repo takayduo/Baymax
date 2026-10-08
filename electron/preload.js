@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAppCategories: () => ipcRenderer.invoke("get-app-categories"),
   updateAppCategory: (processName, category) => ipcRenderer.invoke("update-app-category", processName, category),
   scanRunningApps: () => ipcRenderer.invoke("scan-running-apps"),
+  scanAllApps: () => ipcRenderer.invoke("scan-all-installed-apps"),
   getFocusSessions: () => ipcRenderer.invoke("get-focus-sessions"),
   addFocusSession: (session) => ipcRenderer.invoke("add-focus-session", session),
   setFocusSessions: (sessions) => ipcRenderer.invoke("set-focus-sessions", sessions),

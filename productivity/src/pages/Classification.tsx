@@ -4,8 +4,9 @@ import { AppUsage, AppCategory } from '../data/mockData';
 import { formatTime } from '../utils/logic';
 
 export default function Classification() {
-  const { apps, updateAppCategory, scanApps } = useAppContext();
+  const { apps, updateAppCategory, scanApps, scanAllApps } = useAppContext();
   const [isScanning, setIsScanning] = useState(false);
+  const [isScanningAll, setIsScanningAll] = useState(false);
   const [scannedApps, setScannedApps] = useState<AppUsage[]>([]);
   const [filter, setFilter] = useState<'all' | 'productive' | 'neutral' | 'wasteful'>('all');
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
@@ -40,7 +41,7 @@ export default function Classification() {
   };
 
   const handleScan = async () => {
-    if (isScanning) return;
+    if (isScanning || isScanningAll) return;
     setIsScanning(true);
     setScanFeedback(null);
 
@@ -62,6 +63,29 @@ export default function Classification() {
     setTimeout(() => setScanFeedback(null), 4000);
   };
 
+  const handleScanAll = async () => {
+    if (isScanning || isScanningAll) return;
+    setIsScanningAll(true);
+    setScanFeedback(null);
+
+    try {
+      const scanned = await scanAllApps();
+      if (scanned && scanned.length > 0) {
+        setScannedApps(scanned);
+        const newCount = scanned.filter(s => !apps.find(a => a.id === s.id)).length;
+        setScanFeedback(`Discovered ${scanned.length} installed apps (${newCount} new)`);
+      } else {
+        setScanFeedback('No installed applications discovered.');
+      }
+    } catch (e) {
+      console.error('Scan all installed apps failed:', e);
+      setScanFeedback('Scan failed');
+    }
+
+    setIsScanningAll(false);
+    setTimeout(() => setScanFeedback(null), 5000);
+  };
+
   return (
     <div className="p-4 sm:p-5 w-full h-full flex flex-col justify-between select-none font-sans overflow-hidden">
       {/* Header Row */}
@@ -81,13 +105,24 @@ export default function Classification() {
 
           <button
             onClick={handleScan}
-            disabled={isScanning}
-            className="px-3 py-1.5 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+            disabled={isScanning || isScanningAll}
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-medium rounded-lg flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 border border-white/10"
           >
             <span className={`material-symbols-outlined text-[14px] ${isScanning ? 'animate-spin' : ''}`}>
               {isScanning ? 'progress_activity' : 'radar'}
             </span>
             <span>{isScanning ? 'Scanning...' : 'Scan Running Apps'}</span>
+          </button>
+
+          <button
+            onClick={handleScanAll}
+            disabled={isScanning || isScanningAll}
+            className="px-3 py-1.5 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
+          >
+            <span className={`material-symbols-outlined text-[14px] ${isScanningAll ? 'animate-spin' : ''}`}>
+              {isScanningAll ? 'progress_activity' : 'apps'}
+            </span>
+            <span>{isScanningAll ? 'Scanning All...' : 'Scan All Apps'}</span>
           </button>
         </div>
       </div>

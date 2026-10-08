@@ -12,14 +12,16 @@ export interface ElectronAPI {
 
   // Scan
   scanRunningApps: () => Promise<AppUsage[]>;
+  scanAllApps?: () => Promise<AppUsage[]>;
 
   // Focus
   getFocusSessions: () => Promise<FocusSession[]>;
   addFocusSession: (session: Omit<FocusSession, 'id'>) => Promise<boolean>;
   setFocusSessions: (sessions: FocusSession[]) => Promise<boolean>;
-  startFocusSession: (config: { mode: string }) => Promise<boolean>;
+  startFocusSession: (config: { mode?: string; durationMinutes?: number }) => Promise<any>;
   stopFocusSession: () => Promise<boolean>;
-  getFocusActive: () => Promise<boolean>;
+  getFocusActive: () => Promise<any>;
+  onFocusStateChanged?: (callback: (data: any) => void) => () => void;
   onAppBlocked: (callback: (name: string) => void) => () => void;
   onAppCloseWarning: (callback: (name: string) => void) => () => void;
   onAppCloseWarningCancelled: (callback: (name: string) => void) => () => void;
