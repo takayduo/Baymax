@@ -216,8 +216,9 @@ class AppTracker {
       this.psProcess = null;
     }
 
+    const psScriptPath = path.join(__dirname, 'foreground_tracker.ps1');
     this.psProcess = spawn('powershell.exe', [
-      '-NoProfile', '-NoLogo', '-NonInteractive', '-Command', PS_SCRIPT
+      '-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', psScriptPath
     ], { windowsHide: true });
 
     this.psProcess.stdout.on('data', (data) => {
@@ -250,6 +251,8 @@ class AppTracker {
   initialScan() {
     const dateKey = getLocalDateKey();
     const usageData = this.store.get(`usageData.${dateKey}`, {});
+    const known = this.store.get('knownApps', {});
+    const categories = this.store.get('appCategories', {});
 
     execFile(
       'powershell.exe',
@@ -273,20 +276,21 @@ class AppTracker {
 
             if (SYSTEM_IGNORED_PROCS.includes(appKey)) return;
 
+            let iconDataUrl = null;
+            if (proc.Path) {
+              try {
+                const img = await app.getFileIcon(proc.Path, { size: 'normal' });
+                iconDataUrl = img.toDataURL();
+              } catch (e) {}
+            }
+
             if (!usageData[appKey] || !usageData[appKey].icon || !usageData[appKey].icon.startsWith('data:')) {
-              let iconDataUrl = null;
-              if (proc.Path) {
-                try {
-                  const img = await app.getFileIcon(proc.Path, { size: 'normal' });
-                  iconDataUrl = img.toDataURL();
-                } catch (e) {}
-              }
               if (!usageData[appKey]) {
                 usageData[appKey] = {
                   processName: proc.ProcessName,
                   windowTitle: proc.MainWindowTitle || proc.ProcessName,
                   totalSeconds: 1,
-                  category: this.getCategory(appKey),
+                  category: categories[appKey] || this.getCategory(appKey),
                   lastActive: now,
                   icon: iconDataUrl,
                 };
@@ -296,6 +300,20 @@ class AppTracker {
                 changed = true;
               }
             }
+
+            const cat = categories[appKey] || usageData[appKey]?.category || this.getCategory(appKey);
+            const totalSecs = usageData[appKey]?.totalSeconds || 1;
+            if (!known[appKey] || !known[appKey].icon) {
+              known[appKey] = {
+                id: appKey,
+                name: proc.ProcessName,
+                windowTitle: proc.MainWindowTitle || proc.ProcessName,
+                timeSpentMinutes: Math.ceil(totalSecs / 60),
+                category: cat,
+                type: 'application',
+                icon: iconDataUrl || known[appKey]?.icon || ICON_MAP[appKey] || 'apps',
+              };
+            }
           });
 
           await Promise.all(promises);
@@ -303,6 +321,7 @@ class AppTracker {
           if (changed) {
             this.store.set(`usageData.${dateKey}`, usageData);
           }
+          this.store.set('knownApps', known);
           this.hasInitialScan = true;
 
           try {
@@ -312,7 +331,7 @@ class AppTracker {
             });
           } catch (e) {}
 
-          console.log(`[Tracker] Initial scan: found ${Object.keys(usageData).length} apps`);
+          console.log(`[Tracker] Initial scan: found ${Object.keys(usageData).length} apps, total library ${Object.keys(known).length}`);
         } catch (e) {
           console.error('[Tracker] Initial scan parse error:', e.message);
           this.hasInitialScan = true;
@@ -379,6 +398,27 @@ class AppTracker {
     usageData[appKey].lastActive = now;
 
     this.store.set(`usageData.${dateKey}`, usageData);
+
+    const known = this.store.get('knownApps', {});
+    const mins = Math.ceil(usageData[appKey].totalSeconds / 60);
+    if (!known[appKey]) {
+      known[appKey] = {
+        id: appKey,
+        name: processName,
+        windowTitle: usageData[appKey].windowTitle || processName,
+        timeSpentMinutes: mins,
+        category: cat,
+        type: 'application',
+        icon: usageData[appKey].icon || ICON_MAP[appKey] || 'apps',
+      };
+    } else {
+      known[appKey].timeSpentMinutes = mins;
+      if (usageData[appKey].icon && !known[appKey].icon) {
+        known[appKey].icon = usageData[appKey].icon;
+      }
+      known[appKey].category = cat;
+    }
+    this.store.set('knownApps', known);
 
     try {
       this.broadcaster('tracking-update', {
@@ -456,21 +496,119 @@ class AppTracker {
     return this.currentForeground;
   }
 
+  getKnownApps() {
+    const known = this.store.get('knownApps', {});
+    const dateKey = getLocalDateKey();
+    const usageData = this.store.get(`usageData.${dateKey}`, {});
+    const categories = this.store.get('appCategories', {});
+
+    // Sync today's usageData into knownApps
+    for (const [key, d] of Object.entries(usageData)) {
+      if (SYSTEM_IGNORED_PROCS.includes(key)) continue;
+      const cat = categories[key] || d.category || this.getCategory(key);
+      const mins = Math.ceil((d.totalSeconds || 0) / 60);
+      if (!known[key]) {
+        known[key] = {
+          id: key,
+          name: d.processName,
+          windowTitle: d.windowTitle || d.processName,
+          timeSpentMinutes: mins,
+          category: cat,
+          type: 'application',
+          icon: d.icon || ICON_MAP[key] || 'apps',
+        };
+      } else {
+        known[key].timeSpentMinutes = mins;
+        if (d.icon && !known[key].icon) known[key].icon = d.icon;
+        known[key].category = cat;
+      }
+    }
+
+    return Object.values(known).sort((a, b) => {
+      if (b.timeSpentMinutes !== a.timeSpentMinutes) {
+        return b.timeSpentMinutes - a.timeSpentMinutes;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  saveCustomApp(appData) {
+    if (!appData || !appData.name) return null;
+    const name = appData.name.trim();
+    const rawProc = (appData.processName || name).trim().replace(/\.exe$/i, '');
+    const key = rawProc.toLowerCase();
+    const cat = appData.category || 'neutral';
+
+    const categories = this.store.get('appCategories', {});
+    categories[key] = cat;
+    this.store.set('appCategories', categories);
+
+    const known = this.store.get('knownApps', {});
+    const dateKey = getLocalDateKey();
+    const usageData = this.store.get(`usageData.${dateKey}`, {});
+    const totalSecs = usageData[key]?.totalSeconds || 0;
+
+    const entry = {
+      id: key,
+      name,
+      windowTitle: name,
+      timeSpentMinutes: Math.ceil(totalSecs / 60),
+      category: cat,
+      type: 'application',
+      icon: ICON_MAP[key] || 'apps',
+    };
+    known[key] = entry;
+    this.store.set('knownApps', known);
+
+    return entry;
+  }
+
+  updateCategory(processName, category) {
+    const key = processName.toLowerCase();
+    const categories = this.store.get('appCategories', {});
+    categories[key] = category;
+    this.store.set('appCategories', categories);
+
+    const known = this.store.get('knownApps', {});
+    if (known[key]) {
+      known[key].category = category;
+      this.store.set('knownApps', known);
+    }
+
+    const dateKey = getLocalDateKey();
+    const usageData = this.store.get(`usageData.${dateKey}`, {});
+    if (usageData[key]) {
+      usageData[key].category = category;
+      this.store.set(`usageData.${dateKey}`, usageData);
+    }
+  }
+
   async scanAllInstalledApps() {
     return new Promise((resolve) => {
       const script = `
         $wsh = New-Object -ComObject WScript.Shell
         $shortcuts = Get-ChildItem -Path "$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs", "$env:AppData\\Microsoft\\Windows\\Start Menu\\Programs" -Filter "*.lnk" -Recurse -ErrorAction SilentlyContinue
-        $apps = @()
+
+        $winDir = [System.Environment]::GetFolderPath('Windows')
+        $excluded = 'unins|setup|install|update|helper|crash|report|clean|charmap|iscsi|odbc|resmon|regedit|perfmon|dfrgui|eventvwr|taskmgr|msconfig|msinfo|dxdiag|service|diagnost|troubleshoot|feedback|register|git|siv|console|terminal|powershell|cmd|prompt|accessibility|administrative'
+
         $seen = New-Object System.Collections.Generic.HashSet[string]
+        $apps = @()
 
         foreach ($s in $shortcuts) {
+          if ($s.FullName -match 'Administrative Tools|Windows Tools|Windows PowerShell|Accessibility|System Tools|Accessories') { continue }
           try {
             $t = $wsh.CreateShortcut($s.FullName).TargetPath
-            if ($t -and (Test-Path $t) -and ($t.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase))) {
+            if ($t -and (Test-Path $t) -and ($t.EndsWith('.exe', [System.StringComparison]::OrdinalIgnoreCase))) {
+              if ($t.StartsWith($winDir, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+
               $pName = [System.IO.Path]::GetFileNameWithoutExtension($t)
               $key = $pName.ToLower()
-              if (-not $seen.Contains($key) -and -not ($key -match "unins|setup|helper|crash|report|update")) {
+              $baseName = $s.BaseName.ToLower()
+
+              if ($key -match $excluded -or $baseName -match $excluded) { continue }
+
+              if (-not $seen.Contains($key)) {
                 $seen.Add($key) | Out-Null
                 $apps += @{
                   processName = $pName;
@@ -491,7 +629,7 @@ class AppTracker {
         async (err, stdout) => {
           if (err || !stdout || !stdout.trim()) {
             console.warn('[Tracker] scanAllInstalledApps failed:', err ? err.message : 'no output');
-            resolve([]);
+            resolve(this.getKnownApps());
             return;
           }
 
@@ -499,15 +637,15 @@ class AppTracker {
             let data = JSON.parse(stdout.trim());
             if (!Array.isArray(data)) data = [data];
 
+            const known = this.store.get('knownApps', {});
+            const categories = this.store.get('appCategories', {});
             const dateKey = getLocalDateKey();
             const usageData = this.store.get(`usageData.${dateKey}`, {});
-            const categories = this.store.get('appCategories', {});
-            let changed = false;
 
-            const promises = data.map(async (item) => {
-              if (!item || !item.processName) return null;
+            for (const item of data) {
+              if (!item || !item.processName) continue;
               const key = item.processName.toLowerCase();
-              if (SYSTEM_IGNORED_PROCS.includes(key)) return null;
+              if (SYSTEM_IGNORED_PROCS.includes(key)) continue;
 
               let iconDataUrl = null;
               if (item.path) {
@@ -517,50 +655,26 @@ class AppTracker {
                 } catch (e) {}
               }
 
-              if (!usageData[key]) {
-                usageData[key] = {
-                  processName: item.name || item.processName,
-                  windowTitle: item.name || item.processName,
-                  totalSeconds: 0,
-                  category: this.getCategory(key),
-                  lastActive: Date.now(),
-                  icon: iconDataUrl,
-                };
-                changed = true;
-              } else if (iconDataUrl && !usageData[key].icon) {
-                usageData[key].icon = iconDataUrl;
-                changed = true;
-              }
+              const cat = categories[key] || this.getCategory(key);
+              const totalSecs = usageData[key]?.totalSeconds || 0;
 
-              return {
+              known[key] = {
                 id: key,
                 name: item.name || item.processName,
                 windowTitle: item.name || item.processName,
-                timeSpentMinutes: Math.ceil((usageData[key].totalSeconds || 0) / 60),
-                category: categories[key] || this.getCategory(key),
+                timeSpentMinutes: Math.ceil(totalSecs / 60),
+                category: cat,
                 type: 'application',
-                icon: iconDataUrl || ICON_MAP[key] || 'apps',
+                icon: iconDataUrl || known[key]?.icon || ICON_MAP[key] || 'apps',
               };
-            });
-
-            const resolved = await Promise.all(promises);
-            const valid = resolved.filter(Boolean);
-
-            if (changed) {
-              this.store.set(`usageData.${dateKey}`, usageData);
-              try {
-                this.broadcaster('tracking-update', {
-                  dateKey,
-                  apps: this.formatApps(usageData),
-                });
-              } catch (e) {}
             }
 
-            console.log(`[Tracker] scanAllInstalledApps found ${valid.length} apps`);
-            resolve(valid);
+            this.store.set('knownApps', known);
+            console.log(`[Tracker] scanAllInstalledApps saved ${Object.keys(known).length} apps to library`);
+            resolve(this.getKnownApps());
           } catch (e) {
             console.error('[Tracker] scanAllInstalledApps parse error:', e.message);
-            resolve([]);
+            resolve(this.getKnownApps());
           }
         }
       );

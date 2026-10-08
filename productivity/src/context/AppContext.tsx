@@ -58,6 +58,8 @@ interface AppContextType {
   addFocusSession: (session: Omit<FocusSession, 'id'>) => void;
   scanApps: () => Promise<AppUsage[]>;
   scanAllApps: () => Promise<AppUsage[]>;
+  knownApps: AppUsage[];
+  addCustomApp: (app: { name: string; processName?: string; category: AppCategory }) => Promise<AppUsage | null>;
   settings: AppSettings;
   updateSettings: (s: Partial<AppSettings>) => void;
   clearData: () => void;
@@ -78,6 +80,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   // Start with empty — real data will stream in from the tracker
   const [apps, setApps] = useState<AppUsage[]>([]);
+  const [knownApps, setKnownApps] = useState<AppUsage[]>([]);
   const [focusScore, setFocusScore] = useState(0);
   const [isFocusModeActive, setIsFocusModeActive] = useState(false);
   const [blocklist, setBlocklist] = useState<string[]>([]);
@@ -216,10 +219,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       api.isOnboarded(),
       api.getFocusActive(),
       api.getUserProfile(),
-    ]).then(([trackedApps, bl, sessions, sett, totals, onboarded, focusStatus, profile]) => {
+      (api as any).getKnownApps ? (api as any).getKnownApps() : Promise.resolve([]),
+    ]).then(([trackedApps, bl, sessions, sett, totals, onboarded, focusStatus, profile, libApps]) => {
       if (trackedApps && trackedApps.length > 0) {
         setApps(trackedApps);
         setFocusScore(calculateFocusScore(trackedApps));
+      }
+      if (libApps && libApps.length > 0) {
+        setKnownApps(libApps);
+      } else if (trackedApps && trackedApps.length > 0) {
+        setKnownApps(trackedApps);
       }
       if (bl) setBlocklist(bl);
       if (sessions && sessions.length > 0) {
@@ -264,6 +273,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (profile && profile.name) setUserProfileState(profile);
     }).catch(console.error);
 
+    const syncUsageToKnown = (latest: AppUsage[]) => {
+      setKnownApps(prev => {
+        if (!prev || prev.length === 0) return latest;
+        const map = new Map<string, AppUsage>();
+        for (const k of prev) map.set(k.id, { ...k });
+        for (const t of latest) {
+          const ex = map.get(t.id);
+          if (ex) {
+            ex.timeSpentMinutes = t.timeSpentMinutes;
+            if (t.icon && !ex.icon) ex.icon = t.icon;
+          } else {
+            map.set(t.id, { ...t });
+          }
+        }
+        return Array.from(map.values()).sort((a, b) => {
+          if (b.timeSpentMinutes !== a.timeSpentMinutes) return b.timeSpentMinutes - a.timeSpentMinutes;
+          return a.name.localeCompare(b.name);
+        });
+      });
+    };
+
     // Listen for live tracking updates from the tracker
     const unsub = api.onTrackingUpdate((data) => {
       if (timeframeRef.current === 'weekly') {
@@ -271,12 +301,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (trackedApps) {
             setApps(trackedApps);
             setFocusScore(calculateFocusScore(trackedApps));
+            syncUsageToKnown(trackedApps);
           }
         });
       } else {
         if (data && data.apps) {
           setApps(data.apps);
           setFocusScore(calculateFocusScore(data.apps));
+          syncUsageToKnown(data.apps);
         }
       }
     });
@@ -288,6 +320,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (latestApps && latestApps.length > 0) {
           setApps(latestApps);
           setFocusScore(calculateFocusScore(latestApps));
+          syncUsageToKnown(latestApps);
         }
       }).catch(() => {});
       api.getDailyTotals().then((t) => {
@@ -322,6 +355,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── Handlers ──
   const updateAppCategory = useCallback((id: string, newCategory: AppCategory) => {
     setApps(prev => prev.map(a => a.id === id ? { ...a, category: newCategory } : a));
+    setKnownApps(prev => prev.map(a => a.id === id ? { ...a, category: newCategory } : a));
     const api = getElectronAPI();
     if (api && api.updateAppCategory) {
       api.updateAppCategory(id, newCategory).then(() => {
@@ -559,7 +593,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const api = getElectronAPI();
     if (api && api.scanRunningApps) {
       const scanned = await api.scanRunningApps();
-      // Merge scanned apps into existing apps list
+      // Merge scanned apps into existing apps list and knownApps
       setApps(prev => {
         const merged = [...prev];
         for (const app of scanned) {
@@ -568,6 +602,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
         }
         return merged;
+      });
+      setKnownApps(prev => {
+        const map = new Map<string, AppUsage>();
+        for (const k of prev) map.set(k.id, { ...k });
+        for (const s of scanned) {
+          const ex = map.get(s.id);
+          if (ex) {
+            if (s.icon && !ex.icon) ex.icon = s.icon;
+          } else {
+            map.set(s.id, { ...s });
+          }
+        }
+        return Array.from(map.values()).sort((a, b) => b.timeSpentMinutes - a.timeSpentMinutes);
       });
       return scanned;
     } else {
@@ -587,6 +634,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return merged;
       });
+      setKnownApps(prev => {
+        const map = new Map<string, AppUsage>();
+        for (const k of prev) map.set(k.id, { ...k });
+        for (const s of mockScanned) map.set(s.id, { ...s });
+        return Array.from(map.values());
+      });
       return mockScanned;
     }
   }, []);
@@ -597,10 +650,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         const scanned = await (api as any).scanAllApps();
         if (scanned && scanned.length > 0) {
+          setKnownApps(scanned);
           setApps(prev => {
             const merged = [...prev];
             for (const app of scanned) {
-              if (!merged.find(a => a.id === app.id)) {
+              if (app.timeSpentMinutes > 0 && !merged.find(a => a.id === app.id)) {
                 merged.push(app);
               }
             }
@@ -614,6 +668,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
     return [];
+  }, []);
+
+  const addCustomApp = useCallback(async (appData: { name: string; processName?: string; category: AppCategory }): Promise<AppUsage | null> => {
+    const api = getElectronAPI();
+    if (api && (api as any).addCustomApp) {
+      try {
+        const added = await (api as any).addCustomApp(appData);
+        if (added) {
+          setKnownApps(prev => {
+            const filtered = prev.filter(a => a.id !== added.id);
+            return [added, ...filtered];
+          });
+          return added;
+        }
+      } catch (e) {
+        console.error('Failed to add custom app:', e);
+      }
+    }
+    const id = (appData.processName || appData.name).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const entry: AppUsage = {
+      id,
+      name: appData.name,
+      timeSpentMinutes: 0,
+      category: appData.category,
+      type: 'application',
+      icon: 'apps',
+    };
+    setKnownApps(prev => [entry, ...prev.filter(a => a.id !== id)]);
+    return entry;
   }, []);
 
   const updateSettingsFn = useCallback((s: Partial<AppSettings>) => {
@@ -662,7 +745,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       resetFocusTimer,
       blocklist, toggleBlockApp,
       focusSessions, addFocusSession,
-      scanApps, scanAllApps, settings, updateSettings: updateSettingsFn,
+      scanApps, scanAllApps, knownApps, addCustomApp, settings, updateSettings: updateSettingsFn,
       clearData, isElectron, dailyTotals,
       isOnboarded, setOnboarded,
       timeframe, setTimeframe,

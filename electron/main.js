@@ -3562,6 +3562,9 @@ ipcMain.handle("update-app-category", (_, processNameOrData, category) => {
     usage[key].category = cat;
     productivityStore.set(`usageData.${dateKey}`, usage);
   }
+  if (productivityTracker) {
+    productivityTracker.updateCategory(processName, cat);
+  }
   return true;
 });
 
@@ -3649,6 +3652,20 @@ ipcMain.handle("scan-all-installed-apps", async () => {
     return await productivityTracker.scanAllInstalledApps();
   }
   return [];
+});
+
+ipcMain.handle("get-known-apps", () => {
+  if (productivityTracker) {
+    return productivityTracker.getKnownApps();
+  }
+  return [];
+});
+
+ipcMain.handle("add-custom-app", (_, appData) => {
+  if (productivityTracker) {
+    return productivityTracker.saveCustomApp(appData);
+  }
+  return null;
 });
 
 ipcMain.handle("get-blocklist", () => {

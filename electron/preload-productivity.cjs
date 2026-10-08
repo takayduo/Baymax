@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // -- Scan running apps & all installed apps --
   scanRunningApps: () => ipcRenderer.invoke('scan-running-apps'),
   scanAllApps: () => ipcRenderer.invoke('scan-all-installed-apps'),
+  getKnownApps: () => ipcRenderer.invoke('get-known-apps'),
+  addCustomApp: (appData) => ipcRenderer.invoke('add-custom-app', appData),
 
   // -- Focus sessions --
   getFocusSessions: () => ipcRenderer.invoke('get-focus-sessions'),

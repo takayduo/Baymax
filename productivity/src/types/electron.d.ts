@@ -10,9 +10,11 @@ export interface ElectronAPI {
   getAppCategories: () => Promise<Record<string, AppCategory>>;
   updateAppCategory: (processName: string, category: AppCategory) => Promise<boolean>;
 
-  // Scan
+  // Scan & Library
   scanRunningApps: () => Promise<AppUsage[]>;
   scanAllApps?: () => Promise<AppUsage[]>;
+  getKnownApps?: () => Promise<AppUsage[]>;
+  addCustomApp?: (app: { name: string; processName?: string; category: AppCategory }) => Promise<AppUsage>;
 
   // Focus
   getFocusSessions: () => Promise<FocusSession[]>;
