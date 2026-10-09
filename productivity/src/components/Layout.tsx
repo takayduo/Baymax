@@ -1,3 +1,4 @@
+import Icon from "./Icon";
 import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
@@ -12,7 +13,7 @@ const navItems = [
 ];
 
 export default function Layout() {
-  const { isFocusModeActive, focusTimeRemaining, focusSelectedMode, stopFocusSession, apps } = useAppContext();
+  const { isFocusModeActive, focusTimeRemaining, focusSelectedMode, stopFocusSession, apps, timeframe } = useAppContext();
   const totalSeconds = apps.reduce((acc, app) => acc + (app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60), 0);
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -40,7 +41,7 @@ export default function Layout() {
                 }`
               }
             >
-              <span className="material-symbols-outlined text-[14px] leading-none">{item.icon}</span>
+              <Icon className="app-icon text-[14px] leading-none" name={item.icon} />
               <span>{item.label}</span>
             </NavLink>
           ))}
@@ -62,8 +63,8 @@ export default function Layout() {
             </div>
           ) : (
             <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 font-mono">
-              <span className="material-symbols-outlined text-[13px] text-zinc-500">schedule</span>
-              <span>Today: {h}h {m}m</span>
+              <Icon className="app-icon text-[13px] text-zinc-500" name="schedule" />
+              <span>{timeframe === 'weekly' ? 'This week' : 'Today'}: {h}h {m}m</span>
             </div>
           )}
         </div>

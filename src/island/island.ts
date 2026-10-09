@@ -85,6 +85,7 @@ export class Island {
   private confusedRecovery: number | null = null;
   private prevViewBeforeConfused: IslandViewName = "overview";
   private lastSyncedView: IslandViewName | null = null;
+  private remoteConsentExpanded = false;
 
   /** Drop sequence bookkeeping: last tick played, and whether the ✓ has fired. */
   private uploadTens = 0;
@@ -99,6 +100,11 @@ export class Island {
     this.engine.onDizzy = () => this.handleDizzy();
     this.greeting.onComplete = () => this.fsm.greetComplete();
     State.subscribe(() => {
+      const remoteConsent = State.view === "remote-control" && State.remoteAccessStatus === "incoming_request";
+      if (remoteConsent !== this.remoteConsentExpanded) {
+        this.remoteConsentExpanded = remoteConsent;
+        this.animateGeometry(!remoteConsent);
+      }
       this.dirty = true;
       this.ensureRunning();
     });
@@ -160,28 +166,28 @@ export class Island {
           Sound.play("close");
           VoiceManager.stop();
         }
-        void Bridge.saveSettings(State.settings);
+        void Bridge.saveSettings({ micEnabled: State.settings.micEnabled });
         State.notify();
       },
       toggleSound: () => {
         State.settings.soundEnabled = !State.settings.soundEnabled;
         Sound.setEnabled(State.settings.soundEnabled);
-        void Bridge.saveSettings(State.settings);
+        void Bridge.saveSettings({ soundEnabled: State.settings.soundEnabled });
         State.notify();
       },
       setVolume: (v) => {
         State.settings.soundVolume = v;
         Sound.setVolume(v);
-        void Bridge.saveSettings(State.settings);
+        void Bridge.saveSettings({ soundVolume: v });
         State.notify();
       },
       setAutoClose: (s) => {
         State.settings.autoCloseInterval = s;
         this.fsm.homeToPetitDelay = s;
-        void Bridge.saveSettings(State.settings);
+        void Bridge.saveSettings({ autoCloseInterval: s });
         State.notify();
       },
-      openSettingsWindow: () => void Bridge.openSettingsWindow(),
+      openSettingsWindow: () => this.setView("preferences"),
       blip: () => Sound.play("blip"),
     };
 
@@ -322,13 +328,19 @@ export class Island {
       window.clearTimeout(this.homeCollapseTimer);
       this.homeCollapseTimer = null;
     }
-    if (!this.wasInIsland && !State.isPinned && view !== "partner-file") {
+    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences") {
       this.onMouseLeaveIsland();
     }
     State.notify();
   }
 
   setView(view: IslandViewName) {
+    if (view === "preferences") {
+      this.fsm.cancelTimers();
+      if (this.homeCollapseTimer != null) window.clearTimeout(this.homeCollapseTimer);
+      this.homeCollapseTimer = null;
+      this.homeCollapseAt = null;
+    }
     this.stopSequenceIfLeaving(view);
     if (this.fsm.state === "coucou" || State.view === "greeting") {
       this.greeting.interrupt();
@@ -345,7 +357,7 @@ export class Island {
     State.view = view;
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
-    if (!this.wasInIsland && !State.isPinned && view !== "partner-file") {
+    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences") {
       this.onMouseLeaveIsland();
     }
     State.notify();
@@ -516,7 +528,7 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.remoteAccessStatus === "incoming_request");
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -536,8 +548,8 @@ export class Island {
   }
 
   private applyGeometry() {
-    const w = this.width.value;
-    const hh = this.height.value;
+    const w = Math.max(0, this.width.value);
+    const hh = Math.max(0, this.height.value);
     const r = this.radius.value;
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
@@ -561,8 +573,8 @@ export class Island {
 
   /** Island rect in window coordinates (origin top-left of window). */
   private islandRect(): { x: number; y: number; w: number; h: number } {
-    const w = this.width.value;
-    const hh = this.height.value;
+    const w = Math.max(0, this.width.value);
+    const hh = Math.max(0, this.height.value);
     const winW = window.innerWidth || PANEL_W;
     return { x: (winW - w) / 2, y: 0, w, h: hh };
   }
@@ -575,8 +587,8 @@ export class Island {
       this.collapseTimer = null;
     }
     if (State.mode === "hidden") {
-      // Let the island finish retracting, then drop the window to the wake strip:
-      // from there the OS delivers no cursor events, so nothing polls at all.
+      // The native transparent surface keeps a stable size while the painted
+      // island retracts. Mark idle after the animation, without resizing it.
       this.collapseTimer = window.setTimeout(() => {
         this.collapseTimer = null;
         if (State.mode !== "hidden") return;
@@ -584,7 +596,7 @@ export class Island {
         void Bridge.setCollapsed(true);
       }, 420);
     } else if (this.collapsed) {
-      // Grow the window back before the island animates open.
+      // Mark active without recreating the native transparent surface.
       this.collapsed = false;
       void Bridge.setCollapsed(false);
     }
@@ -679,10 +691,13 @@ export class Island {
   onMouseLeaveIsland() {
     this.wasInIsland = false;
     void Bridge.setIgnoreMouseEvents(true, { forward: true });
-    this.fsm.mouseLeft();
 
     // If waiting for partner file manual dismiss, or pinned, do not collapse
-    if (State.isPinned || State.view === "partner-file") return;
+    if (State.isPinned || (State.view === "partner-file" || State.view === "preferences")) {
+      this.fsm.cancelTimers();
+      return;
+    }
+    this.fsm.mouseLeft();
 
     if (State.mode === "expanded") {
       const delay = Math.max(2, Math.min(30, State.settings.autoCloseInterval || 10));
@@ -694,7 +709,7 @@ export class Island {
         const isInputFocused =
           document.activeElement &&
           (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA");
-        if (!this.wasInIsland && !State.isPinned && !isInputFocused && State.view !== "partner-file" && State.mode === "expanded") {
+        if (!this.wasInIsland && !State.isPinned && !isInputFocused && State.view !== "partner-file" && State.view !== "preferences" && State.mode === "expanded") {
           this.collapse();
         }
       }, delay * 1000);
@@ -715,9 +730,12 @@ export class Island {
       UploadSeq.updateCursor(State.mouseInIsland.x, State.mouseInIsland.y);
     }
 
-    const inIsland =
-      x >= rect.x - HIT_MARGIN && x <= rect.x + rect.w + HIT_MARGIN &&
-      y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN;
+    const hidden = rect.h <= 1;
+    const hitWidth = hidden ? 240 : rect.w;
+    const hitLeft = rect.x + (rect.w - hitWidth) / 2;
+    const margin = this.wasInIsland ? 10 : 6;
+    const inIsland = x >= hitLeft - margin && x <= hitLeft + hitWidth + margin &&
+      y >= rect.y && y <= rect.y + (hidden ? 6 : rect.h) + margin;
 
     if (inIsland && !this.wasInIsland) {
       this.onMouseEnterIsland();
@@ -947,7 +965,7 @@ export class Island {
   }
 
   private updateCountdown(nowMs: number) {
-    if (State.mode !== "expanded" || State.isPinned || State.view === "partner-file" || this.homeCollapseAt == null) {
+    if (State.mode !== "expanded" || State.isPinned || (State.view === "partner-file" || State.view === "preferences") || this.homeCollapseAt == null) {
       this.countdown.style.width = "0px";
       return;
     }

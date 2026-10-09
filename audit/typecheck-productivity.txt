@@ -1,0 +1,44 @@
+productivity/src/App.tsx(1,53): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+productivity/src/App.tsx(2,27): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/App.tsx(27,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/components/BottomNav.tsx(1,19): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/components/BottomNav.tsx(2,25): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+productivity/src/components/BottomNav.tsx(3,22): error TS2307: Cannot find module 'clsx' or its corresponding type declarations.
+productivity/src/components/BottomNav.tsx(4,25): error TS2307: Cannot find module 'tailwind-merge' or its corresponding type declarations.
+productivity/src/components/BottomNav.tsx(19,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/components/FocusOverlay.tsx(1,52): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/components/FocusOverlay.tsx(101,7): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/components/Layout.tsx(1,19): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/components/Layout.tsx(2,33): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+productivity/src/components/Layout.tsx(27,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/components/Sidebar.tsx(1,19): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/components/Sidebar.tsx(2,25): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+productivity/src/components/Sidebar.tsx(3,22): error TS2307: Cannot find module 'clsx' or its corresponding type declarations.
+productivity/src/components/Sidebar.tsx(4,25): error TS2307: Cannot find module 'tailwind-merge' or its corresponding type declarations.
+productivity/src/components/Sidebar.tsx(20,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/components/TopBar.tsx(1,33): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/components/TopBar.tsx(2,29): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+productivity/src/components/TopBar.tsx(15,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/context/AppContext.tsx(1,92): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/context/AppContext.tsx(793,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/main.tsx(1,28): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/main.tsx(2,28): error TS2307: Cannot find module 'react-dom/client' or its corresponding type declarations.
+productivity/src/main.tsx(8,3): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/pages/Auth.tsx(1,33): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/pages/Auth.tsx(2,29): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+productivity/src/pages/Auth.tsx(14,8): error TS2307: Cannot find module 'firebase/auth' or its corresponding type declarations.
+productivity/src/pages/Auth.tsx(308,7): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/pages/Classification.tsx(1,33): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/pages/Classification.tsx(123,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/pages/Dashboard.tsx(1,32): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/pages/Dashboard.tsx(4,93): error TS2307: Cannot find module 'recharts' or its corresponding type declarations.
+productivity/src/pages/Dashboard.tsx(69,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/pages/FocusMode.tsx(1,52): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/pages/FocusMode.tsx(78,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/pages/Insights.tsx(1,19): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/pages/Insights.tsx(3,67): error TS2307: Cannot find module 'recharts' or its corresponding type declarations.
+productivity/src/pages/Insights.tsx(41,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/src/pages/Settings.tsx(1,19): error TS2307: Cannot find module 'react' or its corresponding type declarations.
+productivity/src/pages/Settings.tsx(20,5): error TS2875: This JSX tag requires the module path 'react/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+productivity/vite.config.ts(1,25): error TS2307: Cannot find module '@tailwindcss/vite' or its corresponding type declarations.
+productivity/vite.config.ts(2,19): error TS2307: Cannot find module '@vitejs/plugin-react' or its corresponding type declarations.

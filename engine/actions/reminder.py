@@ -1,3 +1,4 @@
+from core.paths import python_command
 import json
 import os
 import platform
@@ -13,9 +14,8 @@ _CNW: dict = (
 )
 
 def _base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    from core.paths import data_root
+    return data_root()
 
 
 def _get_os() -> str:
@@ -150,6 +150,7 @@ def _schedule_windows(target_dt: datetime, task_name: str,
     if pythonw.exists():
         python_exe = pythonw
 
+    runner_prefix = "python " if getattr(sys, "frozen", False) else ""
     xml_path = _scripts_dir() / f"{task_name}.xml"
     xml_content = (
         '<?xml version="1.0" encoding="UTF-16"?>\n'
@@ -161,7 +162,7 @@ def _schedule_windows(target_dt: datetime, task_name: str,
         '  </TimeTrigger></Triggers>\n'
         '  <Actions><Exec>\n'
         f'    <Command>{python_exe}</Command>\n'
-        f'    <Arguments>"{script_path}"</Arguments>\n'
+        f'    <Arguments>{runner_prefix}"{script_path}"</Arguments>\n'
         '  </Exec></Actions>\n'
         '  <Settings>\n'
         '    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n'

@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
-contextBridge.exposeInMainWorld("electronAPI", {
+if (process.isMainFrame) contextBridge.exposeInMainWorld("electronAPI", {
   getPathForFile: (file) => {
     try {
       if (webUtils && typeof webUtils.getPathForFile === "function") {
@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
     return file.path || "";
   },
+  prepareRemoteHost: () => ipcRenderer.invoke("prepare-remote-host"),
   boot: () => ipcRenderer.invoke("boot"),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
   setCollapsed: (collapsed) => ipcRenderer.invoke("set-collapsed", collapsed),
@@ -101,7 +102,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   updateAppCategory: (processName, category) => ipcRenderer.invoke("update-app-category", processName, category),
   scanRunningApps: () => ipcRenderer.invoke("scan-running-apps"),
   scanAllApps: () => ipcRenderer.invoke("scan-all-installed-apps"),
-  getKnownApps: () => ipcRenderer.invoke("get-known-apps"),
+  getTrackingHealth: () => ipcRenderer.invoke("get-tracking-health"),
+  setAppHidden: (id, hidden) => ipcRenderer.invoke("set-app-hidden", id, hidden),
+  getKnownApps: (includeHidden) => ipcRenderer.invoke("get-known-apps", includeHidden),
   addCustomApp: (appData) => ipcRenderer.invoke("add-custom-app", appData),
   getFocusSessions: () => ipcRenderer.invoke("get-focus-sessions"),
   addFocusSession: (session) => ipcRenderer.invoke("add-focus-session", session),
@@ -167,11 +170,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "cursor",
       "tray",
       "settings-changed",
+      "open-preferences",
       "schedule-updated",
       "file-received",
       "incoming-file",
       "partner-presence",
+      "sync-status",
       "partner-chat-received",
+      "partner-chat-history",
       "open-couple-chat",
       "screen-changed",
       "mouse-enter",

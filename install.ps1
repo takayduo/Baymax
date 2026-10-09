@@ -5,10 +5,11 @@ $ProgressPreference = "SilentlyContinue"
 function Download-Fast($url, $dest, $showProgress = $false) {
     if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
         if ($showProgress) {
-            & curl.exe -# -SL "$url" -o "$dest"
+            & curl.exe -f -# -SL "$url" -o "$dest"
         } else {
-            & curl.exe -sSL "$url" -o "$dest"
+            & curl.exe -f -sSL "$url" -o "$dest"
         }
+        if ($LASTEXITCODE -ne 0) { throw "Download failed: $url" }
     } else {
         $wc = New-Object System.Net.WebClient
         $wc.DownloadFile($url, $dest)
@@ -159,18 +160,16 @@ if ($pyExe) {
 # 3. Download Baymax from GitHub
 Write-Host "[3/6] Downloading Baymax from GitHub..." -ForegroundColor Yellow
 $installFolder = "$env:USERPROFILE\Baymax"
-if (-not (Test-Path $installFolder)) {
-    if (Test-Path "$env:USERPROFILE\Mochi-Ultra") {
-        $installFolder = "$env:USERPROFILE\Mochi-Ultra"
-    } else {
-        New-Item -ItemType Directory -Path $installFolder -Force | Out-Null
-    }
+if (Test-Path -LiteralPath $installFolder) {
+    $installFolder = Join-Path $env:USERPROFILE ('Baymax-' + [Guid]::NewGuid().ToString('N'))
 }
+New-Item -ItemType Directory -Path $installFolder | Out-Null
 
 $zipUrlPrimary = "https://github.com/takayduo/BEMAX/archive/refs/heads/main.zip"
 $zipUrlFallback = "https://github.com/takayduo/Mochi-Ultra/archive/refs/heads/main.zip"
-$zipFile = "$env:TEMP\Baymax_Latest.zip"
-$extractTemp = "$env:TEMP\Baymax_Extract"
+$downloadId = [Guid]::NewGuid().ToString('N')
+$zipFile = Join-Path $env:TEMP "Baymax-$downloadId.zip"
+$extractTemp = Join-Path $env:TEMP "Baymax-$downloadId"
 
 $downloaded = $false
 try {
@@ -188,9 +187,6 @@ if (-not $downloaded) {
     Download-Fast $zipUrlFallback $zipFile
 }
 
-if (Test-Path $extractTemp) {
-    Remove-Item -Recurse -Force $extractTemp
-}
 Expand-Archive -Path $zipFile -DestinationPath $extractTemp -Force
 
 # Locate extracted directory (BEMAX-main or Mochi-Ultra-main)
@@ -199,7 +195,12 @@ $srcDir = if ($extractedSubdirs.Count -gt 0) { $extractedSubdirs[0].FullName } e
 
 # Copy files into target folder
 Copy-Item -Path "$srcDir\*" -Destination $installFolder -Recurse -Force
-Remove-Item -Recurse -Force $zipFile, $extractTemp
+$tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+foreach ($cleanupPath in @($zipFile, $extractTemp)) {
+    $resolvedCleanup = [IO.Path]::GetFullPath($cleanupPath)
+    if (-not $resolvedCleanup.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe temporary cleanup path' }
+    Remove-Item -LiteralPath $resolvedCleanup -Recurse -Force
+}
 
 # Save resolved Python path for Electron engine runner
 if ($pyExe) {
@@ -211,65 +212,13 @@ if ($pyExe) {
 
 Write-Host "      [OK] Downloaded into $installFolder" -ForegroundColor Green
 
-# 4. Install NPM Dependencies & Python Requirements
-Write-Host "[4/6] Installing packages (npm install and pip)..." -ForegroundColor Yellow
-Set-Location -Path $installFolder
-
-if (Test-Path "$installFolder\package-lock.json") {
-    Remove-Item -Force "$installFolder\package-lock.json" -ErrorAction SilentlyContinue
-}
-
-& $npmExe install
-
-# Install Python requirements for Mark-LV autonomous engine
-if ($pyExe -and (Test-Path "$installFolder\engine\requirements.txt")) {
-    Write-Host "      Installing Mark-LV engine Python dependencies..." -ForegroundColor Cyan
-    try {
-        & "$pyExe" -m pip install --upgrade pip --quiet
-        & "$pyExe" -m pip install -r "$installFolder\engine\requirements.txt"
-        Write-Host "      [OK] Python dependencies installed successfully!" -ForegroundColor Green
-    } catch {
-        Write-Host "      [!] Python dependency install note: $_" -ForegroundColor Yellow
-    }
-}
-
-# Ensure Electron binary is fully extracted (bypasses npm bug #4828 on clean Windows)
-$electronDist = Join-Path $installFolder "node_modules\electron\dist"
-$electronExe = Join-Path $electronDist "electron.exe"
-
-if (-not (Test-Path $electronExe)) {
-    Write-Host "      Configuring Electron binary..." -ForegroundColor Cyan
-    $electronPkgPath = Join-Path $installFolder "node_modules\electron\package.json"
-    if (Test-Path $electronPkgPath) {
-        $electronPkg = Get-Content $electronPkgPath -Raw | ConvertFrom-Json
-        $electronVersion = $electronPkg.version
-    } else {
-        $electronVersion = "44.5.1"
-    }
-    
-    $electronZipUrl = "https://github.com/electron/electron/releases/download/v$electronVersion/electron-v$electronVersion-win32-x64.zip"
-    $electronZipPath = "$env:TEMP\electron-v$electronVersion.zip"
-    
-    Write-Host "      Downloading Electron v$electronVersion (~150 MB)... please wait a moment." -ForegroundColor Cyan
-    Download-Fast $electronZipUrl $electronZipPath $true
-    
-    Write-Host "      Extracting Electron files..." -ForegroundColor Gray
-    if (-not (Test-Path $electronDist)) {
-        New-Item -ItemType Directory -Path $electronDist -Force | Out-Null
-    }
-    Expand-Archive -Path $electronZipPath -DestinationPath $electronDist -Force
-    Set-Content -Path (Join-Path $installFolder "node_modules\electron\path.txt") -Value "electron.exe" -NoNewline
-    Remove-Item -Force $electronZipPath -ErrorAction SilentlyContinue
-    Write-Host "      [OK] Electron binary ready: $electronExe" -ForegroundColor Green
-}
-
-# 5. Build Baymax
-Write-Host "[5/6] Building application bundle (vite build)..." -ForegroundColor Yellow
-if (Test-Path "$installFolder\node_modules\esbuild\install.js") {
-    & $nodeExe "$installFolder\node_modules\esbuild\install.js" 2>$null
-}
-& $npmExe run build
-
+# 4-5. Use the same fail-checked setup as the local working copy.
+Write-Host '[4/6] Installing locked dependencies and building both frontends...' -ForegroundColor Yellow
+Set-Location -LiteralPath $installFolder
+$localSetup = Join-Path $installFolder 'scripts/install-local.ps1'
+if (-not (Test-Path -LiteralPath $localSetup)) { throw 'Downloaded release lacks the verified setup script. Use the repaired local checkout.' }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $localSetup -Python $pyExe
+if ($LASTEXITCODE -ne 0) { throw 'Setup failed. Application was not launched.' }
 # 6. Create Desktop Shortcut
 Write-Host "[6/6] Creating Desktop Shortcut..." -ForegroundColor Yellow
 $desktopPath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Desktop)

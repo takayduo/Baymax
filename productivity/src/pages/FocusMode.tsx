@@ -1,3 +1,4 @@
+import Icon from "../components/Icon";
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 
@@ -223,9 +224,7 @@ export default function FocusMode() {
                   : 'bg-white text-black hover:bg-zinc-200'
               }`}
             >
-              <span className="material-symbols-outlined text-[15px] leading-none">
-                {isFocusModeActive ? 'stop' : 'play_arrow'}
-              </span>
+              <Icon className="app-icon text-[15px] leading-none" name={isFocusModeActive ? 'stop' : 'play_arrow'} />
               <span>{isFocusModeActive ? 'Stop Session' : 'Start Focus'}</span>
             </button>
 
@@ -235,7 +234,7 @@ export default function FocusMode() {
                 className="px-3 py-2 text-xs font-medium rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
                 title="Reset Timer"
               >
-                <span className="material-symbols-outlined text-[14px] leading-none">replay</span>
+                <Icon className="app-icon text-[14px] leading-none" name="replay" />
               </button>
             )}
           </div>
@@ -270,9 +269,7 @@ export default function FocusMode() {
                       {app.icon && app.icon.startsWith('data:') ? (
                         <img src={app.icon} className="w-4 h-4 object-contain rounded flex-shrink-0" alt="" />
                       ) : (
-                        <span className="material-symbols-outlined text-[14px] text-zinc-400 flex-shrink-0">
-                          {app.icon || 'apps'}
-                        </span>
+                        <Icon className="app-icon text-[14px] text-zinc-400 flex-shrink-0" name={app.icon || 'apps'} />
                       )}
                       <span className="text-xs text-white truncate font-medium">{app.name}</span>
                     </div>
@@ -294,9 +291,7 @@ export default function FocusMode() {
                           }`}
                           title={isBlocked ? 'Unblock app' : 'Block app'}
                         >
-                          <span className="material-symbols-outlined text-[14px]">
-                            {isBlocked ? 'block' : 'add'}
-                          </span>
+                          <Icon className="app-icon text-[14px]" name={isBlocked ? 'block' : 'add'} />
                         </button>
                       )}
                     </div>

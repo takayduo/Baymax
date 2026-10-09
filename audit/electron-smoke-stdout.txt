@@ -1,0 +1,2 @@
+
+{"checks":["Embedded Overview loads all three apps and aggregates 3 x 20 seconds into one minute","Subframe has no Node or secret API; scoped RPC works with webSecurity enabled","Weekly Overview remains weekly during daily tracking events","Empty focus history does not invent a sample session","Apps lists real applications, hides utilities by default and restores them on request","Daily Insights includes neutral and productive apps with the same total as Overview","Empty current-day data clears prior usage instead of keeping stale totals"],"errors":[]}

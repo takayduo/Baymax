@@ -149,7 +149,8 @@ class MochiHeadlessUI:
         pass
 
     def show_confirm(self, title: str, detail: str):
-        emit_ipc("confirm", {"title": title, "detail": detail})
+        from core.confirm import pending_id
+        emit_ipc("confirm", {"title": title, "detail": detail, "requestId": pending_id()})
 
     def hide_confirm(self):
         emit_ipc("hide_confirm")
@@ -228,6 +229,12 @@ def stdin_reader_thread(ui: MochiHeadlessUI, jarvis: JarvisLive):
                 text = cmd_data.get("text", "")
                 if text and ui.on_text_command:
                     ui.on_text_command(text)
+
+            elif cmd == "confirm":
+                from core.confirm import resolve
+                request_id = cmd_data.get("requestId")
+                if request_id:
+                    resolve(cmd_data.get("accepted") is True, request_id=request_id)
 
             elif cmd == "interrupt":
                 if ui.on_interrupt:

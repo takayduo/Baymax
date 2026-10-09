@@ -36,9 +36,8 @@ except ImportError:
 
 
 def _base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    from core.paths import data_root
+    return data_root()
 
 
 _BASE        = _base_dir()

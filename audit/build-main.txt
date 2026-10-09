@@ -1,0 +1,16 @@
+vite v6.4.3 building for production...
+transforming...
+✓ 35 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) G:/baymax/src/core/voice.ts is dynamically imported by G:/baymax/src/main.ts but also statically imported by G:/baymax/src/island/island.ts, G:/baymax/src/views/chat.ts, dynamic import will not move module into another chunk.
+
+computing gzip size...
+audit/build-main/index.html                      0.48 kB │ gzip:  0.29 kB
+audit/build-main/settings.html                   0.61 kB │ gzip:  0.39 kB
+audit/build-main/assets/settings-CNIv_r_b.css    3.47 kB │ gzip:  1.35 kB
+audit/build-main/assets/island-CcjN0T7a.css     20.09 kB │ gzip:  4.77 kB
+audit/build-main/assets/dom-DMB1AWRN.js         16.73 kB │ gzip:  5.21 kB
+audit/build-main/assets/settings-CjYCBwbK.js    41.57 kB │ gzip: 11.74 kB
+audit/build-main/assets/island-CQP2njUe.js     150.80 kB │ gzip: 47.71 kB
+✓ built in 543ms

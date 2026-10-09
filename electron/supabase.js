@@ -5,6 +5,7 @@ let realtimeChannel = null;
 let currentConfig = null;
 let dbChangesChannel = null;
 let hasSentInitialPartnerJoin = false;
+let connectionGeneration = 0;
 
 const SUPABASE_SQL_SETUP = `-- ========================================================
 -- 🍡 MOCHI 24/7 OFFLINE CLOUD STORAGE SETUP
@@ -41,13 +42,6 @@ create table if not exists public.mochi_tasks (
 alter table public.mochi_messages enable row level security;
 alter table public.mochi_tasks enable row level security;
 
--- 4. Create policies to allow read and write via Anon key
-drop policy if exists "Allow all on mochi_messages" on public.mochi_messages;
-create policy "Allow all on mochi_messages" on public.mochi_messages for all using (true) with check (true);
-
-drop policy if exists "Allow all on mochi_tasks" on public.mochi_tasks;
-create policy "Allow all on mochi_tasks" on public.mochi_tasks for all using (true) with check (true);
-
 -- 5. Enable Supabase Realtime broadcast for database changes (idempotent)
 do $$
 begin
@@ -65,7 +59,7 @@ begin
     alter publication supabase_realtime add table public.mochi_tasks;
   end if;
 end $$;
-`;
+` + require('node:fs').readFileSync(require('node:path').join(__dirname, 'supabase-policy.sql'), 'utf8');
 
 /**
  * Tests connecting to a Supabase project URL and Anon key.
@@ -107,10 +101,14 @@ async function testSupabaseConnection({ url, key }) {
  * Checks whether the cloud persistent tables (mochi_messages & mochi_tasks) exist in Supabase.
  */
 async function checkCloudStorageReady(creds) {
+  if (!currentConfig?.userId) return { ready:false, error:"Sign in with an authorized pair account first." };
   let client = supabaseClient;
   const url = (creds?.url || currentConfig?.url || "").trim().replace(/\/+$/, "");
   const key = (creds?.key || currentConfig?.key || "").trim();
   if (!client && url && key) {
+    return { ready: false, error: "Sign in with an authorized pair account first." };
+  }
+  if (false) {
     try {
       client = createClient(url, key, { auth: { persistSession: false } });
     } catch (e) {
@@ -145,7 +143,8 @@ async function checkCloudStorageReady(creds) {
 /**
  * Initializes Supabase client, presence tracking, real-time broadcast listeners, and DB catch-up.
  */
-function initSupabase({
+async function initSupabase({
+  email, password, onStatus,
   url,
   key,
   channelName = "coucou-badsha-ayzil",
@@ -160,15 +159,19 @@ function initSupabase({
   onSyncResponse,
   onPartnerJoin,
 }) {
-  if (!url || !key) return null;
-
   disconnectSupabase();
+  const generation = connectionGeneration;
+  if (!url || !key) return null;
+  let client = null;
 
   const cleanUrl = url.trim().replace(/\/+$/, "");
   const cleanKey = key.trim();
 
   try {
-    supabaseClient = createClient(cleanUrl, cleanKey, {
+    if (!email || !password) throw new Error('Enter your Supabase account email/password and provision pair membership before connecting.');
+    if (!/^[a-zA-Z0-9_-]{1,100}$/.test(channelName)) throw new Error('Channel must contain only letters, digits, underscores and hyphens.');
+    client = createClient(cleanUrl, cleanKey, {
+      auth: { persistSession: false },
       realtime: {
         params: {
           eventsPerSecond: 10,
@@ -176,17 +179,34 @@ function initSupabase({
       },
     });
 
-    currentConfig = { channelName, userName, userRole };
+    const { data: auth, error: authError } = await client.auth.signInWithPassword({ email, password });
+    if (generation !== connectionGeneration) {void client.removeAllChannels();return null;}
+    if (authError || !auth.user) throw new Error(authError?.message || 'Authentication failed');
+    const { data: pair, error: pairError } = await client.from('baymax_pairs').select('user_a,user_b').eq('channel', channelName).single();
+    if (generation !== connectionGeneration) {void client.removeAllChannels();return null;}
+    if (pairError || !pair || ![pair.user_a, pair.user_b].includes(auth.user.id)) throw new Error('No authorized pair membership. Apply the secure setup SQL and add both Auth user IDs.');
+    supabaseClient = client;
+    currentConfig = { url: cleanUrl, key: cleanKey, channelName, userName, userRole, userId: auth.user.id, peerId: pair.user_a === auth.user.id ? pair.user_b : pair.user_a };
+    await client.realtime.setAuth(auth.session.access_token);
+    if (generation !== connectionGeneration) {void client.removeAllChannels();return null;}
+    client.auth.onAuthStateChange((event, session) => {
+      if(generation !== connectionGeneration)return;
+      if (session?.access_token) void client?.realtime.setAuth(session.access_token);
+      else if (event === 'SIGNED_OUT') disconnectSupabase();
+    });
 
-    realtimeChannel = supabaseClient.channel(channelName, {
+    const channel = client.channel(channelName, {
       config: {
-        broadcast: { ack: false, self: false },
+        private: true,
+        broadcast: { ack: true, self: false },
         presence: { key: userName },
       },
     });
 
+    realtimeChannel = channel;
+
     // 1. Broadcast: File Sharing
-    realtimeChannel.on("broadcast", { event: "file_shared" }, ({ payload }) => {
+    channel.on("broadcast", { event: "file_shared" }, ({ payload }) => {
       console.log("[Supabase Realtime] Received file_shared event:", payload?.fileName);
       if (typeof onFileShared === "function" && payload) {
         try {
@@ -198,7 +218,7 @@ function initSupabase({
     });
 
     // 2. Broadcast: Schedule & Task Updates
-    realtimeChannel.on("broadcast", { event: "schedule_update" }, ({ payload }) => {
+    channel.on("broadcast", { event: "schedule_update" }, ({ payload }) => {
       console.log("[Supabase Realtime] Received schedule_update event from:", payload?.senderName);
       if (typeof onScheduleUpdated === "function" && payload) {
         try {
@@ -210,8 +230,8 @@ function initSupabase({
     });
 
     // 3. Presence: Partner Online Status
-    realtimeChannel.on("presence", { event: "sync" }, () => {
-      const state = realtimeChannel.presenceState();
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState();
       console.log("[Supabase Realtime] Presence sync:", Object.keys(state));
       if (typeof onPresenceSync === "function") {
         try {
@@ -223,8 +243,8 @@ function initSupabase({
     });
 
     // 4. Broadcast: Live Partner Chat
-    realtimeChannel.on("broadcast", { event: "partner_chat" }, ({ payload }) => {
-      console.log("[Supabase Realtime] Received partner_chat event from:", payload?.sender, payload?.text);
+    channel.on("broadcast", { event: "partner_chat" }, ({ payload }) => {
+      console.log("[Supabase Realtime] Received partner_chat event from:", payload?.sender);
       if (typeof onChatMessage === "function" && payload) {
         try {
           onChatMessage(payload);
@@ -235,9 +255,9 @@ function initSupabase({
     });
 
     // 5. Broadcast: Remote Desktop Access (Mochi Eye)
-    realtimeChannel.on("broadcast", { event: "remote_access" }, ({ payload }) => {
+    channel.on("broadcast", { event: "remote_access" }, ({ payload }) => {
       console.log("[Supabase Realtime] Received remote_access event:", payload?.action, "from:", payload?.sender);
-      if (typeof onRemoteAccess === "function" && payload) {
+      if (typeof onRemoteAccess === "function" && payload && payload.senderId === currentConfig?.peerId && payload.recipientId === currentConfig?.userId) {
         try {
           onRemoteAccess(payload);
         } catch (e) {
@@ -247,7 +267,7 @@ function initSupabase({
     });
 
     // 6. Broadcast: Peer Catch-Up Sync Request
-    realtimeChannel.on("broadcast", { event: "sync_request" }, ({ payload }) => {
+    channel.on("broadcast", { event: "sync_request" }, ({ payload }) => {
       console.log("[Supabase Realtime] Partner requested peer catch-up sync from:", payload?.senderName);
       if (typeof onSyncRequest === "function" && payload) {
         try {
@@ -259,7 +279,7 @@ function initSupabase({
     });
 
     // 7. Broadcast: Peer Catch-Up Sync Response
-    realtimeChannel.on("broadcast", { event: "sync_response" }, ({ payload }) => {
+    channel.on("broadcast", { event: "sync_response" }, ({ payload }) => {
       console.log("[Supabase Realtime] Received peer catch-up sync response from:", payload?.senderName);
       if (typeof onSyncResponse === "function" && payload) {
         try {
@@ -271,7 +291,7 @@ function initSupabase({
     });
 
     // 8. Broadcast: Partner Online Join Announcement
-    realtimeChannel.on("broadcast", { event: "partner_join" }, ({ payload }) => {
+    channel.on("broadcast", { event: "partner_join" }, ({ payload }) => {
       console.log("[Supabase Realtime] Received partner_join event from:", payload?.senderName);
       if (typeof onPartnerJoin === "function" && payload) {
         try {
@@ -283,11 +303,13 @@ function initSupabase({
     });
 
     // Subscribe and track self
-    realtimeChannel.subscribe(async (status) => {
+    channel.subscribe(async (status) => {
+      if(generation !== connectionGeneration)return;
       console.log(`[Supabase Realtime] Subscription status for ${channelName}:`, status);
+      onStatus?.({ connected: status === "SUBSCRIBED", status });
       if (status === "SUBSCRIBED") {
         try {
-          await realtimeChannel.track({
+          await channel.track({
             user: userName,
             role: userRole,
             online: true,
@@ -297,11 +319,12 @@ function initSupabase({
           console.warn("[Supabase Realtime] Presence track warning:", e);
         }
 
+        if(generation !== connectionGeneration)return;
         // Announce presence once on startup to partner
         if (!hasSentInitialPartnerJoin) {
           hasSentInitialPartnerJoin = true;
           try {
-            await realtimeChannel.send({
+            await channel.send({
               type: "broadcast",
               event: "partner_join",
               payload: {
@@ -319,7 +342,7 @@ function initSupabase({
 
     // Also listen to database change streams if tables are created
     try {
-      dbChangesChannel = supabaseClient
+      dbChangesChannel = client
         .channel("db_changes_" + channelName)
         .on(
           "postgres_changes",
@@ -356,9 +379,11 @@ function initSupabase({
       console.warn("[Supabase Realtime] DB changes subscription notice:", dbErr.message);
     }
 
-    return realtimeChannel;
+    return channel;
   } catch (err) {
-    console.error("[Supabase Realtime] Init error:", err);
+    if(generation === connectionGeneration) {onStatus?.({ connected: false, error: err.message });disconnectSupabase();}
+    else if(client)void client.removeAllChannels();
+    console.error("[Supabase Realtime] Init error:", err.message);
     return null;
   }
 }
@@ -367,6 +392,7 @@ function initSupabase({
  * Disconnects existing channels and client.
  */
 function disconnectSupabase() {
+  connectionGeneration++;
   if (realtimeChannel && supabaseClient) {
     try {
       realtimeChannel.untrack();
@@ -461,6 +487,7 @@ async function broadcastRemoteAccess(payload) {
       event: "remote_access",
       payload: {
         ...payload,
+        senderId: currentConfig.userId, recipientId: currentConfig.peerId,
         timestamp: Date.now(),
       },
     });
@@ -546,6 +573,7 @@ async function saveChatMessageToCloud(msg, channelName = "coucou-badsha-ayzil") 
       id: msg.id,
       channel: channelName,
       sender: msg.sender,
+      sender_role: msg.senderRole,
       recipient: msg.recipient,
       text: msg.text,
       timestamp: msg.timestamp || Date.now(),
@@ -569,19 +597,19 @@ async function saveChatMessageToCloud(msg, channelName = "coucou-badsha-ayzil") 
 async function fetchOfflineChatMessages(channelName = "coucou-badsha-ayzil", sinceTimestamp = 0) {
   if (!supabaseClient) return [];
   try {
-    let query = supabaseClient
-      .from("mochi_messages")
-      .select("*")
-      .eq("channel", channelName)
-      .order("timestamp", { ascending: true })
-      .limit(100);
-
-    if (sinceTimestamp > 0) {
-      query = query.gt("timestamp", sinceTimestamp);
+    const data = [], boundary = Date.now();
+    let cursor = null;
+    while (true) {
+      let query = supabaseClient.from('mochi_messages').select('*').eq('channel', channelName)
+        .gte('timestamp', sinceTimestamp).lte('timestamp', boundary).order('timestamp').order('id').limit(500);
+      if (cursor) query = query.or(`timestamp.gt.${cursor.timestamp},and(timestamp.eq.${cursor.timestamp},id.gt.${cursor.id})`);
+      const { data: page, error } = await query;
+      if (error) throw error;
+      data.push(...(page || []));
+      if (!page || page.length < 500) break;
+      cursor = page[page.length - 1];
+      if (!/^[\w-]+$/.test(cursor.id)) throw new Error('Invalid message cursor');
     }
-
-    const { data, error } = await query;
-    if (error) return [];
 
     return (data || []).map((row) => ({
       id: row.id,
@@ -589,6 +617,7 @@ async function fetchOfflineChatMessages(channelName = "coucou-badsha-ayzil", sin
       recipient: row.recipient,
       text: row.text,
       timestamp: Number(row.timestamp),
+      senderRole: row.sender_role,
       isAiGenerated: !!row.is_ai_generated,
       read: !!row.read,
     }));
@@ -612,7 +641,9 @@ async function saveTaskToCloud(task, channelName = "coucou-badsha-ayzil") {
       assigned_by: task.assignedBy || "",
       completed: !!task.completed,
       created_at: task.createdAt || Date.now(),
-      updated_at: Date.now(),
+      updated_at: task.updatedAt || task.createdAt || Date.now(),
+      deleted: !!task.deleted,
+      revision: task.revision || "",
     };
     const { error } = await supabaseClient.from("mochi_tasks").upsert(row);
     if (error) return false;
@@ -637,7 +668,9 @@ async function saveAllTasksToCloud(tasks, channelName = "coucou-badsha-ayzil") {
       assigned_by: task.assignedBy || "",
       completed: !!task.completed,
       created_at: task.createdAt || Date.now(),
-      updated_at: Date.now(),
+      updated_at: task.updatedAt || task.createdAt || Date.now(),
+      deleted: !!task.deleted,
+      revision: task.revision || "",
     }));
     const { error } = await supabaseClient.from("mochi_tasks").upsert(rows);
     if (error) return false;
@@ -655,7 +688,7 @@ async function deleteTaskFromCloud(taskId, channelName = "coucou-badsha-ayzil") 
   try {
     const { error } = await supabaseClient
       .from("mochi_tasks")
-      .delete()
+      .update({ deleted: true, updated_at: Date.now(), revision: require("node:crypto").randomUUID() })
       .eq("id", taskId)
       .eq("channel", channelName);
     if (error) return false;
@@ -671,11 +704,16 @@ async function deleteTaskFromCloud(taskId, channelName = "coucou-badsha-ayzil") 
 async function fetchOfflineTasks(channelName = "coucou-badsha-ayzil") {
   if (!supabaseClient) return [];
   try {
-    const { data, error } = await supabaseClient
-      .from("mochi_tasks")
-      .select("*")
-      .eq("channel", channelName);
-    if (error) return [];
+    const data = []; let cursor = null;
+    while (true) {
+      let query = supabaseClient.from('mochi_tasks').select('*').eq('channel', channelName).order('id').limit(500);
+      if (cursor) query = query.gt('id', cursor);
+      const { data:page, error } = await query;
+      if(error) throw error;
+      data.push(...(page || []));
+      if(!page || page.length<500) break;
+      cursor=page[page.length-1].id;
+    }
 
     return (data || []).map((row) => ({
       id: row.id,
@@ -685,7 +723,9 @@ async function fetchOfflineTasks(channelName = "coucou-badsha-ayzil") {
       assignedBy: row.assigned_by || "",
       completed: !!row.completed,
       createdAt: Number(row.created_at) || Date.now(),
-      updatedAt: Number(row.updated_at) || Date.now(),
+      updatedAt: Number(row.updated_at) || Number(row.created_at) || 0,
+      deleted: !!row.deleted,
+      revision: row.revision || "",
     }));
   } catch (err) {
     return [];

@@ -23,6 +23,7 @@ async function main() {
     if (boot.schedule) State.schedule = boot.schedule;
   }
   island.applySettings();
+  await onEvent("open-preferences", () => island.alert("preferences"));
   State.loadIntegrationTasks();
 
   // Load chat history & unread count
@@ -30,7 +31,7 @@ async function main() {
     const initialMessages = await Bridge.getChatMessages();
     State.partnerChatMessages = initialMessages;
     const isMe = (State.settings.userRole || "me") === "me";
-    const myName = (isMe ? (State.settings.userName || "Badsha") : (State.settings.partnerName || "Ayzil")).toLowerCase();
+    const myName = (isMe ? (State.settings.userName || "You") : (State.settings.partnerName || "Partner")).toLowerCase();
     State.unreadPartnerChatCount = initialMessages.filter(
       (m) => !m.read && (m.sender || "").toLowerCase() !== myName
     ).length;
@@ -52,7 +53,7 @@ async function main() {
     State.partnerLastSeen = Date.now();
 
     const isMe = (State.settings.userRole || "me") === "me";
-    const partnerName = pres?.partnerName || pres?.user || (isMe ? State.settings.partnerName || "Ayzil" : State.settings.userName || "Badsha");
+    const partnerName = pres?.partnerName || pres?.user || (isMe ? State.settings.partnerName || "Partner" : State.settings.userName || "You");
 
     if (pres?.online && pres?.justCameOnline) {
       if (State.settings.notifyPartnerOnline !== false) {
@@ -70,16 +71,25 @@ async function main() {
     State.notify();
   });
 
+  await onEvent<PartnerChatMessage[]>('partner-chat-history', (messages) => {
+    const merged = new Map(State.partnerChatMessages.map(m => [m.id, m]));
+    for (const m of messages || []) merged.set(m.id, m);
+    State.partnerChatMessages = [...merged.values()].sort((a,b) => a.timestamp-b.timestamp || a.id.localeCompare(b.id));
+    State.notify();
+  });
   await onEvent<PartnerChatMessage>("partner-chat-received", (msg) => {
     if (!msg || !msg.id) return;
     const exists = State.partnerChatMessages.some((m) => m.id === msg.id);
     if (!exists) {
       State.partnerChatMessages.push(msg);
+    } else {
+      State.partnerChatMessages = State.partnerChatMessages.map(m => m.id === msg.id ? { ...m, ...msg } : m);
+      State.notify(); return;
     }
 
     const isCurrentCoupleChat = State.mode === "expanded" && State.view === "couple-chat";
     const isMe = (State.settings.userRole || "me") === "me";
-    const myName = (isMe ? (State.settings.userName || "Badsha") : (State.settings.partnerName || "Ayzil")).toLowerCase();
+    const myName = (isMe ? (State.settings.userName || "You") : (State.settings.partnerName || "Partner")).toLowerCase();
     const isFromPartner = (msg.sender || "").toLowerCase() !== myName;
 
     if (isCurrentCoupleChat) {
@@ -160,7 +170,7 @@ async function main() {
     switch (what) {
       case "settings":
         setPaused(false);
-        island.alert("settings");
+        island.alert("preferences");
         break;
       case "open":
         setPaused(false);
@@ -186,9 +196,9 @@ async function main() {
     State.noteMessage = `⚠️ Focus! "${appName}" is blocked during your focus session.`;
     island.expand("note");
 
-    const uName = payload?.userName || ((State.settings.userRole || "me") === "me" ? State.settings.userName || "Badsha" : State.settings.partnerName || "Ayzil");
+    const uName = payload?.userName || ((State.settings.userRole || "me") === "me" ? State.settings.userName || "You" : State.settings.partnerName || "Partner");
     import("./core/voice").then(({ VoiceManager }) => {
-      VoiceManager.speakText(`Hey ${uName}, focus on your work! You have an active focus session going on.`);
+      VoiceManager.speak(`Hey ${uName}, focus on your work! You have an active focus session going on.`);
     }).catch(console.error);
 
     setTimeout(() => {

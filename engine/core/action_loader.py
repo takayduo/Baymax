@@ -96,16 +96,28 @@ class ActionRegistry:
         return set(self._actions.keys())
 
     # -- called by main.py from _execute_tool --
-    def run(self, name: str, parameters: dict, ctx: dict | None = None) -> str:
+    def run_result(self, name: str, parameters: dict, ctx: dict | None = None) -> dict:
         rec = self._actions.get(name)
         if rec is None or not rec.valid:
-            return f"Action '{name}' is not available."
+            return {"success": False, "error": f"Action '{name}' is not available."}
         try:
-            return _call_handler(rec.handler, parameters, ctx or {}) or "Done."
+            value = _call_handler(rec.handler, parameters, ctx or {})
+            if isinstance(value, dict) and 'success' in value:
+                return value
+            # Legacy handlers return text. Keep it verbatim, but do not label
+            # refusals/failed actions as successful completion.
+            text = str(value) if value is not None else 'Action returned no result.'
+            import re
+            if re.search(r"(?:^|\n)(?:error|failed|could not|cannot|I cannot|I could not|unable|tool .* failed|action .* not available)", text, re.I):
+                return {"success": False, "error": text}
+            return {"success": True, "result": text, "verified": False}
         except Exception as e:
-            self._logger(f"Action '{name}' crashed during run(): {e}")
-            traceback.print_exc()
-            return f"Tool '{name}' failed: {e}"
+            self._logger(f"Action '{name}' failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    def run(self, name: str, parameters: dict, ctx: dict | None = None) -> str:
+        result = self.run_result(name, parameters, ctx)
+        return str(result.get('result', result.get('data', ''))) if result['success'] else 'Action failed: ' + result['error']
 
 
 def _call_handler(fn: Callable, parameters: dict, ctx: dict) -> str:

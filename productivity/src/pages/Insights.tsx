@@ -1,3 +1,4 @@
+import Icon from "../components/Icon";
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -15,7 +16,7 @@ export default function Insights() {
   const usageByCategory = apps.reduce((acc, app) => {
     const cat = (app.category && acc[app.category] !== undefined) ? app.category : 'neutral';
     const secs = app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60;
-    acc[cat] += Math.round(secs / 60);
+    acc[cat] += secs / 60;
     return acc;
   }, { productive: 0, neutral: 0, wasteful: 0 });
 
@@ -27,15 +28,7 @@ export default function Insights() {
     { name: 'Distraction', value: usageByCategory.wasteful, color: COLORS.wasteful },
   ].filter(item => item.value > 0);
 
-  const productiveApps = apps
-    .filter(a => a.category === 'productive')
-    .sort((a, b) => b.timeSpentMinutes - a.timeSpentMinutes)
-    .slice(0, 3);
-
-  const distractingApps = apps
-    .filter(a => a.category === 'wasteful')
-    .sort((a, b) => b.timeSpentMinutes - a.timeSpentMinutes)
-    .slice(0, 3);
+  const sortedApps = [...apps].sort((a,b) => (b.totalSeconds ?? b.timeSpentMinutes*60) - (a.totalSeconds ?? a.timeSpentMinutes*60));
 
   return (
     <div className="p-4 sm:p-5 w-full h-full flex flex-col justify-between select-none font-sans overflow-hidden">
@@ -113,43 +106,18 @@ export default function Insights() {
 
         {/* Right Column: Top Productive vs Distracting & Sessions */}
         <div className="col-span-6 flex flex-col gap-3 min-h-0">
-          {/* Top Apps Highlights */}
           <div className="glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col flex-1 min-h-0">
-            <span className="text-xs font-semibold text-white mb-2 flex-shrink-0">Key Drivers</span>
-            <div className="grid grid-cols-2 gap-2 flex-1 overflow-y-auto">
-              {/* Productive Highlights */}
-              <div className="p-2 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
-                <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider block mb-1">
-                  Productive
-                </span>
-                {productiveApps.length > 0 ? (
-                  productiveApps.map((a) => (
-                    <div key={a.id} className="flex items-center justify-between text-xs py-0.5">
-                      <span className="text-zinc-300 truncate font-medium">{a.name}</span>
-                      <span className="font-mono text-[10px] text-emerald-400">{formatTime(a.timeSpentMinutes)}</span>
-                    </div>
-                  ))
-                ) : (
-                  <span className="text-[10px] text-zinc-500">None logged yet</span>
-                )}
-              </div>
-
-              {/* Distraction Highlights */}
-              <div className="p-2 rounded-lg bg-rose-500/5 border border-rose-500/20">
-                <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider block mb-1">
-                  Distractions
-                </span>
-                {distractingApps.length > 0 ? (
-                  distractingApps.map((a) => (
-                    <div key={a.id} className="flex items-center justify-between text-xs py-0.5">
-                      <span className="text-zinc-300 truncate font-medium">{a.name}</span>
-                      <span className="font-mono text-[10px] text-rose-400">{formatTime(a.timeSpentMinutes)}</span>
-                    </div>
-                  ))
-                ) : (
-                  <span className="text-[10px] text-zinc-500">None logged yet</span>
-                )}
-              </div>
+            <span className="text-xs font-semibold text-white mb-2 flex-shrink-0">All Recorded Apps ({sortedApps.length})</span>
+            <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+              {sortedApps.map(a => (
+                <div key={a.id} className="flex items-center gap-2 rounded-lg bg-white/5 p-2 text-xs">
+                  <span className="h-2 w-2 rounded-full flex-shrink-0" style={{backgroundColor:COLORS[a.category] || COLORS.neutral}} />
+                  <span className="flex-1 truncate text-zinc-200" title={a.name}>{a.name}</span>
+                  <span className="text-[10px] text-zinc-400">{a.category || 'neutral'}</span>
+                  <span className="font-mono text-[10px] text-white">{formatTime((a.totalSeconds ?? a.timeSpentMinutes*60)/60)}</span>
+                </div>
+              ))}
+              {!sortedApps.length && <p className="text-xs text-zinc-500">No activity recorded in this period</p>}
             </div>
           </div>
 
@@ -164,11 +132,11 @@ export default function Insights() {
                 focusSessions.slice(0, 5).map((s) => (
                   <div key={s.id} className="p-1.5 rounded-lg bg-white/5 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[13px] text-emerald-400">check_circle</span>
+                      <Icon className="app-icon text-[13px] text-emerald-400" name="check_circle" />
                       <span className="text-white font-medium">{s.mode || 'Focus'}</span>
                     </div>
                     <div className="flex items-center gap-2 font-mono text-[10px] text-zinc-400">
-                      <span>{s.durationMinutes} mins</span>
+                      <span>{formatTime(s.durationMinutes)}</span>
                       <span>{new Date(s.date).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
                     </div>
                   </div>

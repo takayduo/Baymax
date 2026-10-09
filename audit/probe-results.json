@@ -1,0 +1,91 @@
+{
+  "sourceRoot": "G:\\baymax",
+  "results": [
+    {
+      "name": "1500 ms samples overcount by 33 percent",
+      "reproduced": true,
+      "detail": {
+        "actualElapsedSeconds": 60,
+        "recordedSeconds": 80
+      }
+    },
+    {
+      "name": "Antigravity and terminal processes are silently ignored",
+      "reproduced": true,
+      "detail": {
+        "appsTested": 5,
+        "appsRecorded": 0
+      }
+    },
+    {
+      "name": "Zero-result rescan retains obsolete library entries",
+      "reproduced": true,
+      "detail": {
+        "newlyFound": 0,
+        "retained": [
+          "msiexec",
+          "scale",
+          "scalehost",
+          "wmplayer"
+        ]
+      }
+    },
+    {
+      "name": "App library retains previous-day usage",
+      "reproduced": true,
+      "detail": {
+        "todayApps": 0,
+        "libraryMinutes": 10
+      }
+    },
+    {
+      "name": "Split stdout chunks drop valid activity samples",
+      "reproduced": true,
+      "detail": {
+        "fragmentedSampleReceived": false,
+        "completeSampleReceived": true
+      }
+    },
+    {
+      "name": "Focus blocker remains active after its deadline",
+      "reproduced": true,
+      "detail": {
+        "remainingSeconds": 0,
+        "active": true
+      }
+    },
+    {
+      "name": "Ignored foreground leaves previous current-app state",
+      "reproduced": true,
+      "detail": {
+        "realLatestSample": "antigravity",
+        "reportedForeground": "chrome"
+      }
+    },
+    {
+      "name": "Elapsed interval is credited to newly sampled app",
+      "reproduced": true,
+      "detail": {
+        "previousApp": "code",
+        "intervalSeconds": 3,
+        "creditedApp": "chrome"
+      }
+    },
+    {
+      "name": "Insights loses sub-30-second activity through per-app rounding",
+      "reproduced": true,
+      "detail": {
+        "overviewMinutes": 1,
+        "insightMinutes": 0
+      }
+    },
+    {
+      "name": "Task role tags are reversed on the partner PC",
+      "reproduced": true,
+      "detail": {
+        "requestedRole": "her",
+        "assignedRole": "me"
+      }
+    }
+  ]
+}

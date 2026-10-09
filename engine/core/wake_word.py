@@ -75,6 +75,8 @@ def install_and_download(logger: Callable[[str], None] = print,
     is reported through the returned message and the logger.
     """
     _tell = notify or (lambda _msg: None)
+    if getattr(sys, "frozen", False) and not is_ready():
+        return False, "Wake-word models are not included in this build. Use push-to-talk or a source installation."
     try:
         if not is_installed():
             logger("Wake word: installing openwakeword (one-time)…")

@@ -1,0 +1,9 @@
+{
+  "file": "Baymax-Setup-1.0.0-x64.exe",
+  "bytes": 287701439,
+  "mebibytes": 274.4,
+  "sha256": "E72035F41E6BCDECC1CFCCE5202BBD2CFB200F8D1099D918FCE16DEB1B6ABAA9",
+  "signature": "NotSigned",
+  "source": "G:\\baymax",
+  "packagedSmoke": "audit/packaged-smoke-results.json"
+}

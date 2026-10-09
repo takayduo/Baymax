@@ -1,14 +1,19 @@
 {
   "name": "baymax",
   "version": "1.0.0",
-  "description": "Baymax — Autonomous AI Desktop Companion & Productivity Engine with Distrack Integration",
+  "description": "Baymax desktop companion and productivity app",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "build:productivity": "cd productivity && vite build",
-    "start": "vite build && electron .",
-    "app": "electron ."
+    "build": "node scripts/build.cjs",
+    "build:productivity": "cd productivity && tsc --noEmit && vite build",
+    "start": "npm run build && electron .",
+    "app": "electron .",
+    "build:main": "vite build",
+    "test": "node --test tests/regressions.cjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p productivity/tsconfig.json",
+    "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-local.ps1",
+    "package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-win.ps1"
   },
   "keywords": [
     "creator",
@@ -21,6 +26,7 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^44.5.1",
+    "electron-builder": "26.8.1",
     "esbuild": "^0.28.2",
     "typescript": "^5.6.0",
     "vite": "^6.0.0"

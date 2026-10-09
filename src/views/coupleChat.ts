@@ -16,7 +16,7 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
   const headerTitle = h("div", {
     class: "sched-title",
     style: "display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;",
-    text: "Couple Chat 💖",
+    text: "Partner chat",
   });
 
   const topRow = h(
@@ -37,7 +37,8 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
   const input = h("input", {
     type: "text",
     class: "chat-input",
-    placeholder: "Message your partner...",
+    placeholder: "Message your partner…",
+    "aria-label": "Message your partner",
     spellcheck: "false",
     style: "font-size:12.5px;",
   }) as HTMLInputElement;
@@ -47,11 +48,12 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
     {
       class: "send-btn",
       title: "Send Message",
-      style: "background:linear-gradient(135deg, #f43f5e, #ec4899);color:#fff;",
+      style: "background:#d9e6e1;color:#14211c;",
     },
     svg(ICONS.arrowUp, 11)
   );
 
+  const errorStatus = h("div", { class: "chat-error", role: "alert", hidden: true });
   const bar = h("div", { class: "chat-bar", style: "margin-top:6px;" }, input, sendBtn);
 
   const el = h(
@@ -60,7 +62,7 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
     h(
       "div",
       { class: "card wash chat-card" },
-      h("div", { class: "chat-body", style: "height:100%;display:flex;flex-direction:column;" }, topRow, log, bar)
+      h("div", { class: "chat-body", style: "height:100%;display:flex;flex-direction:column;" }, topRow, log, errorStatus, bar)
     )
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(244, 63, 94, 0.28)");
@@ -84,8 +86,8 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
 
   function getCoupleInfo() {
     const isMe = (State.settings.userRole || "me") === "me";
-    const creator = (State.settings.userName && State.settings.userName !== "Me" ? State.settings.userName : "Badsha");
-    const partner = (State.settings.partnerName && State.settings.partnerName !== "Her" ? State.settings.partnerName : "Ayzil");
+    const creator = (State.settings.userName && State.settings.userName !== "Me" ? State.settings.userName : "You");
+    const partner = (State.settings.partnerName && State.settings.partnerName !== "Her" ? State.settings.partnerName : "Partner");
     const rawMe = isMe ? creator : partner;
     const rawPartner = isMe ? partner : creator;
     const myName = (rawMe.charAt(0).toUpperCase() + rawMe.slice(1)) || "Me";
@@ -165,6 +167,7 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
 
       const timeEl = h("span", { text: formatTime(msg.timestamp || Date.now()) });
       footerEl.append(timeEl);
+      if (isFromMe && msg.delivery) footerEl.append(h("span", { text: msg.delivery === "pending" ? " · Pending" : msg.delivery === "stored" ? " · Saved for delivery" : " · Sent" }));
 
       bubbleEl.append(footerEl);
       row.append(bubbleEl);
@@ -180,6 +183,8 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
 
     input.value = "";
     sending = true;
+    sendBtn.disabled = true;
+    errorStatus.hidden = true;
     Sound.play("pop");
 
     try {
@@ -190,16 +195,20 @@ export function buildCoupleChat(actions: ViewActions): ViewHost {
         State.notify();
       }
     } catch (err) {
-      console.warn("Send message error:", err);
+      input.value = text;
+      errorStatus.textContent = `Message could not be saved. ${String(err)}`;
+      errorStatus.hidden = false;
     } finally {
       sending = false;
+      sendBtn.disabled = !input.value.trim();
       input.focus();
     }
   }
 
+  input.addEventListener("input", () => { sendBtn.disabled = sending || !input.value.trim(); });
   sendBtn.addEventListener("click", () => void sendMessage());
   input.addEventListener("keydown", (e) => {
-    if ((e as KeyboardEvent).key === "Enter") {
+    if ((e as KeyboardEvent).key === "Enter" && !e.isComposing) {
       e.preventDefault();
       void sendMessage();
     }

@@ -1,0 +1,17 @@
+{
+  "registrations": 138,
+  "catalogEntries": 133,
+  "visibleApps": 93,
+  "hiddenUtilities": 40,
+  "examples": [
+    "Antigravity",
+    "Antigravity IDE",
+    "Discord",
+    "Excel",
+    "Google Chrome",
+    "OBS Studio (64bit)",
+    "WhatsApp",
+    "Word"
+  ],
+  "unwantedVisible": []
+}

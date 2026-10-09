@@ -5,7 +5,7 @@ declare global {
   interface Window {
     electronAPI?: {
       boot(): Promise<BootInfo>;
-      saveSettings(settings: Settings): Promise<boolean>;
+      saveSettings(settings: Partial<Settings>): Promise<boolean>;
       setCollapsed(collapsed: boolean): Promise<boolean>;
       setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): Promise<boolean>;
       setIslandRect(rect: { x: number; y: number; w: number; h: number }): Promise<boolean>;
@@ -53,6 +53,7 @@ declare global {
       markChatRead?(): Promise<boolean>;
 
       requestRemoteAccess?(): Promise<boolean>;
+      prepareRemoteHost?(): Promise<boolean>;
       respondRemoteAccess?(accepted: boolean, extra?: any): Promise<boolean>;
       sendRemoteSignal?(signal: any): Promise<boolean>;
       endRemoteAccess?(): Promise<boolean>;
@@ -112,6 +113,8 @@ export interface ScheduleItem {
 }
 
 export interface PartnerChatMessage {
+  delivery?: "pending" | "sent" | "stored";
+  senderRole?: string;
   id: string;
   sender: string;
   recipient: string;
@@ -191,9 +194,9 @@ export const Bridge = {
     };
   },
 
-  saveSettings: async (settings: Settings): Promise<void> => {
+  saveSettings: async (settings: Partial<Settings>): Promise<void> => {
     if (window.electronAPI) await window.electronAPI.saveSettings(settings);
-    else localStorage.setItem("coucou_settings", JSON.stringify(settings));
+    else localStorage.setItem("coucou_settings", JSON.stringify({ ...JSON.parse(localStorage.getItem("coucou_settings") || "{}"), ...settings }));
   },
 
   setCollapsed: async (collapsed: boolean): Promise<void> => {

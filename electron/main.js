@@ -2,6 +2,8 @@ const { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage, shell, dia
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
+const secrets = require("./secretSettings");
+const { safeStorage } = require("electron");
 const { spawn, exec } = require("node:child_process");
 const {
   getAccessToken,
@@ -20,7 +22,7 @@ const {
   broadcastFileShared,
   broadcastScheduleUpdate,
   broadcastChatMessage,
-  broadcastRemoteAccess,
+  broadcastRemoteAccess: transportRemoteAccess,
   broadcastSyncRequest,
   broadcastSyncResponse,
   saveChatMessageToCloud,
@@ -55,9 +57,43 @@ const {
 } = require("./productivity/tracker");
 const { AppBlocker, isProtectedProcess } = require("./productivity/blocker");
 
+const { RemoteSession } = require('./remoteSession');
+const remoteSession = new RemoteSession();
+const appCommands = require('./appCommands');
+async function broadcastRemoteAccess(payload) {
+  const session = remoteSession.current();
+  const sessionId = payload.sessionId || session?.id;
+  if (!sessionId) return false;
+  if (!['request', 'response', 'end'].includes(payload.action) && !session?.accepted) return false;
+  if (payload.action === 'end') remoteSession.end();
+  return transportRemoteAccess({ ...payload, sessionId });
+}
+
+function isTrustedRendererUrl(url) {
+  if (!url) return false;
+  const { pathToFileURL } = require('node:url');
+  const allowed = ['dist/index.html', 'dist/settings.html', 'dist/island.html', 'productivity/dist/index.html', 'public/remote-viewer.html'].map(p => pathToFileURL(path.join(__dirname, '..', p)).href);
+  try { const parsed = new URL(url); parsed.hash = ''; parsed.search = ''; return ['baymax://app/index.html','baymax://app/settings.html','baymax://app/productivity/index.html'].includes(parsed.href) || allowed.includes(parsed.href) || (!app.isPackaged && ['http://localhost:1420','http://localhost:3000'].includes(parsed.origin)); } catch { return false; }
+}
+const registerHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, handler) => registerHandle(channel, (event, ...args) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) throw new Error('Untrusted IPC sender');
+  return handler(event, ...args);
+});
+app.on('web-contents-created', (_, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-navigate', (event, url) => { if (!isTrustedRendererUrl(url)) event.preventDefault(); });
+  contents.on('will-frame-navigate', event => { if (!isTrustedRendererUrl(event.url)) event.preventDefault(); });
+});
+
+const { protocol, net } = require('electron');
+const { registerAppScheme, installAppProtocol } = require('./appProtocol');
+registerAppScheme(protocol);
+
 // Enable Windows Graphics Capture (WGC) for reliable capture across hybrid/multi-GPU systems
 app.commandLine.appendSwitch("enable-features", "WebRtcAllowWgcScreenCapturer,WebRtcAllowWgcWindowCapturer");
 
+if (process.env.BAYMAX_USER_DATA) app.setPath("userData", path.resolve(process.env.BAYMAX_USER_DATA));
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -96,7 +132,7 @@ const serviceAccountPath = path.join(userDataDir, "service-account.json");
 function loadServiceAccount() {
   try {
     if (fs.existsSync(serviceAccountPath)) {
-      return JSON.parse(fs.readFileSync(serviceAccountPath, "utf-8"));
+      return secrets.reveal(JSON.parse(fs.readFileSync(serviceAccountPath, "utf-8")), safeStorage);
     }
   } catch (err) {
     console.warn("Failed to read service-account.json:", err);
@@ -121,22 +157,16 @@ const DEFAULT_SETTINGS = {
   openrouterModel: "meta-llama/llama-3.3-70b-instruct:free",
   groqModel: "openai/gpt-oss-120b",
   micEnabled: true,
-  userName: "Badsha",
-  partnerName: "Ayzil",
+  userName: "You",
+  partnerName: "Partner",
   userRole: "me", // "me" | "her"
   gdriveApiKey: "",
   gdriveFolderId: "",
   gdriveUploadUrl: "",
   shareChannel: "coucou-badsha-ayzil",
-  syncUrl: "https://brxmmguaybfozzyrditx.supabase.co/",
-  syncApiKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyeG1tZ3VheWJmb3p6eXJkaXR4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDQzNTksImV4cCI6MjEwNjUyMDM1OX0.JW8GbyVOSoUfjHvNVCcPpSGsAf9Qq-BCtGP2RRRIboM",
-  appPaths: {
-    discord: "C:\\Users\\" + (process.env.USERNAME || "User") + "\\AppData\\Local\\Discord\\Update.exe --processStart Discord.exe",
-    whatsapp: "explorer.exe shell:AppsFolder\\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App",
-    obs: "C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe",
-    premiere: "C:\\Program Files\\Adobe\\Adobe Premiere Pro 2024\\Adobe Premiere Pro.exe",
-    notepad: "notepad",
-  },
+  syncUrl: "",
+  syncApiKey: "",
+  appPaths: {},
   // Mark-LV PC Control & Agent Engine Defaults
   assistantName: "Baymax",
   voiceName: "Charon",
@@ -175,9 +205,10 @@ const DEFAULT_SETTINGS = {
 };
 
 function loadSettings() {
+  if (!app.isReady()) return { ...DEFAULT_SETTINGS };
   try {
     if (fs.existsSync(settingsPath)) {
-      const loaded = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(settingsPath, "utf-8")) };
+      const loaded = { ...DEFAULT_SETTINGS, ...secrets.decodeSettings(JSON.parse(fs.readFileSync(settingsPath, "utf-8")), safeStorage) };
       if (!loaded.syncUrl || !loaded.syncUrl.trim()) {
         loaded.syncUrl = DEFAULT_SETTINGS.syncUrl;
       }
@@ -188,30 +219,31 @@ function loadSettings() {
         loaded.shareChannel = DEFAULT_SETTINGS.shareChannel;
       }
       if (!loaded.userName || loaded.userName === "Me") {
-        loaded.userName = "Badsha";
+        loaded.userName = "You";
       }
       if (!loaded.partnerName || loaded.partnerName === "Her") {
-        loaded.partnerName = "Ayzil";
+        loaded.partnerName = "Partner";
       }
       if (loaded.geminiModel === "gemini-3.8-flash" || loaded.geminiModel === "gemini-2.0-flash") {
         loaded.geminiModel = "gemini-2.5-flash";
-      }
-      if (loaded.groqModel === "llama-3.3-70b-versatile" || loaded.groqModel === "llama-3.1-8b-instant") {
-        loaded.groqModel = "openai/gpt-oss-120b";
       }
       return loaded;
     }
   } catch (err) {
     console.error("Failed to read settings:", err);
+    throw new Error("Settings could not be decrypted/read. The original settings file has been preserved.");
   }
   return { ...DEFAULT_SETTINGS };
 }
 
 function saveSettings(settings) {
   try {
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+    const temporary = settingsPath + ".tmp";
+    fs.writeFileSync(temporary, JSON.stringify(secrets.encodeSettings(settings, safeStorage), null, 2), "utf-8");
+    fs.renameSync(temporary, settingsPath);
   } catch (err) {
     console.error("Failed to save settings:", err);
+    throw err;
   }
 }
 
@@ -226,6 +258,8 @@ const startupFolderPath = path.join(
 const startupShortcutPath = path.join(startupFolderPath, "Mochi.lnk");
 
 function applyStartupMode(enabled) {
+  // An isolated development/QA profile must not alter the user's login startup.
+  if (process.env.BAYMAX_USER_DATA) return;
   try {
     const isPackaged = app.isPackaged;
     const appDir = path.resolve(__dirname, "..");
@@ -288,51 +322,12 @@ function applyStartupMode(enabled) {
   }
 }
 
-function loadSchedule() {
-  try {
-    if (fs.existsSync(schedulePath)) {
-      return JSON.parse(fs.readFileSync(schedulePath, "utf-8"));
-    }
-  } catch (err) {
-    console.error("Failed to read schedule:", err);
-  }
-  return [
-    {
-      id: "demo-1",
-      title: "Record main YouTube video",
-      time: "11:00 AM",
-      assignee: "me",
-      assignedBy: "her",
-      completed: false,
-      createdAt: Date.now(),
-    },
-    {
-      id: "demo-2",
-      title: "Review video intro cut & thumbnail",
-      time: "03:30 PM",
-      assignee: "her",
-      assignedBy: "me",
-      completed: true,
-      createdAt: Date.now(),
-    },
-    {
-      id: "demo-3",
-      title: "YouTube Live Stream with community",
-      time: "07:00 PM",
-      assignee: "me",
-      assignedBy: "her",
-      completed: false,
-      createdAt: Date.now(),
-    },
-  ];
-}
-
+const {readArray, writeJson} = require('./jsonFiles');
+function loadSchedule() { return readArray(schedulePath); }
+const { mergeTasks, stampTasks } = require('./taskSync');
 function saveSchedule(items) {
-  try {
-    fs.writeFileSync(schedulePath, JSON.stringify(items, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Failed to save schedule:", err);
-  }
+  stampTasks(items, loadSchedule());
+  writeJson(schedulePath, items);
 }
 
 let activeSettings = loadSettings();
@@ -340,31 +335,18 @@ let activeSchedule = loadSchedule();
 
 const chatHistoryPath = path.join(userDataDir, "chat_history.json");
 
-function loadChatHistory() {
-  try {
-    if (fs.existsSync(chatHistoryPath)) {
-      const data = JSON.parse(fs.readFileSync(chatHistoryPath, "utf-8"));
-      if (Array.isArray(data)) return data;
-    }
-  } catch (err) {
-    console.warn("Failed to load chat history:", err);
-  }
-  return [];
-}
+function loadChatHistory() { return readArray(chatHistoryPath); }
+function saveChatHistory(history) { writeJson(chatHistoryPath, history); }
 
-function saveChatHistory(history) {
-  try {
-    fs.writeFileSync(chatHistoryPath, JSON.stringify(history, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Failed to save chat history:", err);
-  }
-}
-
-const engineDir = path.join(__dirname, "..", "engine");
+const engineDir = app.isPackaged ? path.join(process.resourcesPath, "engine") : path.join(__dirname, "..", "engine");
+const engineDataDir = app.isPackaged ? path.join(userDataDir, "engine") : engineDir;
+process.env.BAYMAX_ENGINE_DATA = engineDataDir;
+const engineArgs = (mode, args = []) => app.isPackaged ? [mode, ...args] : [path.join(engineDir, { bridge: "mochi_bridge.py", live: "mochi_runner.py", hud: "main.py" }[mode]), ...args];
 const bridgeScript = path.join(engineDir, "mochi_bridge.py");
 const markLvMainScript = path.join(engineDir, "main.py");
 
 function resolvePythonPath() {
+  if (app.isPackaged) return path.join(engineDir, "BaymaxEngine.exe");
   const pyPathFile = path.join(engineDir, "python_path.txt");
   if (fs.existsSync(pyPathFile)) {
     try {
@@ -410,17 +392,20 @@ function resolvePythonPath() {
 
 function runMochiBridgeCmd(cmd, ...args) {
   return new Promise((resolve) => {
-    const procArgs = [bridgeScript, cmd, ...args];
+    const procArgs = engineArgs("bridge", [cmd, ...args]);
     const pyExe = resolvePythonPath();
     const child = spawn(pyExe, procArgs, {
       cwd: engineDir,
       windowsHide: true,
       env: { ...process.env, PYTHONIOENCODING: "utf-8" },
     });
+    const deadline = setTimeout(() => { child.kill(); resolve({ success: false, error: 'Engine action timed out after 45 seconds' }); }, 45000);
+    child.once('close', () => clearTimeout(deadline));
+    child.once('error', () => clearTimeout(deadline));
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (d) => { stdout += d.toString(); });
-    child.stderr.on("data", (d) => { stderr += d.toString(); });
+    child.stdout.on("data", (d) => { stdout = (stdout + d.toString()).slice(-1048576); });
+    child.stderr.on("data", (d) => { stderr = (stderr + d.toString()).slice(-65536); });
     child.on("close", (code) => {
       try {
         const lines = stdout.trim().split("\n");
@@ -441,7 +426,7 @@ function runMochiBridgeCmd(cmd, ...args) {
 
 function syncMarkLvConfig(settings) {
   try {
-    runMochiBridgeCmd("sync-config", JSON.stringify(settings));
+    syncEngineConfig(settings);
   } catch (err) {
     console.warn("Failed to sync Mark-LV config:", err);
   }
@@ -449,7 +434,7 @@ function syncMarkLvConfig(settings) {
 
 // Initial Mark-LV config sync on boot
 setTimeout(() => {
-  syncMarkLvConfig(activeSettings);
+  if (app.isReady()) syncMarkLvConfig(activeSettings);
 }, 1000);
 
 let cachedMarkLvTools = null;
@@ -492,7 +477,7 @@ let partnerOfflineTimer = null;
 
 function triggerPartnerOnlineNotification(partnerName) {
   const isMe = (activeSettings.userRole || "me") === "me";
-  const rawPartner = isMe ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+  const rawPartner = isMe ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
   const displayName = partnerName || (rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1));
 
   // Cooldown: prevent duplicate notifications within 3 minutes (180s)
@@ -518,8 +503,8 @@ function triggerPartnerOnlineNotification(partnerName) {
     try {
       const notif = new Notification({
         title: `✨ ${displayName} is online! 💖`,
-        body: `${displayName} just opened Mochi and joined.`,
-        icon: path.join(__dirname, "../assets/icon.png"),
+        body: `${displayName} just opened ${displayAssistantName()} and joined.`,
+        icon: path.join(__dirname, "../public/icons/icon.png"),
         silent: false,
       });
       notif.on("click", () => {
@@ -545,8 +530,8 @@ function startSupabaseSync() {
   }
 
   const isMe = (activeSettings.userRole || "me") === "me";
-  const rawMe = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
-  const rawPartner = isMe ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+  const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
+  const rawPartner = isMe ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
   const currentUserName = rawMe.charAt(0).toUpperCase() + rawMe.slice(1);
   const partnerUserName = rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1);
   const partnerRole = isMe ? "her" : "me";
@@ -555,6 +540,9 @@ function startSupabaseSync() {
   initSupabase({
     url: activeSettings.syncUrl,
     key: activeSettings.syncApiKey,
+    email: activeSettings.syncEmail,
+    password: activeSettings.syncPassword,
+    onStatus: status => { for (const win of [overlayWin, settingsWin]) if (win && !win.isDestroyed()) win.webContents.send('sync-status', status); },
     channelName: activeSettings.shareChannel || "coucou-badsha-ayzil",
     userName: currentUserName,
     userRole: activeSettings.userRole || "me",
@@ -598,7 +586,7 @@ function startSupabaseSync() {
           const notif = new Notification({
             title: `💬 ${sender}`,
             body: payload.text,
-            icon: path.join(__dirname, "../assets/icon.png"),
+            icon: path.join(__dirname, "../public/icons/icon.png"),
             silent: false,
           });
           notif.on("click", () => {
@@ -631,8 +619,8 @@ function startSupabaseSync() {
           const sizeMb = payload.size ? (payload.size / (1024 * 1024)).toFixed(2) : "0";
           const notif = new Notification({
             title: `💌 New file from ${sender}!`,
-            body: `${payload.name} (${sizeMb} MB)\nClick to open in Mochi`,
-            icon: path.join(__dirname, "../assets/icon.png"),
+            body: `${payload.name} (${sizeMb} MB)\nClick to open in ${displayAssistantName()}`,
+            icon: path.join(__dirname, "../public/icons/icon.png"),
             silent: false,
           });
           notif.on("click", () => {
@@ -650,10 +638,10 @@ function startSupabaseSync() {
     onScheduleUpdated: (payload) => {
       if (payload && Array.isArray(payload.items)) {
         console.log("[Supabase Sync] Real-time task update from:", payload.senderName);
-        activeSchedule = payload.items;
+        activeSchedule = mergeTasks(activeSchedule, payload.items);
         saveSchedule(activeSchedule);
         if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("schedule-updated", activeSchedule);
+          overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
         }
       }
     },
@@ -741,14 +729,14 @@ function startSupabaseSync() {
         if (added > 0) {
           saveChatHistory(history);
           if (overlayWin && !overlayWin.isDestroyed() && lastMsg) {
-            overlayWin.webContents.send("partner-chat-received", lastMsg);
+            overlayWin.webContents.send("partner-chat-history", history);
           }
           if (Notification.isSupported() && lastMsg) {
             try {
               const notif = new Notification({
                 title: `💬 ${lastMsg.sender} (${added} missed message${added > 1 ? "s" : ""})`,
                 body: lastMsg.text,
-                icon: path.join(__dirname, "../assets/icon.png"),
+                icon: path.join(__dirname, "../public/icons/icon.png"),
                 silent: false,
               });
               notif.show();
@@ -758,15 +746,10 @@ function startSupabaseSync() {
       }
 
       if (Array.isArray(payload.schedule) && payload.schedule.length > 0) {
-        const taskMap = new Map();
-        for (const t of activeSchedule) taskMap.set(t.id, t);
-        for (const t of payload.schedule) {
-          if (!taskMap.has(t.id)) taskMap.set(t.id, t);
-        }
-        activeSchedule = Array.from(taskMap.values());
+        activeSchedule = mergeTasks(activeSchedule, payload.schedule);
         saveSchedule(activeSchedule);
         if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("schedule-updated", activeSchedule);
+          overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
         }
       }
     },
@@ -783,7 +766,7 @@ function startSupabaseSync() {
     },
     onRemoteAccess: (payload) => {
       console.log("[Supabase Sync] Incoming remote_access:", payload?.action, "from:", payload?.sender);
-      if (!payload || !payload.action) return;
+      if (!remoteSession.receive(payload)) return;
 
       const action = payload.action;
 
@@ -842,10 +825,11 @@ function startSupabaseSync() {
           overlayWin.webContents.send("host-signal", payload.signal);
         }
       } else if (action === "input") {
-        if (payload.cmd) {
+        if (payload.cmd && remoteSession.isHost()) {
           injectInput(payload.cmd);
         }
       } else if (action === "end") {
+        remoteSession.end();
         activeRemoteRole = null;
         pendingViewerSignals = [];
         closeRemoteViewerWindow();
@@ -869,7 +853,7 @@ function startSupabaseSync() {
         if (Array.isArray(cloudMessages) && cloudMessages.length > 0) {
           const history = loadChatHistory();
           const existingIds = new Set(history.map((m) => m.id));
-          let newCount = 0;
+          let newCount = 0, restoredCount = 0;
           let latestNewMsg = null;
 
           for (const msg of cloudMessages) {
@@ -880,7 +864,7 @@ function startSupabaseSync() {
                 ...msg,
                 read: !isFromPartner ? true : false,
               });
-              existingIds.add(msg.id);
+              existingIds.add(msg.id);restoredCount++;
               if (isFromPartner) {
                 newCount++;
                 latestNewMsg = msg;
@@ -888,18 +872,18 @@ function startSupabaseSync() {
             }
           }
 
-          if (newCount > 0) {
+          if (restoredCount > 0) {
             console.log(`[Supabase Cloud DB] Restored ${newCount} offline chat message(s)!`);
             saveChatHistory(history);
-            if (overlayWin && !overlayWin.isDestroyed() && latestNewMsg) {
-              overlayWin.webContents.send("partner-chat-received", latestNewMsg);
+            if (overlayWin && !overlayWin.isDestroyed()) {
+              overlayWin.webContents.send("partner-chat-history", history);
             }
             if (Notification.isSupported() && latestNewMsg) {
               try {
                 const notif = new Notification({
                   title: `💬 ${latestNewMsg.sender} (${newCount} new message${newCount > 1 ? "s" : ""})`,
                   body: latestNewMsg.text,
-                  icon: path.join(__dirname, "../assets/icon.png"),
+                  icon: path.join(__dirname, "../public/icons/icon.png"),
                   silent: false,
                 });
                 notif.on("click", () => {
@@ -920,20 +904,10 @@ function startSupabaseSync() {
         const cloudTasks = await fetchOfflineTasks(channel);
         if (Array.isArray(cloudTasks) && cloudTasks.length > 0) {
           console.log(`[Supabase Cloud DB] Syncing ${cloudTasks.length} task(s) from cloud...`);
-          const taskMap = new Map();
-          for (const t of activeSchedule) {
-            taskMap.set(t.id, t);
-          }
-          for (const ct of cloudTasks) {
-            const local = taskMap.get(ct.id);
-            if (!local || (ct.updatedAt && ct.updatedAt > (local.updatedAt || local.createdAt || 0))) {
-              taskMap.set(ct.id, ct);
-            }
-          }
-          activeSchedule = Array.from(taskMap.values());
+          activeSchedule = mergeTasks(activeSchedule, cloudTasks);
           saveSchedule(activeSchedule);
           if (overlayWin && !overlayWin.isDestroyed()) {
-            overlayWin.webContents.send("schedule-updated", activeSchedule);
+            overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
           }
         }
       }
@@ -956,6 +930,9 @@ let isCollapsed = true;
 let currentIslandRect = { x: 240, y: 0, w: 240, h: 40 };
 let isMouseInsideIsland = false;
 let mouseCheckTimer = null;
+const { pointerInside, createMousePassthrough } = require('./overlayInteraction');
+let setMousePassthrough = () => {};
+let lastPointer = '';
 
 function startMouseTracking() {
   if (mouseCheckTimer) clearInterval(mouseCheckTimer);
@@ -966,30 +943,17 @@ function startMouseTracking() {
       const winBounds = overlayWin.getBounds();
       const rect = currentIslandRect || { x: 240, y: 0, w: 240, h: 40 };
 
-      // Island exact coordinates in screen space
-      const islandLeft = winBounds.x + rect.x - 6;
-      const islandRight = winBounds.x + rect.x + rect.w + 6;
-      const islandTop = winBounds.y;
-      const islandBottom = winBounds.y + Math.max(38, (rect.h || 40) + 8);
-
-      const inside =
-        cursor.x >= islandLeft &&
-        cursor.x <= islandRight &&
-        cursor.y >= islandTop &&
-        cursor.y <= islandBottom;
-
-      if (inside !== isMouseInsideIsland) {
-        isMouseInsideIsland = inside;
-        if (inside) {
-          overlayWin.setIgnoreMouseEvents(false);
-          overlayWin.webContents.send("mouse-enter");
-        } else {
-          overlayWin.setIgnoreMouseEvents(true, { forward: true });
-          overlayWin.webContents.send("mouse-leave");
-        }
+      const x = cursor.x - winBounds.x, y = cursor.y - winBounds.y;
+      const inside = pointerInside(x, y, rect, isMouseInsideIsland);
+      const pointerKey = `${x},${y},${inside}`;
+      setMousePassthrough(!inside);
+      if (pointerKey !== lastPointer) {
+        lastPointer = pointerKey;
+        overlayWin.webContents.send("cursor", { x, y });
       }
+      isMouseInsideIsland = inside;
     } catch (e) {}
-  }, 25);
+  }, 40);
 }
 
 function createOverlayWindow() {
@@ -1006,6 +970,7 @@ function createOverlayWindow() {
     x,
     y,
     frame: false,
+    show: false,
     transparent: true,
     backgroundColor: "#00000000",
     alwaysOnTop: true,
@@ -1017,12 +982,17 @@ function createOverlayWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      nodeIntegrationInSubFrames: true,
-      webSecurity: false,
-      allowRunningInsecureContent: true,
+      nodeIntegrationInSubFrames: false,
+      backgroundThrottling: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
     },
   });
 
+  setMousePassthrough = createMousePassthrough((ignore, options) => {
+    if (overlayWin && !overlayWin.isDestroyed()) overlayWin.setIgnoreMouseEvents(ignore, options);
+  });
+  overlayWin.once("ready-to-show", () => overlayWin?.showInactive());
   overlayWin.setAlwaysOnTop(true, "screen-saver");
   overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
@@ -1032,14 +1002,14 @@ function createOverlayWindow() {
   if (isDev) {
     overlayWin.loadURL("http://localhost:1420");
   } else if (fs.existsSync(distIndex)) {
-    overlayWin.loadFile(distIndex);
+    overlayWin.loadURL('baymax://app/index.html');
   } else {
     // If not built yet, fallback to dev URL or wait
     overlayWin.loadURL("http://localhost:1420");
   }
 
   // Pass mouse clicks through outside the island pill to desktop & background apps
-  overlayWin.setIgnoreMouseEvents(true);
+  setMousePassthrough(true);
   startMouseTracking();
 
   overlayWin.webContents.on("console-message", (_event, level, message, line, sourceId) => {
@@ -1055,73 +1025,16 @@ function createOverlayWindow() {
   });
 }
 
+function displayAssistantName() {
+  return String(activeSettings.assistantName || "Baymax").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 40) || "Baymax";
+}
+
 function createSettingsWindow() {
-  if (settingsWin && !settingsWin.isDestroyed()) {
-    settingsWin.show();
-    settingsWin.focus();
-    return;
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.show();
+    overlayWin.focus();
+    overlayWin.webContents.send("open-preferences");
   }
-
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-  const winW = 680;
-  const winH = Math.min(760, screenHeight - 60);
-  const winX = Math.round((screenWidth - winW) / 2);
-  const winY = 60;
-
-  settingsWin = new BrowserWindow({
-    width: winW,
-    height: winH,
-    x: winX,
-    y: winY,
-    title: "Mochi Ultra Settings",
-    backgroundColor: "#0b0c0e",
-    frame: true,
-    autoHideMenuBar: true,
-    resizable: true,
-    movable: true,
-    minimizable: true,
-    maximizable: true,
-    alwaysOnTop: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  settingsWin.setAlwaysOnTop(true, "screen-saver");
-
-  settingsWin.on("focus", () => {
-    if (overlayWin && !overlayWin.isDestroyed()) {
-      overlayWin.setAlwaysOnTop(false);
-    }
-    settingsWin.setAlwaysOnTop(true, "screen-saver");
-  });
-
-  settingsWin.on("blur", () => {
-    if (overlayWin && !overlayWin.isDestroyed()) {
-      overlayWin.setAlwaysOnTop(true, "screen-saver");
-    }
-  });
-
-  const isDev = process.env.NODE_ENV === "development";
-  const distSettings = path.join(__dirname, "..", "dist", "settings.html");
-
-  if (isDev) {
-    settingsWin.loadURL("http://localhost:1420/settings.html");
-  } else if (fs.existsSync(distSettings)) {
-    settingsWin.loadFile(distSettings);
-  } else {
-    settingsWin.loadURL("http://localhost:1420/settings.html");
-  }
-
-  settingsWin.on("closed", () => {
-    settingsWin = null;
-    if (overlayWin && !overlayWin.isDestroyed()) {
-      overlayWin.setAlwaysOnTop(true, "screen-saver");
-    }
-  });
 }
 
 function broadcastToProductivity(channel, ...args) {
@@ -1157,7 +1070,7 @@ function handleFocusDistractionAlert(procName) {
   lastDistractionAlertTime = now;
 
   const isMe = (activeSettings.userRole || "me") === "me";
-  const userName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+  const userName = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
   const displayName = cleanProc.charAt(0).toUpperCase() + cleanProc.slice(1);
 
   console.log(`[Productivity] Alerting user: ${userName} opened distraction app ${displayName}`);
@@ -1175,7 +1088,7 @@ function handleFocusDistractionAlert(procName) {
   if (settings.notifications && Notification.isSupported()) {
     try {
       new Notification({
-        title: "Baymax — Focus Active",
+        title: `${displayAssistantName()} — Focus Active`,
         body: `Hey ${userName}, "${displayName}" is blocked during your focus session.`,
         silent: false,
       }).show();
@@ -1214,7 +1127,7 @@ function createProductivityWindow() {
     y: winY,
     minWidth: 920,
     minHeight: 620,
-    title: "Baymax — Productivity & Focus Workspace",
+    title: `${displayAssistantName()} — Productivity & Focus`,
     backgroundColor: "#0A0A0A",
     frame: true,
     autoHideMenuBar: true,
@@ -1231,7 +1144,7 @@ function createProductivityWindow() {
 
   const distProductivity = path.join(__dirname, "..", "productivity", "dist", "index.html");
   if (fs.existsSync(distProductivity)) {
-    productivityWin.loadFile(distProductivity);
+    productivityWin.loadURL('baymax://app/productivity/index.html');
   } else {
     productivityWin.loadURL("http://localhost:3000");
   }
@@ -1256,7 +1169,7 @@ function setupTray() {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip("Baymax — AI Desktop Companion & Productivity Engine");
+  tray.setToolTip(`${displayAssistantName()} — AI Desktop Companion`);
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -1462,143 +1375,18 @@ function getProcessCandidates(appNameOrPath) {
   return Array.from(candidates);
 }
 
-function launchApplication(appNameOrPath) {
-  const query = (appNameOrPath || "").toLowerCase().trim().replace(/^["']|["']$/g, "");
-  const paths = activeSettings.appPaths || {};
-
-  let targetPath = null;
-  for (const [key, val] of Object.entries(paths)) {
-    if (val && (query.includes(key.toLowerCase()) || key.toLowerCase().includes(query))) {
-      targetPath = val;
-      break;
-    }
-  }
-
-  if (!targetPath) {
-    const rawClean = appNameOrPath ? appNameOrPath.trim().replace(/^["']|["']$/g, "") : "";
-    if (rawClean && (rawClean.endsWith(".exe") || rawClean.endsWith(".lnk") || rawClean.endsWith(".url")) && fs.existsSync(rawClean)) {
-      targetPath = rawClean;
-    } else {
-      // Common Windows app fallback
-      if (query.includes("discord")) targetPath = "discord";
-      else if (query.includes("whatsapp")) targetPath = "explorer.exe shell:AppsFolder\\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App";
-      else if (query.includes("obs")) targetPath = "obs";
-      else if (query.includes("premiere")) targetPath = "premiere";
-      else if (query.includes("chrome")) targetPath = "chrome";
-      else if (query.includes("notepad")) targetPath = "notepad";
-      else if (query.includes("calculator") || query.includes("calc")) targetPath = "calc";
-      else if (query.includes("paint") || query.includes("mspaint")) targetPath = "mspaint";
-      else if (query.includes("spotify")) targetPath = "spotify";
-      else if (query.includes("vscode") || query.includes("code")) targetPath = "code";
-      else targetPath = appNameOrPath;
-    }
-  }
-
-  const clean = (targetPath || "").trim().replace(/^["']|["']$/g, "");
-
-  return new Promise((resolve) => {
-    if (!clean) {
-      return resolve({ success: false, error: "Empty path" });
-    }
-
-    if (clean.startsWith("explorer.exe")) {
-      exec(`start "" ${clean}`, (err) => {
-        if (err) resolve({ success: false, error: err.message });
-        else resolve({ success: true, path: clean });
-      });
-    } else if (clean.includes(" ") || clean.toLowerCase().endsWith(".lnk") || clean.toLowerCase().endsWith(".url")) {
-      exec(`start "" "${clean}"`, (err) => {
-        if (err) {
-          shell.openPath(clean).then((openErr) => {
-            if (openErr) resolve({ success: false, error: openErr });
-            else resolve({ success: true, path: clean });
-          });
-        } else {
-          resolve({ success: true, path: clean });
-        }
-      });
-    } else {
-      exec(`start "" "${clean}"`, (err) => {
-        if (!err) {
-          resolve({ success: true, path: clean });
-        } else {
-          try {
-            const proc = spawn(clean, [], { detached: true, stdio: "ignore", shell: true });
-            proc.unref();
-            resolve({ success: true, path: clean });
-          } catch (spawnErr) {
-            resolve({ success: false, error: spawnErr.message });
-          }
-        }
-      });
-    }
-  });
+function launchApplication(query) {
+  return appCommands.launchApplication(query, activeSettings.appPaths, productivityTracker?.getKnownApps() || [], shell);
 }
-
-function closeApplication(appNameOrPath) {
-  const cleanLower = (appNameOrPath || "").toLowerCase().trim();
-  if (!cleanLower) {
-    return Promise.resolve({ success: false, error: "No application name provided." });
-  }
-
-  // Strict safety protection: NEVER close Mochi or Coucou or Dev tools
-  if (
-    cleanLower.includes("mochi") ||
-    cleanLower.includes("coucou") ||
-    cleanLower === "ultra" ||
-    cleanLower === "electron" ||
-    cleanLower === "python" ||
-    cleanLower === "code" ||
-    cleanLower === "cursor" ||
-    cleanLower === "antigravity" ||
-    cleanLower === "jarvis"
-  ) {
-    console.warn(`[App Closer] Refusing to close protected assistant process: ${appNameOrPath}`);
-    return Promise.resolve({
-      success: false,
-      error: "Refusing to close Mochi assistant process.",
-    });
-  }
-
-  const candidates = getProcessCandidates(appNameOrPath);
-  console.log(`[App Closer] Closing ${appNameOrPath}, checking candidates:`, candidates);
-
-  return new Promise((resolve) => {
-    let closedAny = false;
-    let checked = 0;
-
-    if (candidates.length === 0) {
-      return resolve({ success: false, error: "No matching process candidate found." });
-    }
-
-    candidates.forEach((proc) => {
-      exec(`taskkill /IM "${proc}" /F /T`, (err, stdout) => {
-        checked++;
-        if (!err && stdout && stdout.includes("SUCCESS")) {
-          closedAny = true;
-          console.log(`[App Closer] Terminated ${proc}:`, stdout.trim());
-        }
-
-        if (checked === candidates.length) {
-          if (closedAny) {
-            resolve({ success: true, app: appNameOrPath });
-          } else {
-            // PowerShell wildcard fallback with strict exclusion of Mochi, Electron, Python, Code
-            const queryName = appNameOrPath.replace(/\.exe$/i, "").trim();
-            const safePsCmd = `Get-Process | Where-Object { ($_.ProcessName -like '*${queryName}*' -or $_.MainWindowTitle -like '*${queryName}*') -and $_.ProcessName -notmatch 'mochi|coucou|electron|python|code|explorer|system' } | Stop-Process -Force -ErrorAction Stop`;
-            exec(`powershell -NoProfile -Command "${safePsCmd}"`, (psErr) => {
-              if (!psErr) {
-                console.log(`[App Closer] Terminated via PowerShell: *${queryName}*`);
-                resolve({ success: true, app: appNameOrPath });
-              } else {
-                resolve({ success: false, notRunning: true, error: "App was not running." });
-              }
-            });
-          }
-        }
+function closeApplication(query) {
+  const getRunning = () => new Promise((resolve, reject) => {
+    require('node:child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOW_SCANNER_SCRIPT],
+      { windowsHide: true, timeout: 15000 }, (err, out) => {
+        if (err) return reject(err);
+        try { const rows = JSON.parse(out || '[]'); resolve(Array.isArray(rows) ? rows : [rows]); } catch (e) { reject(e); }
       });
-    });
   });
+  return appCommands.closeApplication(query, activeSettings.appPaths, productivityTracker?.getKnownApps() || [], getRunning, isProtectedProcess);
 }
 
 // ── Mark-LV Live Assistant Process Manager ──────────────────────────────────
@@ -1608,7 +1396,7 @@ let pendingTextResolvers = [];
 
 function syncEngineConfig(settings) {
   try {
-    const configPath = path.join(engineDir, 'config', 'api_keys.json');
+    const configPath = path.join(engineDataDir, 'config', 'api_keys.json');
     let currentConfig = {};
     if (fs.existsSync(configPath)) {
       try {
@@ -1616,15 +1404,15 @@ function syncEngineConfig(settings) {
       } catch {}
     }
     const isHer = (settings.userRole || "me") === "her";
-    const rawMe = isHer ? (settings.partnerName || "Ayzil") : (settings.userName || "Badsha");
-    const rawPartner = isHer ? (settings.userName || "Badsha") : (settings.partnerName || "Ayzil");
-    const activeUserName = rawMe.trim() || (isHer ? "Ayzil" : "Badsha");
-    const activePartnerName = rawPartner.trim() || (isHer ? "Badsha" : "Ayzil");
+    const rawMe = isHer ? (settings.partnerName || "Partner") : (settings.userName || "You");
+    const rawPartner = isHer ? (settings.userName || "You") : (settings.partnerName || "Partner");
+    const activeUserName = rawMe.trim() || (isHer ? "Partner" : "You");
+    const activePartnerName = rawPartner.trim() || (isHer ? "You" : "Partner");
 
     const updatedConfig = {
       ...currentConfig,
-      gemini_api_key: settings.geminiApiKey || currentConfig.gemini_api_key || '',
-      assistant_name: settings.assistantName || 'Mochi',
+      gemini_api_key: '',
+      assistant_name: settings.assistantName || 'Baymax',
       user_name: activeUserName,
       partner_name: activePartnerName,
       user_role: settings.userRole || 'me',
@@ -1650,6 +1438,7 @@ function syncEngineConfig(settings) {
         ...(settings.activeActions || {}),
       },
     };
+    process.env.GEMINI_API_KEY = settings.geminiApiKey || '';
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 4), 'utf-8');
   } catch (err) {
@@ -1682,7 +1471,7 @@ function startMochiLiveEngine() {
 
     console.log(`[Mark-LV Engine] Spawning with Python: ${pyExe}`);
 
-    mochiLiveProc = spawn(pyExe, ['mochi_runner.py'], {
+    mochiLiveProc = spawn(pyExe, engineArgs('live'), {
       cwd: engineDir,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1724,7 +1513,7 @@ function startMochiLiveEngine() {
       mochiLiveProc = null;
       while (pendingTextResolvers.length > 0) {
         const resolve = pendingTextResolvers.shift();
-        resolve({ text: "Mochi live engine is restarting. Please try again." });
+        resolve({ text: `${displayAssistantName()} is restarting. Please try again.` });
       }
       if (!isQuitting && (activeSettings.aiProvider || 'gemini') === 'gemini' && activeSettings.geminiApiKey) {
         clearTimeout(mochiLiveRestartTimer);
@@ -1739,7 +1528,7 @@ function startMochiLiveEngine() {
       mochiLiveProc = null;
       while (pendingTextResolvers.length > 0) {
         const resolve = pendingTextResolvers.shift();
-        resolve({ text: `Mochi engine process error: ${err.message}` });
+        resolve({ text: `${displayAssistantName()} engine process error: ${err.message}` });
       }
     });
 
@@ -1812,14 +1601,16 @@ function handleLiveEngineEvent(msg) {
       break;
     }
     case 'confirm': {
-      if (overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.webContents.send('ai-confirm', msg);
-      }
+      if (!msg.requestId || !overlayWin || overlayWin.isDestroyed()) break;
+      const requestId = msg.requestId, requestedAt = Date.now();
+      dialog.showMessageBox(overlayWin, { type:'question', title: `${displayAssistantName()} action confirmation`, message: String(msg.title || 'Confirm action'), detail: String(msg.detail || ''), buttons:['Cancel','Confirm'], defaultId:0, cancelId:0, noLink:true }).then(result => {
+        sendToLiveEngine({cmd:'confirm',requestId,accepted:result.response === 1 && Date.now()-requestedAt < 90000});
+      }).catch(() => sendToLiveEngine({cmd:'confirm',requestId,accepted:false}));
       break;
     }
     case 'reconfig': {
       if (overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.webContents.send('open-settings-window');
+        createSettingsWindow();
       }
       break;
     }
@@ -1854,10 +1645,10 @@ function handleLiveEngineEvent(msg) {
     }
     case 'partner_chat_send': {
       const isMe = (activeSettings.userRole || "me") === "me";
-      const rawMe = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
-      const rawPartner = isMe ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
-      const myName = (rawMe.trim() || (isMe ? "Badsha" : "Ayzil"));
-      const partnerName = (rawPartner.trim() || (isMe ? "Ayzil" : "Badsha"));
+      const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
+      const rawPartner = isMe ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
+      const myName = (rawMe.trim() || (isMe ? "You" : "Partner"));
+      const partnerName = (rawPartner.trim() || (isMe ? "Partner" : "You"));
       const myDisplayName = myName.charAt(0).toUpperCase() + myName.slice(1);
       const partnerDisplayName = partnerName.charAt(0).toUpperCase() + partnerName.slice(1);
       const userRole = activeSettings.userRole || "me";
@@ -1897,7 +1688,7 @@ function handleLiveEngineEvent(msg) {
         saveSchedule(activeSchedule);
         syncScheduleToPartner();
         if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("schedule-updated", activeSchedule);
+          overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
         }
       }
       break;
@@ -1912,7 +1703,7 @@ function handleLiveEngineEvent(msg) {
         saveSchedule(activeSchedule);
         syncScheduleToPartner();
         if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("schedule-updated", activeSchedule);
+          overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
         }
       }
       break;
@@ -1920,13 +1711,76 @@ function handleLiveEngineEvent(msg) {
   }
 }
 
+async function deliverMessage(msg) {
+  const cloud = await saveChatMessageToCloud(msg, activeSettings.shareChannel || 'coucou-badsha-ayzil');
+  const live = await broadcastChatMessage(msg);
+  msg.delivery = cloud ? 'stored' : (live ? 'sent' : 'pending');
+  // Until persisted in cloud, retain a durable retry even if the broadcast succeeded.
+  msg.cloudPending = !cloud;
+  const history = loadChatHistory(), index = history.findIndex(m => m.id === msg.id);
+  if (index >= 0) history[index] = { ...history[index], ...msg }; else history.push(msg);
+  saveChatHistory(history);
+  overlayWin?.webContents.send('partner-chat-received', msg);
+  return msg;
+}
+let flushingOutbox = false;
+async function flushOutbox() {
+  if (flushingOutbox) return;
+  flushingOutbox = true;
+  try { for (const msg of loadChatHistory().filter(m => m.cloudPending || m.delivery === 'pending')) await deliverMessage(msg); }
+  finally { flushingOutbox = false; }
+}
+async function handleEngineAction(action, params) {
+  if (action === 'open_app' || action === 'close_app') {
+    const result = await (action === 'open_app' ? launchApplication(params.app_name) : closeApplication(params.app_name));
+    if (!result.success) throw new Error(result.error);
+    return result;
+  }
+  if (action === 'send_partner_message') {
+    const msg = await sendPartnerMessage({ text: params.message_text || params.text, isAiGenerated: true });
+    if (!msg) throw new Error('Message text required');
+    return { id: msg.id, delivery: msg.delivery, text: msg.text };
+  }
+  if (action === 'manage_productivity') {
+    if (!productivityTracker || !productivityBlocker) throw new Error('Productivity is not ready');
+    const act = String(params.action || 'analyze_stats').toLowerCase();
+    if (['start_focus','start_session','focus','start'].includes(act)) { productivityBlocker.start({durationMinutes:Number(params.duration_minutes || params.minutes || 25),mode:params.mode || 'Deep Silence'}); return productivityBlocker.getStatus(); }
+    if (['stop_focus','stop_session','stop','end_focus','cancel_focus'].includes(act)) { productivityBlocker.stop(); return productivityBlocker.getStatus(); }
+    if (['classify','set_category','mark_app'].includes(act)) {
+      const query = String(params.app_name || params.app || '').toLowerCase();
+      const matches = productivityTracker.getKnownApps(true).filter(a => [a.id,a.name.toLowerCase(),...(a.aliases || [])].includes(query));
+      if(matches.length !== 1) throw new Error('Choose one exact application from the Apps library.');
+      productivityTracker.updateCategory(matches[0].id, params.category); return 'Category saved.';
+    }
+    const apps = params.timeframe === 'weekly' ? productivityTracker.getWeekApps() : productivityTracker.getTodayApps();
+    const total = apps.reduce((s,a)=>s+a.totalSeconds,0), productive=apps.filter(a=>a.category==='productive').reduce((s,a)=>s+a.totalSeconds,0), wasteful=apps.filter(a=>a.category==='wasteful').reduce((s,a)=>s+a.totalSeconds,0);
+    return { apps, totalSeconds:total, focusScore:total ? Math.round(50+50*productive/total-30*wasteful/total) : 0, focus:productivityBlocker.getStatus() };
+  }
+  if (action === 'manage_schedule') {
+    const act=String(params.action || 'list').toLowerCase();
+    if (['add','create','new'].includes(act)) {
+      if (!String(params.title || '').trim()) throw new Error('Task title required');
+      await executeActionTags('[ADD_TASK: '+JSON.stringify({title:params.title,time:params.time_str || params.time,for:params.for_who || params.for || activeSettings.userRole})+']');
+      return 'Task saved.';
+    }
+    if (['complete','done','finish','toggle'].includes(act)) {
+      const query=String(params.title || '').trim().toLowerCase();
+      const matches=activeSchedule.filter(t=>!t.deleted && (t.id.toLowerCase()===query || t.title.toLowerCase()===query));
+      if(matches.length!==1) throw new Error('Choose one exact task title or ID.');
+      await executeActionTags('[MARK_DONE: '+matches[0].id+']');return 'Task completed.';
+    }
+    return activeSchedule.filter(t=>!t.deleted);
+  }
+  throw new Error('Unknown engine command');
+}
+
 // ── IPC Handlers ─────────────────────────────────────────────────────────────
 
 ipcMain.handle("boot", () => {
   const primaryDisplay = screen.getPrimaryDisplay();
   return {
-    settings: activeSettings,
-    schedule: activeSchedule,
+    settings: secrets.publicSettings(activeSettings),
+    schedule: activeSchedule.filter(t => !t.deleted),
     screen: {
       x: primaryDisplay.bounds.x,
       y: primaryDisplay.bounds.y,
@@ -1934,7 +1788,7 @@ ipcMain.handle("boot", () => {
       height: primaryDisplay.bounds.height,
       scale: primaryDisplay.scaleFactor,
     },
-    version: "1.0.0-creator",
+    version: (() => { try { const b=JSON.parse(fs.readFileSync(path.join(__dirname,"../dist/build-info.json"),"utf8")); return `1.0.0 • ${b.revision.slice(0,8)}${b.dirty ? ' + local changes' : ''} • ${b.builtAt}`; } catch { return "1.0.0 • build unknown"; } })(),
     hookPath: "",
   };
 });
@@ -1966,7 +1820,7 @@ ipcMain.handle("marklv-execute-action", async (_event, { name, parameters }) => 
 
 ipcMain.handle("marklv-launch-hud", async () => {
   try {
-    const hudChild = spawn(resolvePythonPath(), [markLvMainScript], {
+    const hudChild = spawn(resolvePythonPath(), engineArgs('hud'), {
       cwd: engineDir,
       detached: true,
       stdio: "ignore",
@@ -1983,22 +1837,29 @@ ipcMain.handle("save-settings", (_event, newSettings) => {
   const oldGeminiKey = activeSettings.geminiApiKey;
   const oldProvider = activeSettings.aiProvider || "gemini";
   const oldUserRole = activeSettings.userRole || "me";
-  const oldUserName = activeSettings.userName || "Badsha";
-  const oldPartnerName = activeSettings.partnerName || "Ayzil";
+  const oldUserName = activeSettings.userName || "You";
+  const oldPartnerName = activeSettings.partnerName || "Partner";
+  const oldAssistantName = activeSettings.assistantName;
   const oldVoice = activeSettings.voiceName || "Charon";
-  activeSettings = { ...activeSettings, ...newSettings };
+  const previous = activeSettings;
+  const next = secrets.mergeSettings(previous, newSettings);
+  next.assistantName = String(next.assistantName || "Baymax").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 40) || "Baymax";
+  saveSettings(next);
+  activeSettings = next;
   cachedMarkLvTools = null;
-  saveSettings(activeSettings);
+  tray?.setToolTip(`${displayAssistantName()} — AI Desktop Companion`);
   if (oldAutostart !== activeSettings.autostart) {
     applyStartupMode(activeSettings.autostart);
   }
-  startSupabaseSync();
+  if (["syncUrl", "syncApiKey", "syncEmail", "syncPassword", "shareChannel", "userRole", "userName", "partnerName"].some(key => previous[key] !== activeSettings[key])) startSupabaseSync();
   syncEngineConfig(activeSettings);
 
   const identityChanged =
+    ["pushToTalkEnabled", "proactiveAudio", "thinkingEnabled", "mediaResolution", "morningBriefEnabled", "turnSilenceMs", "turnPrefixMs", "turnEndSensitivity", "audioInputDevice", "audioOutputDevice"].some(key => previous[key] !== activeSettings[key]) ||
+    oldAssistantName !== activeSettings.assistantName ||
     oldUserRole !== (activeSettings.userRole || "me") ||
-    oldUserName !== (activeSettings.userName || "Badsha") ||
-    oldPartnerName !== (activeSettings.partnerName || "Ayzil");
+    oldUserName !== (activeSettings.userName || "You") ||
+    oldPartnerName !== (activeSettings.partnerName || "Partner");
 
   const currentProvider = activeSettings.aiProvider || "gemini";
   if (currentProvider === "gemini") {
@@ -2006,7 +1867,7 @@ ipcMain.handle("save-settings", (_event, newSettings) => {
       if (mochiLiveProc) stopMochiLiveEngine();
       startMochiLiveEngine();
     } else {
-      sendToLiveEngine({
+      if (previous.wakeWordEnabled !== activeSettings.wakeWordEnabled) sendToLiveEngine({
         cmd: "wake_toggle",
         enabled: !!activeSettings.wakeWordEnabled,
       });
@@ -2023,12 +1884,13 @@ ipcMain.handle("save-settings", (_event, newSettings) => {
   }
 
   if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.webContents.send("settings-changed", activeSettings);
+    overlayWin.webContents.send("settings-changed", secrets.publicSettings(activeSettings));
   }
   return true;
 });
 
 ipcMain.handle("test-supabase", async (_event, creds) => {
+  if (creds?.key === secrets.MARKER) creds = { ...creds, key: activeSettings.syncApiKey };
   const targetCreds = creds || {
     url: activeSettings.syncUrl,
     key: activeSettings.syncApiKey,
@@ -2060,11 +1922,11 @@ ipcMain.handle("get-chat-messages", () => {
   return loadChatHistory();
 });
 
-ipcMain.handle("send-chat-message", async (_event, arg) => {
+async function sendPartnerMessage(arg) {
   const history = loadChatHistory();
   const isMe = (activeSettings.userRole || "me") === "me";
-  const rawMe = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
-  const rawPartner = isMe ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+  const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
+  const rawPartner = isMe ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
   const myName = rawMe.charAt(0).toUpperCase() + rawMe.slice(1);
   const partnerName = rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1);
 
@@ -2097,31 +1959,22 @@ ipcMain.handle("send-chat-message", async (_event, arg) => {
     timestamp: Date.now(),
     read: true,
     isAiGenerated: isAiGenerated,
+    delivery: 'pending',
+    cloudPending: true,
   };
 
   history.push(msg);
   saveChatHistory(history);
 
-  // 1. Fast Realtime WebSockets broadcast (<50ms)
-  try {
-    await broadcastChatMessage(msg);
-    console.log(`[Supabase Realtime] Sent chat message from ${myName}: "${cleanText}"`);
-  } catch (err) {
-    console.warn("[Supabase Realtime] Chat send error:", err);
-  }
-
-  // 2. 24/7 Persistent Cloud DB save (so partner receives when booting up even if offline right now)
-  try {
-    await saveChatMessageToCloud(msg, activeSettings.shareChannel || "coucou-badsha-ayzil");
-  } catch (cloudErr) {}
-
+  await deliverMessage(msg);
   return msg;
-});
+}
+ipcMain.handle("send-chat-message", (_event, arg) => sendPartnerMessage(arg));
 
 ipcMain.handle("mark-chat-read", () => {
   const history = loadChatHistory();
   const isMe = (activeSettings.userRole || "me") === "me";
-  const myName = (isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil")).toLowerCase();
+  const myName = (isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner")).toLowerCase();
   let updated = false;
 
   for (const m of history) {
@@ -2139,17 +1992,31 @@ ipcMain.handle("mark-chat-read", () => {
 
 // ── Remote Access (Mochi Eye Co-Pilot) ───────────────────────────────────────
 ipcMain.handle("request-remote-access", async () => {
+  if (remoteSession.current()) return false;
+  remoteSession.begin();
   activeRemoteRole = "viewer";
   pendingViewerSignals = [];
   const isMe = (activeSettings.userRole || "me") === "me";
-  const rawMe = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+  const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
   const currentUserName = rawMe.charAt(0).toUpperCase() + rawMe.slice(1);
-  return await broadcastRemoteAccess({ action: "request", sender: currentUserName });
+  let delivered = false;
+  try {
+    delivered = await broadcastRemoteAccess({ action: "request", sender: currentUserName });
+    return delivered;
+  } finally {
+    if (!delivered) { remoteSession.end(); activeRemoteRole = null; pendingViewerSignals = []; }
+  }
 });
 
+ipcMain.handle("prepare-remote-host", event => {
+  if(event.sender !== overlayWin?.webContents || !remoteSession.allowCapture())return false;
+  activeRemoteRole='host';return true;
+});
 ipcMain.handle("respond-remote-access", async (_event, accepted, extra) => {
+  const sessionId = remoteSession.accept(accepted);
+  if (!sessionId) return false;
   const isMe = (activeSettings.userRole || "me") === "me";
-  const rawMe = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+  const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
   const currentUserName = rawMe.charAt(0).toUpperCase() + rawMe.slice(1);
 
   if (accepted) {
@@ -2161,6 +2028,7 @@ ipcMain.handle("respond-remote-access", async (_event, accepted, extra) => {
     const primary = screen.getPrimaryDisplay();
     return await broadcastRemoteAccess({
       action: "response",
+      sessionId,
       accepted: true,
       sender: currentUserName,
       resolution: extra?.resolution || { width: primary.bounds.width, height: primary.bounds.height },
@@ -2172,6 +2040,7 @@ ipcMain.handle("respond-remote-access", async (_event, accepted, extra) => {
     setHostDisplayBounds(null);
     return await broadcastRemoteAccess({
       action: "response",
+      sessionId,
       accepted: false,
       sender: currentUserName,
     });
@@ -2200,18 +2069,18 @@ ipcMain.handle("get-primary-screen-source", async () => {
 });
 
 ipcMain.handle("inject-remote-input", (_event, cmd) => {
-  if (cmd) injectInput(cmd);
+  if (cmd && remoteSession.isHost() && _event.sender === overlayWin?.webContents) injectInput(cmd);
   return true;
 });
 
 ipcMain.on("inject-remote-input-fast", (_event, cmd) => {
-  if (cmd) injectInput(cmd);
+  if (cmd && remoteSession.isHost() && _event.sender === overlayWin?.webContents) injectInput(cmd);
 });
 
 // Viewer Window IPC handlers
 ipcMain.handle("viewer-get-partner-info", () => {
   const isMe = (activeSettings.userRole || "me") === "me";
-  const rawPartner = isMe ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+  const rawPartner = isMe ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
   const partnerUserName = rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1);
   const primary = screen.getPrimaryDisplay();
   const initData = getViewerInitData();
@@ -2226,6 +2095,7 @@ ipcMain.handle("viewer-get-partner-info", () => {
   }
 
   return {
+    assistantName: displayAssistantName(),
     partnerName: initData?.partnerName || partnerUserName,
     remoteResolution: initData?.remoteResolution || { width: primary.bounds.width, height: primary.bounds.height },
     initialOffer: initData?.initialOffer || null,
@@ -2259,7 +2129,7 @@ ipcMain.handle("viewer-end-session", async () => {
   stopInputInjector();
   setHostDisplayBounds(null);
   const isMe = (activeSettings.userRole || "me") === "me";
-  const rawMe = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+  const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
   const currentUserName = rawMe.charAt(0).toUpperCase() + rawMe.slice(1);
   return await broadcastRemoteAccess({ action: "end", sender: currentUserName });
 });
@@ -2271,14 +2141,13 @@ ipcMain.handle("set-collapsed", (_event, collapsed) => {
 
 ipcMain.handle("set-ignore-mouse-events", (_event, ignore, options) => {
   if (overlayWin && !overlayWin.isDestroyed()) {
-    isMouseInsideIsland = !ignore;
-    overlayWin.setIgnoreMouseEvents(ignore, options);
+    setMousePassthrough(ignore);
   }
   return true;
 });
 
 ipcMain.handle("set-island-rect", (_event, rect) => {
-  if (rect) {
+  if (rect && [rect.x, rect.y, rect.w, rect.h].every(Number.isFinite) && rect.w >= 0 && rect.w <= 1040 && rect.h >= 0 && rect.h <= 640) {
     currentIslandRect = rect;
   }
   return true;
@@ -2371,8 +2240,8 @@ ipcMain.handle("perform-update", async () => {
 function buildCompanionSystemPrompt() {
   const userRole = activeSettings.userRole || "me";
   const partnerRole = userRole === "me" ? "her" : "me";
-  const currentUserName = userRole === "me" ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
-  const partnerUserName = userRole === "me" ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+  const currentUserName = userRole === "me" ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
+  const partnerUserName = userRole === "me" ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
 
   // Load latest schedule items
   const myTasks = activeSchedule.filter((s) => s.assignee === userRole || s.assignee === "both");
@@ -2386,7 +2255,7 @@ function buildCompanionSystemPrompt() {
     ? partnerTasks.map((s) => `  [${s.completed ? "DONE" : "PENDING"}] ${s.time ? s.time + " - " : ""}${s.title}${s.assignedBy === userRole ? ` (set by ${currentUserName})` : ""}`).join("\n")
     : "No tasks scheduled for today.";
 
-  return `You are Mochi, a warm, super cute, energetic, and snappy AI desktop companion for YouTube creator couple ${currentUserName} and ${partnerUserName}.
+  return `You are ${displayAssistantName()}, a warm, super cute, energetic, and snappy AI desktop companion for YouTube creator couple ${currentUserName} and ${partnerUserName}.
 CURRENT ACTIVE USER ON THIS PC: ${currentUserName}
 THEIR PARTNER: ${partnerUserName}
 
@@ -2420,189 +2289,75 @@ CRITICAL IDENTITY & TASK OWNERSHIP RULES:
 Be sweet, playful, and helpful!`;
 }
 
-async function executeActionTags(rawReply) {
-  const userRole = activeSettings.userRole || "me";
-  const partnerRole = userRole === "me" ? "her" : "me";
-  const currentUserName = userRole === "me" ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
-  const partnerUserName = userRole === "me" ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
-
-  // Execute [START_FOCUS: ...]
-  const focusStartMatch = /\[START_FOCUS:\s*({[^}]+})\]/i.exec(rawReply);
-  if (focusStartMatch) {
-    try {
-      const parsed = JSON.parse(focusStartMatch[1]);
-      const mins = Number(parsed.durationMinutes) || 25;
-      const mode = parsed.mode || "Strict Lock";
-      if (productivityBlocker) productivityBlocker.start({ mode, durationMinutes: mins });
-      const status = productivityBlocker ? productivityBlocker.getStatus() : { active: true, durationMinutes: mins, mode };
-      broadcastToProductivity("focus-state-changed", { active: true, ...status, config: { mode, durationMinutes: mins } });
-    } catch (e) {
-      console.warn("Parse START_FOCUS error:", e);
-    }
-  }
-
-  // Execute [STOP_FOCUS]
-  if (/\[STOP_FOCUS\]/i.test(rawReply)) {
-    if (productivityBlocker) productivityBlocker.stop();
-    broadcastToProductivity("focus-state-changed", { active: false });
-  }
-
-  // Execute [SEND_CHAT: ...]
-  const chatMatch = /\[SEND_CHAT:\s*({[^}]+})\]/i.exec(rawReply);
-  if (chatMatch) {
-    try {
-      const parsed = JSON.parse(chatMatch[1]);
-      if (parsed.text) {
-        const history = loadChatHistory();
-        const newMsg = {
-          id: "msg_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-          sender: currentUserName,
-          recipient: partnerUserName,
-          senderRole: userRole,
-          text: parsed.text,
-          timestamp: Date.now(),
-          read: true,
-          isAiGenerated: true,
-        };
-        history.push(newMsg);
-        saveChatHistory(history);
-        try { broadcastChatMessage(newMsg); } catch {}
-        if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("partner-chat-received", newMsg);
-        }
+const { parseActionTags, resolveRole } = require('./actionTags');
+async function executeActionTags(rawReply, signal) {
+  const parsed = parseActionTags(rawReply), userRole = activeSettings.userRole || 'me', outcomes = [];
+  for (const {name,value} of parsed.actions) {
+    signal?.throwIfAborted();
+    let result;
+    switch(name) {
+      case 'START_FOCUS':
+        if(!productivityBlocker) throw new Error('Focus backend is unavailable');
+        productivityBlocker.start({mode:value.mode || 'Strict Lock',durationMinutes:Number(value.durationMinutes || 25)}); break;
+      case 'STOP_FOCUS':
+        if(!productivityBlocker) throw new Error('Focus backend is unavailable');
+        productivityBlocker.stop(); break;
+      case 'SEND_CHAT':
+        result=await sendPartnerMessage({text:value.text,isAiGenerated:true});
+        if(!result || result.delivery==='pending') throw new Error('Message saved in the outbox; partner delivery is pending');
+        break;
+      case 'ADD_TASK':
+        if(typeof value.title!=='string' || !value.title.trim()) throw new Error('Task title is missing');
+        activeSchedule.push({id:require('node:crypto').randomUUID(),title:value.title.trim(),time:value.time || '',assignee:resolveRole(value.for,userRole),assignedBy:userRole,completed:false,createdAt:Date.now()});
+        saveSchedule(activeSchedule);void syncScheduleToPartner();
+        overlayWin?.webContents.send('schedule-updated',activeSchedule.filter(t=>!t.deleted)); break;
+      case 'MARK_DONE': {
+        const query=String(value).toLowerCase(),matches=activeSchedule.filter(t=>!t.deleted && (t.id.toLowerCase()===query || t.title.toLowerCase()===query));
+        if(matches.length!==1) throw new Error('Choose one exact task title or ID');
+        matches[0].completed=true;matches[0].completedAt=Date.now();saveSchedule(activeSchedule);void syncScheduleToPartner();
+        overlayWin?.webContents.send('schedule-updated',activeSchedule.filter(t=>!t.deleted));break;
       }
-    } catch (e) {
-      console.warn("Parse SEND_CHAT error:", e);
-    }
-  }
-
-  // Execute [ADD_TASK: ...]
-  const taskMatch = /\[ADD_TASK:\s*({[^}]+})\]/i.exec(rawReply);
-  if (taskMatch) {
-    try {
-      const parsed = JSON.parse(taskMatch[1]);
-      if (parsed.title) {
-        const forRole = (parsed.for || userRole).toLowerCase();
-        const assignee = forRole.includes("her") || forRole.includes("partner") ? partnerRole : (forRole.includes("both") ? "both" : userRole);
-        const newItem = {
-          id: "task_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
-          title: parsed.title,
-          time: parsed.time || "",
-          assignee: assignee,
-          assignedBy: userRole,
-          completed: false,
-          createdAt: Date.now(),
-        };
-        activeSchedule.push(newItem);
-        saveSchedule(activeSchedule);
-        syncScheduleToPartner();
-        if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("schedule-updated", activeSchedule);
-        }
+      case 'LAUNCH': result=await launchApplication(value);break;
+      case 'CLOSE': result=await closeApplication(value);break;
+      case 'PLAY_YOUTUBE': result=await runMochiBridgeCmd('execute','youtube_video',JSON.stringify({action:'play',query:value}));break;
+      case 'WEB_SEARCH': result=await runMochiBridgeCmd('execute','web_search',JSON.stringify({query:value,mode:'search'}));break;
+      case 'MEDIA_CONTROL': result=await runMochiBridgeCmd('execute','computer_settings',JSON.stringify({description:value}));break;
+      case 'BROWSER_OPEN': {
+        const url=new URL(/^https?:\/\//i.test(value)?value:'https://'+value);
+        if(!['http:','https:'].includes(url.protocol))throw new Error('Unsupported URL');
+        await shell.openExternal(url.href);break;
       }
-    } catch (e) {
-      console.warn("Parse ADD_TASK error:", e);
+      default: throw new Error('Unsupported action: '+name);
     }
+    if(result && result.success===false) throw new Error(result.error || 'Action failed');
+    const labels = {START_FOCUS:'Focus session started.',STOP_FOCUS:'Focus session stopped.',ADD_TASK:'Task saved.',MARK_DONE:'Task marked complete.',LAUNCH:'Application launch requested successfully.',CLOSE:'Application close request succeeded.',BROWSER_OPEN:'URL opened in your browser.'};
+    outcomes.push(name==='SEND_CHAT' ? ({stored:'Message saved for partner delivery.',sent:'Message sent to the live channel.',pending:'Message saved locally and queued; delivery is pending.'}[result.delivery] || 'Delivery status is unavailable.') : labels[name] || String(result?.result || result?.data || 'Action returned no completion details.'));
   }
-
-  // Execute [MARK_DONE: ...]
-  const doneMatch = /\[MARK_DONE:\s*([^\]]+)\]/i.exec(rawReply);
-  if (doneMatch) {
-    const queryDone = doneMatch[1].trim().toLowerCase();
-    const item = activeSchedule.find((s) => s.id === queryDone || s.title.toLowerCase().includes(queryDone));
-    if (item) {
-      item.completed = true;
-      item.completedAt = Date.now();
-      saveSchedule(activeSchedule);
-      syncScheduleToPartner();
-      if (overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.webContents.send("schedule-updated", activeSchedule);
-      }
-    }
-  }
-
-  // Execute [LAUNCH: ...]
-  const launchMatch = /\[LAUNCH:\s*([^\]]+)\]/i.exec(rawReply);
-  if (launchMatch) {
-    const target = launchMatch[1].trim();
-    void launchApplication(target);
-  }
-
-  // Execute [CLOSE: ...]
-  const closeMatch = /\[CLOSE:\s*([^\]]+)\]/i.exec(rawReply);
-  if (closeMatch) {
-    const target = closeMatch[1].trim();
-    void closeApplication(target);
-  }
-
-  // Execute [PLAY_YOUTUBE: ...]
-  const ytMatch = /\[PLAY_YOUTUBE:\s*([^\]]+)\]/i.exec(rawReply);
-  if (ytMatch) {
-    const ytQuery = ytMatch[1].trim();
-    console.log(`[Action] Playing YouTube for query: "${ytQuery}"`);
-    void runMochiBridgeCmd("execute", "youtube_video", JSON.stringify({ action: "play", query: ytQuery })).catch((err) => {
-      console.warn("[Action] Bridge youtube_video fallback to shell:", err);
-      shell.openExternal(`https://www.youtube.com/results?search_query=${encodeURIComponent(ytQuery)}`);
-    });
-  }
-
-  // Execute [WEB_SEARCH: ...]
-  const searchMatch = /\[WEB_SEARCH:\s*([^\]]+)\]/i.exec(rawReply);
-  if (searchMatch) {
-    const sQuery = searchMatch[1].trim();
-    console.log(`[Action] Searching web for: "${sQuery}"`);
-    void runMochiBridgeCmd("execute", "web_search", JSON.stringify({ query: sQuery, mode: "search" })).catch((err) => {
-      console.warn("[Action] Bridge web_search fallback to shell:", err);
-      shell.openExternal(`https://www.google.com/search?q=${encodeURIComponent(sQuery)}`);
-    });
-  }
-
-  // Execute [BROWSER_OPEN: ...]
-  const browserMatch = /\[BROWSER_OPEN:\s*([^\]]+)\]/i.exec(rawReply);
-  if (browserMatch) {
-    let bUrl = browserMatch[1].trim();
-    if (!/^https?:\/\//i.test(bUrl)) bUrl = "https://" + bUrl;
-    console.log(`[Action] Opening browser URL: "${bUrl}"`);
-    shell.openExternal(bUrl);
-  }
-
-  // Execute [MEDIA_CONTROL: ...]
-  const mediaMatch = /\[MEDIA_CONTROL:\s*([^\]]+)\]/i.exec(rawReply);
-  if (mediaMatch) {
-    const mCmd = mediaMatch[1].trim();
-    console.log(`[Action] Media/setting command: "${mCmd}"`);
-    void runMochiBridgeCmd("execute", "computer_settings", JSON.stringify({ description: mCmd }));
-  }
+  return outcomes.length ? outcomes.join("\n") : parsed.text;
 }
 
 // ── Gemini REST Engine (Instant Text Chat & Action Fallback) ────────────────
-async function callGeminiAI(query, context) {
+async function callGeminiAI(query, context, signal) {
   const key = activeSettings.geminiApiKey || process.env.GEMINI_API_KEY;
   if (!key) {
     return { text: "Please enter your free Google Gemini API key in Settings (⚙️) to chat with me!" };
   }
 
   const systemPrompt = buildCompanionSystemPrompt();
-  const candidateModels = [
-    activeSettings.geminiModel || "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-flash-latest",
-  ];
+  const candidateModels = [activeSettings.geminiModel || "gemini-2.5-flash"];
 
   for (const model of candidateModels) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
       const res = await fetch(url, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]),
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           system_instruction: {
             parts: [{ text: systemPrompt }]
           },
-          contents: [
-            { role: "user", parts: [{ text: query }] }
-          ],
+          contents: [...textHistory.map(m => ({role:m.role === "assistant" ? "model" : "user",parts:[{text:m.text}]})), {role:"user",parts:[{text:query}]}],
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 350
@@ -2620,10 +2375,12 @@ async function callGeminiAI(query, context) {
       const rawReply = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
       if (!rawReply) continue;
 
-      await executeActionTags(rawReply);
-      const cleanReply = rawReply.replace(/\[[A-Z_]+:[^\]]*\]/gi, "").trim();
-      return { text: cleanReply || rawReply };
+      let cleanReply;
+      try { cleanReply = await executeActionTags(rawReply, signal); }
+      catch (error) { return { text: `An action did not complete: ${error.message}. Earlier actions in this request may already have completed.` }; }
+      return { text: cleanReply || "The requested action completed." };
     } catch (err) {
+      if (signal.aborted) return {text:"Request cancelled. Actions already completed are not undone."};
       console.warn(`[Gemini REST] Error calling ${model}:`, err.message);
     }
   }
@@ -2632,7 +2389,7 @@ async function callGeminiAI(query, context) {
 }
 
 // ── Groq Secondary AI Engine ────────────────────────────────────────────────
-async function callGroqAI(query, context) {
+async function callGroqAI(query, context, signal) {
   const systemPrompt = buildCompanionSystemPrompt();
   const key = activeSettings.groqApiKey || activeSettings.grokApiKey;
   if (!key) {
@@ -2642,6 +2399,7 @@ async function callGroqAI(query, context) {
 
   try {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]),
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2651,6 +2409,7 @@ async function callGroqAI(query, context) {
         model,
         messages: [
           { role: "system", content: systemPrompt },
+          ...textHistory.map(m => ({role:m.role,content:m.text})),
           { role: "user", content: query },
         ],
         temperature: 0.7,
@@ -2666,11 +2425,10 @@ async function callGroqAI(query, context) {
     const data = await res.json();
     let rawReply = (data.choices?.[0]?.message?.content || "").trim();
 
-    await executeActionTags(rawReply);
-
-    const cleanReply = rawReply.replace(/\[[A-Z_]+:[^\]]*\]/gi, "").trim();
-    return { text: cleanReply || rawReply };
+    const cleanReply = await executeActionTags(rawReply, signal);
+    return { text: cleanReply || "The requested action completed." };
   } catch (err) {
+    if (signal.aborted) return {text:"Request cancelled. Actions already completed are not undone."};
     console.error("[Groq AI Error]:", err);
     return { text: `Groq error: ${err.message}` };
   }
@@ -2678,32 +2436,26 @@ async function callGroqAI(query, context) {
 
 // ── AI & Chat: Engine IPC Handlers (Gemini Live & Groq) ───────────────────
 
-ipcMain.handle("chat-send", async (_event, { query, context }) => {
-  if (!query || !query.trim()) return { text: "" };
-
-  const provider = activeSettings.aiProvider || "gemini";
-  if (provider === "groq") {
-    return await callGroqAI(query, context);
-  }
-
-  // Gemini Provider:
-  if (!activeSettings.geminiApiKey && !process.env.GEMINI_API_KEY) {
-    return { text: "Please enter your free Google Gemini API key in Settings (⚙️) to chat with Mochi!" };
-  }
-
-  // Ensure Live Assistant engine is starting / running for voice/visemes
-  if (!mochiLiveProc || mochiLiveProc.killed) {
-    startMochiLiveEngine();
-  } else {
-    // Notify live assistant about the text interaction
-    sendToLiveEngine({ cmd: "text", text: query });
-  }
-
-  // Instant response via Gemini REST (never hangs on '...' thinking dots!)
-  return await callGeminiAI(query, context);
+let textHistory = [], textQueue = Promise.resolve(), activeTextAbort = null, textGeneration = 0;
+function cancelTextRequests() { textGeneration++; activeTextAbort?.abort(); }
+ipcMain.handle('chat-send', (_event, {query,context}) => {
+  if(typeof query!=='string' || !query.trim())return {text:''};
+  const generation = textGeneration;
+  const task=textQueue.catch(()=>{}).then(async()=>{
+    if(generation!==textGeneration)return {text:'Request cancelled.'};
+    const controller = new AbortController(); activeTextAbort = controller;
+    try {
+      const response=(activeSettings.aiProvider || 'gemini')==='groq' ? await callGroqAI(query,context,controller.signal) : await callGeminiAI(query,context,controller.signal);
+      if(generation===textGeneration){textHistory.push({role:'user',text:query},{role:'assistant',text:response.text});textHistory=textHistory.slice(-20);}
+      return response;
+    } finally { if(activeTextAbort===controller)activeTextAbort=null; }
+  });
+  textQueue=task;return task;
 });
 
 ipcMain.handle("chat-reset", () => {
+  cancelTextRequests();
+  textHistory = [];
   if ((activeSettings.aiProvider || "gemini") === "gemini") {
     sendToLiveEngine({ cmd: "interrupt" });
   }
@@ -2761,6 +2513,7 @@ ipcMain.handle("transcribe-audio", async (_event, audioBase64) => {
 });
 
 ipcMain.handle("ai-interrupt", () => {
+  cancelTextRequests();
   sendToLiveEngine({ cmd: "interrupt" });
   return true;
 });
@@ -2928,30 +2681,7 @@ ipcMain.handle("ingest-file", async (_event, fileArg) => {
       }
     }
 
-    // 2. Direct Cloud Relay Broadcast (Real-time partner sync)
-    const shareBin = activeSettings.shareChannel || "coucou-badsha-ayzil";
-    try {
-      const uploadUrl = `https://filebin.net/${encodeURIComponent(shareBin)}/${encodeURIComponent(fileName)}`;
-      console.log(`[Cloud Share]: Broadcasting ${fileName} to pair channel ${shareBin}...`);
-      const fileBytes = fs.readFileSync(finalPath);
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: {
-          "filename": fileName,
-          "content-type": "application/octet-stream",
-        },
-        body: fileBytes,
-      });
-      if (res.ok) {
-        fileInfo.uploadedToDrive = true;
-        fileInfo.cloudUrl = uploadUrl;
-        myUploadedFileIds.add(fileName);
-        knownDriveFileIds.add(fileName);
-        console.log(`[Cloud Share]: Successfully broadcast ${fileName} to pair channel ${shareBin}!`);
-      }
-    } catch (relayErr) {
-      console.error(`[Cloud Share]: Relay upload error:`, relayErr);
-    }
+    if (!fileInfo.uploadedToDrive) throw new Error('File saved locally, but sharing failed. Configure a private Drive folder shared with your partner.');
 
     // 3. Live Broadcast via Supabase Realtime (<50ms delivery to partner PC)
     try {
@@ -2961,7 +2691,7 @@ ipcMain.handle("ingest-file", async (_event, fileArg) => {
         size: fileInfo.size,
         driveUrl: fileInfo.driveUrl || "",
         driveId: fileInfo.driveId || "",
-        senderName: activeSettings.userName || "Badsha",
+        senderName: activeSettings.userName || "You",
         senderRole: activeSettings.userRole || "me",
       });
       console.log(`[Supabase Realtime]: Broadcasted ${fileName} to partner PC!`);
@@ -2983,64 +2713,19 @@ ipcMain.handle("ingest-file", async (_event, fileArg) => {
 });
 
 // Partner Drive & Cloud File Download
-ipcMain.handle("download-drive-file", async (_event, fileInfo) => {
+ipcMain.handle('download-drive-file', async (_event, fileInfo) => {
   try {
-    const fileId = fileInfo.id;
-    const fileName = fileInfo.name || "shared_file";
-    const downloadsDir = path.join(os.homedir(), "Downloads");
-    if (!fs.existsSync(downloadsDir)) {
-      fs.mkdirSync(downloadsDir, { recursive: true });
-    }
-    let targetPath = path.join(downloadsDir, fileName);
-    if (fs.existsSync(targetPath)) {
-      const ext = path.extname(fileName);
-      const base = path.basename(fileName, ext);
-      targetPath = path.join(downloadsDir, `${base}_${Date.now()}${ext}`);
-    }
-
-    // Try Google Drive direct download if fileId is valid Google Drive ID
-    const sa = loadServiceAccount();
-    if (fileId && (!fileId.includes(".") || fileInfo.driveId)) {
-      try {
-        const actualId = fileInfo.driveId || fileId;
-        console.log(`[Google Drive]: Downloading ${fileName} (ID: ${actualId}) from Drive...`);
-        await downloadFileFromDrive({
-          fileId: actualId,
-          apiKey: activeSettings.gdriveApiKey,
-          serviceAccount: sa,
-          targetPath,
-        });
-        console.log(`[Google Drive]: File saved directly to ${targetPath}`);
-        return { success: true, localPath: targetPath };
-      } catch (gErr) {
-        console.warn("[Google Drive]: Direct Drive download failed, attempting cloud fallback:", gErr.message);
-      }
-    }
-
-    // Fallback: Cloud Relay Download
-    const shareBin = activeSettings.shareChannel || "coucou-badsha-ayzil";
-    let downloadUrl = fileInfo.downloadUrl;
-    if (!downloadUrl) {
-      downloadUrl = `https://filebin.net/${encodeURIComponent(shareBin)}/${encodeURIComponent(fileName)}`;
-    }
-
-    console.log(`[File Download]: Downloading ${fileName} from ${downloadUrl}...`);
-    let res = await fetch(downloadUrl, {
-      headers: { "User-Agent": "curl/8.0" },
-    });
-    if (!res.ok && fileInfo.webContentLink) {
-      res = await fetch(fileInfo.webContentLink);
-    }
-    if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
-
-    const arrayBuffer = await res.arrayBuffer();
-    fs.writeFileSync(targetPath, Buffer.from(arrayBuffer));
-    console.log(`[File Download]: File successfully written to ${targetPath}`);
-    return { success: true, localPath: targetPath };
-  } catch (err) {
-    console.error("[File Download] Error:", err);
-    return { success: false, error: err.message };
-  }
+    const fileId=String(fileInfo?.driveId || fileInfo?.id || '');
+    if(!/^[A-Za-z0-9_-]+$/.test(fileId)) throw new Error('This file has no valid private Drive ID. Ask the sender to share it through Drive.');
+    const fileName=path.win32.basename(String(fileInfo.name || 'shared_file')).replace(/[<>:"|?*\x00-\x1f]/g,'_');
+    if(!fileName || fileName==='.' || fileName==='..')throw new Error('Invalid filename');
+    const dir=app.getPath('downloads');fs.mkdirSync(dir,{recursive:true});
+    const targetPath=path.join(dir, `${Date.now()}_${fileName}`);
+    const oauth=activeSettings.googleOAuth;
+    const accessToken=oauth?.refreshToken ? await refreshOAuthAccessToken(oauth) : null;
+    await downloadFileFromDrive({fileId,accessToken,serviceAccount:accessToken?null:loadServiceAccount(),targetPath});
+    return {success:true,localPath:targetPath};
+  } catch(error) { return {success:false,error:error.message}; }
 });
 
 ipcMain.handle("select-service-account", async () => {
@@ -3062,7 +2747,7 @@ ipcMain.handle("select-service-account", async () => {
       return { success: false, error: "Selected JSON is not a valid Google Service Account key (missing client_email or private_key)." };
     }
 
-    fs.writeFileSync(serviceAccountPath, JSON.stringify(sa, null, 2), "utf-8");
+    fs.writeFileSync(serviceAccountPath, JSON.stringify(secrets.protect(sa, safeStorage), null, 2), "utf-8");
     console.log(`[Service Account]: Successfully saved key for ${sa.client_email}`);
     return { success: true, email: sa.client_email };
   } catch (err) {
@@ -3091,6 +2776,7 @@ ipcMain.handle("open-path", (_event, filePath) => {
 });
 
 ipcMain.handle("google-oauth-start", async (_event, creds) => {
+  if (creds?.clientSecret === secrets.MARKER) creds = { ...creds, clientSecret: activeSettings.googleOAuth?.clientSecret };
   try {
     const { clientId, clientSecret } = creds || {};
     if (!clientId || !clientSecret) {
@@ -3109,7 +2795,7 @@ ipcMain.handle("google-oauth-start", async (_event, creds) => {
         refreshToken: result.refreshToken,
         email: result.email,
       };
-      fs.writeFileSync(settingsPath, JSON.stringify(activeSettings, null, 2), "utf-8");
+      saveSettings(activeSettings);
       console.log(`[Google OAuth]: Successfully connected as ${result.email}`);
       return { success: true, email: result.email };
     }
@@ -3122,7 +2808,7 @@ ipcMain.handle("google-oauth-start", async (_event, creds) => {
 
 ipcMain.handle("google-oauth-disconnect", async () => {
   delete activeSettings.googleOAuth;
-  fs.writeFileSync(settingsPath, JSON.stringify(activeSettings, null, 2), "utf-8");
+  saveSettings(activeSettings);
   return { success: true };
 });
 
@@ -3132,7 +2818,7 @@ ipcMain.handle("google-oauth-status", () => {
     connected: !!(oauth && oauth.refreshToken),
     email: oauth?.email || "",
     clientId: oauth?.clientId || "",
-    clientSecret: oauth?.clientSecret || "",
+    clientSecret: oauth?.clientSecret ? secrets.MARKER : "",
   };
 });
 
@@ -3226,10 +2912,13 @@ ipcMain.handle("test-drive-connection", async () => {
 // Cloud Relay Polling Watcher (Instant Partner Sync)
 let isFirstCloudPoll = true;
 async function checkCloudShareForNewFiles() {
+  return; // Legacy public relay is disabled. Use the authenticated Drive folder.
+
   try {
     const shareBin = activeSettings.shareChannel || "coucou-badsha-ayzil";
     const url = `https://filebin.net/${encodeURIComponent(shareBin)}`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(45000),
       headers: { "Accept": "application/json" },
     });
     if (!res.ok) return;
@@ -3252,7 +2941,7 @@ async function checkCloudShareForNewFiles() {
           console.log(`[Cloud Share]: Detected new partner file: ${f.filename} (${f.bytes} bytes)`);
 
           const isMe = (activeSettings.userRole || "me") === "me";
-          const rawPartner = isMe ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+          const rawPartner = isMe ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
           const pName = rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1);
           if (Notification.isSupported()) {
             try {
@@ -3350,7 +3039,7 @@ async function checkDriveFolderForNewFiles() {
           console.log(`[Drive Watcher] Detected new partner file: ${f.name} (${f.id})`);
 
           const isMe = (activeSettings.userRole || "me") === "me";
-          const rawPartner = isMe ? (activeSettings.partnerName || "Ayzil") : (activeSettings.userName || "Badsha");
+          const rawPartner = isMe ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
           const pName = rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1);
           if (Notification.isSupported()) {
             try {
@@ -3408,7 +3097,7 @@ async function syncScheduleToPartner() {
   // 1. Live WebSocket Broadcast via Supabase Realtime (<50ms latency)
   try {
     const isMe = (activeSettings.userRole || "me") === "me";
-    const rawMe = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+    const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
     const currentUserName = rawMe.charAt(0).toUpperCase() + rawMe.slice(1);
     await broadcastScheduleUpdate({
       items: activeSchedule,
@@ -3419,25 +3108,6 @@ async function syncScheduleToPartner() {
     console.warn("[Supabase Realtime] Task broadcast error:", sbErr.message);
   }
 
-  // 2. Fallback relay
-  const shareBin = activeSettings.shareChannel || "coucou-badsha-ayzil";
-  try {
-    const uploadUrl = `https://filebin.net/${encodeURIComponent(shareBin)}/schedule_sync.json`;
-    lastLocalScheduleUpdate = Date.now();
-    const payload = JSON.stringify({
-      updatedAt: lastLocalScheduleUpdate,
-      updatedBy: activeSettings.userName || "User",
-      items: activeSchedule,
-    });
-    await fetch(uploadUrl, {
-      method: "POST",
-      headers: { "filename": "schedule_sync.json", "content-type": "application/json" },
-      body: payload,
-    });
-  } catch (err) {
-    console.warn("[Schedule Sync] Broadcast error:", err.message);
-  }
-
   // 3. 24/7 Persistent Cloud Database save (so offline partner gets it on boot)
   try {
     await saveAllTasksToCloud(activeSchedule, activeSettings.shareChannel || "coucou-badsha-ayzil");
@@ -3445,31 +3115,15 @@ async function syncScheduleToPartner() {
 }
 
 async function checkRemoteScheduleUpdates() {
-  const shareBin = activeSettings.shareChannel || "coucou-badsha-ayzil";
-  try {
-    const url = `https://filebin.net/${encodeURIComponent(shareBin)}/schedule_sync.json`;
-    const res = await fetch(url, { headers: { "User-Agent": "curl/8.0" } });
-    if (!res.ok) return;
-    const remote = await res.json();
-    if (remote && remote.updatedAt && remote.updatedAt > lastLocalScheduleUpdate && Array.isArray(remote.items)) {
-      if (remote.updatedBy !== (activeSettings.userName || "User")) {
-        console.log(`[Schedule Sync] Received schedule update from ${remote.updatedBy}!`);
-        lastLocalScheduleUpdate = remote.updatedAt;
-        activeSchedule = remote.items;
-        saveSchedule(activeSchedule);
-        if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("schedule-updated", activeSchedule);
-        }
-      }
-    }
-  } catch (e) {
-    // quiet
-  }
+  const tasks = await fetchOfflineTasks(activeSettings.shareChannel || 'coucou-badsha-ayzil');
+  if (!tasks.length) return;
+  activeSchedule = mergeTasks(activeSchedule, tasks); saveSchedule(activeSchedule);
+  overlayWin?.webContents.send('schedule-updated', activeSchedule.filter(t => !t.deleted));
+  await saveAllTasksToCloud(activeSchedule, activeSettings.shareChannel || 'coucou-badsha-ayzil');
 }
+setInterval(checkRemoteScheduleUpdates, 30000).unref();
 
-setInterval(checkRemoteScheduleUpdates, 7000);
-
-ipcMain.handle("get-schedule", () => activeSchedule);
+ipcMain.handle("get-schedule", () => activeSchedule.filter(t => !t.deleted));
 
 ipcMain.handle("save-schedule-item", (_event, item) => {
   const existingIndex = activeSchedule.findIndex((s) => s.id === item.id);
@@ -3481,22 +3135,23 @@ ipcMain.handle("save-schedule-item", (_event, item) => {
   saveSchedule(activeSchedule);
   syncScheduleToPartner();
   if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.webContents.send("schedule-updated", activeSchedule);
+    overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
   }
-  return activeSchedule;
+  return activeSchedule.filter(t => !t.deleted);
 });
 
 ipcMain.handle("delete-schedule-item", (_event, id) => {
-  activeSchedule = activeSchedule.filter((s) => s.id !== id);
+  const removed = activeSchedule.find(s => s.id === id);
+  if (removed) removed.deleted = true;
   saveSchedule(activeSchedule);
   syncScheduleToPartner();
   try {
-    deleteTaskFromCloud(id, activeSettings.shareChannel || "coucou-badsha-ayzil");
+    if (removed) saveTaskToCloud(removed, activeSettings.shareChannel || "coucou-badsha-ayzil");
   } catch (e) {}
   if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.webContents.send("schedule-updated", activeSchedule);
+    overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
   }
-  return activeSchedule;
+  return activeSchedule.filter(t => !t.deleted);
 });
 
 ipcMain.handle("toggle-schedule-item", (_event, id) => {
@@ -3507,21 +3162,23 @@ ipcMain.handle("toggle-schedule-item", (_event, id) => {
     saveSchedule(activeSchedule);
     syncScheduleToPartner();
     if (overlayWin && !overlayWin.isDestroyed()) {
-      overlayWin.webContents.send("schedule-updated", activeSchedule);
+      overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
     }
   }
-  return activeSchedule;
+  return activeSchedule.filter(t => !t.deleted);
 });
 
 // Secrets
 ipcMain.handle("secret-set", (_event, { key, val }) => {
+  if (!secrets.secretKey(key) || typeof val !== "string") throw new Error("Invalid secret field");
   activeSettings[key] = val;
   saveSettings(activeSettings);
   return true;
 });
 
-ipcMain.handle("secret-get", (_event, key) => activeSettings[key] || "");
+ipcMain.handle("secret-get", (_event, key) => secrets.secretKey(key) && activeSettings[key] ? "configured" : "");
 ipcMain.handle("secret-clear", (_event, key) => {
+  if (!secrets.secretKey(key)) throw new Error("Invalid secret field");
   delete activeSettings[key];
   saveSettings(activeSettings);
   return true;
@@ -3551,7 +3208,7 @@ ipcMain.handle("update-app-category", (_, processNameOrData, category) => {
     processName = processNameOrData.id || processNameOrData.processName || processNameOrData.name;
     cat = processNameOrData.category;
   }
-  if (!processName) return true;
+  if (typeof processName !== "string" || !["productive","neutral","wasteful"].includes(cat)) throw new Error("Invalid application category");
   const cats = productivityStore.get("appCategories", {});
   cats[processName.toLowerCase()] = cat;
   productivityStore.set("appCategories", cats);
@@ -3568,49 +3225,19 @@ ipcMain.handle("update-app-category", (_, processNameOrData, category) => {
   return true;
 });
 
-ipcMain.handle("scan-running-apps", () => {
-  return new Promise((resolve) => {
-    const { execFile } = require("node:child_process");
-    execFile("powershell.exe", [
-      "-NoProfile", "-NoLogo", "-NonInteractive", "-Command", WINDOW_SCANNER_SCRIPT
-    ], { windowsHide: true, timeout: 10000 }, async (err, stdout) => {
-      if (err || !stdout || !stdout.trim()) {
-        return resolve([]);
+ipcMain.handle('scan-running-apps', () => new Promise((resolve,reject) => {
+  require('node:child_process').execFile('powershell.exe', ['-NoProfile','-NonInteractive','-Command',WINDOW_SCANNER_SCRIPT], {windowsHide:true,timeout:15000}, (err,out) => {
+    if(err) return reject(err);
+    try {
+      const data=JSON.parse(out || '[]'), result=[];
+      for(const p of Array.isArray(data) ? data : [data]) if(p?.ProcessName && p.Id!==process.pid && p.Path?.toLowerCase()!==process.execPath.toLowerCase() && !SYSTEM_IGNORED_PROCS.includes(p.ProcessName.toLowerCase())) {
+        const entry=productivityTracker.register({processName:p.ProcessName,name:p.ProcessName,path:p.Path,source:'observed'});
+        result.push({...entry,category:productivityTracker.getCategory(entry.id),totalSeconds:0,timeSpentMinutes:0});
       }
-      try {
-        let data = JSON.parse(stdout.trim());
-        if (!Array.isArray(data)) data = [data];
-        const categories = productivityStore ? productivityStore.get("appCategories", {}) : {};
-        const resultPromises = data
-          .filter((p) => p && p.ProcessName && !SYSTEM_IGNORED_PROCS.includes(p.ProcessName.toLowerCase()))
-          .map(async (p) => {
-            const key = p.ProcessName.toLowerCase();
-            let iconDataUrl = null;
-            if (p.Path) {
-              try {
-                const img = await app.getFileIcon(p.Path, { size: "normal" });
-                iconDataUrl = img.toDataURL();
-              } catch (e) {}
-            }
-            return {
-              id: key,
-              name: p.ProcessName,
-              windowTitle: p.MainWindowTitle || "",
-              timeSpentMinutes: 0,
-              category: categories[key] || DEFAULT_CATEGORIES[key] || "neutral",
-              type: "application",
-              icon: iconDataUrl || ICON_MAP[key] || "apps",
-            };
-          });
-        const result = await Promise.all(resultPromises);
-        const unique = [...new Map(result.map((r) => [r.id, r])).values()];
-        resolve(unique);
-      } catch (e) {
-        resolve([]);
-      }
-    });
+      resolve(result);
+    } catch(e) { reject(e); }
   });
-});
+}));
 
 ipcMain.handle("get-focus-sessions", () => {
   return productivityStore ? productivityStore.get("focusSessions", []) : [];
@@ -3631,8 +3258,9 @@ ipcMain.handle("set-focus-sessions", (_, sessions) => {
 });
 
 ipcMain.handle("start-focus-session", (_, config) => {
-  if (productivityBlocker) productivityBlocker.start(config);
-  const status = productivityBlocker ? productivityBlocker.getStatus() : { active: true, config };
+  if (!productivityBlocker) throw new Error('Focus backend is unavailable. Reopen Baymax and check tracker status.');
+  productivityBlocker.start(config);
+  const status = productivityBlocker.getStatus();
   broadcastToProductivity("focus-state-changed", { active: true, ...status, config });
   return true;
 });
@@ -3654,9 +3282,11 @@ ipcMain.handle("scan-all-installed-apps", async () => {
   return [];
 });
 
-ipcMain.handle("get-known-apps", () => {
+ipcMain.handle("get-tracking-health", () => productivityTracker?.getHealth());
+ipcMain.handle("set-app-hidden", (_, id, hidden) => productivityTracker?.setHidden(id, hidden));
+ipcMain.handle("get-known-apps", (_, includeHidden) => {
   if (productivityTracker) {
-    return productivityTracker.getKnownApps();
+    return productivityTracker.getKnownApps(includeHidden === true);
   }
   return [];
 });
@@ -3717,11 +3347,11 @@ ipcMain.handle("set-onboarded", () => {
 });
 
 ipcMain.handle("get-user-profile", () => {
-  if (!productivityStore) return { name: "Badsha", email: "user@baymax.local", emailVerified: true };
+  if (!productivityStore) return { name: "You", email: "user@baymax.local", emailVerified: true };
   const prof = productivityStore.get("userProfile", {});
   if (!prof.name) {
     const isMe = (activeSettings.userRole || "me") === "me";
-    const uName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+    const uName = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
     return { name: uName, email: `${uName.toLowerCase()}@baymax.local`, picture: "", emailVerified: true };
   }
   return prof;
@@ -3732,18 +3362,11 @@ ipcMain.handle("set-user-profile", (_, profile) => {
   return true;
 });
 
-ipcMain.handle("kill-process", (_, processName) => {
-  return new Promise((resolve) => {
-    const { execFile } = require("node:child_process");
-    execFile("taskkill.exe", ["/IM", `${processName}.exe`, "/F"], { windowsHide: true }, (err) => {
-      resolve(!err);
-    });
-  });
-});
+ipcMain.handle("kill-process", async (_, application) => (await closeApplication(application)).success);
 
 ipcMain.handle("google-sign-in", async () => {
   const isMe = (activeSettings.userRole || "me") === "me";
-  const uName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+  const uName = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
   return { name: uName, email: `${uName.toLowerCase()}@baymax.local`, emailVerified: true };
 });
 
@@ -3761,13 +3384,35 @@ ipcMain.handle("open-productivity-window", () => {
 });
 
 // App Lifecycle
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  installAppProtocol(protocol, net, path.join(__dirname, ".."));
+  activeSettings = loadSettings();
+  let legacyEngineKey = '';
+  try { legacyEngineKey = JSON.parse(fs.readFileSync(path.join(engineDataDir,'config','api_keys.json'),'utf8')).gemini_api_key || ''; } catch {}
+  activeSettings.geminiApiKey ||= process.env.GEMINI_API_KEY || legacyEngineKey;
+  saveSettings(activeSettings);
+  const migratedServiceAccount = loadServiceAccount();
+  if (migratedServiceAccount) fs.writeFileSync(serviceAccountPath, JSON.stringify(secrets.protect(migratedServiceAccount, safeStorage)));
+  await require("./engineRpc").startEngineRpc(handleEngineAction);
+  setInterval(flushOutbox, 30000).unref();
+  setInterval(() => {
+    if (!remoteSession.current()) {
+      stopInputInjector();
+      if (activeRemoteRole) {
+        activeRemoteRole = null; pendingViewerSignals = []; closeRemoteViewerWindow();
+        if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send('remote-access-ended');
+      }
+    }
+  }, 1000).unref();
   if (session && session.defaultSession) {
-    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-      // Allow media, display-capture, notifications, etc.
-      callback(true);
+    session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) => {
+      return !!details.isMainFrame && isTrustedRendererUrl(details.requestingUrl || contents?.getURL()) && (['media', 'notifications'].includes(permission) || (permission === 'display-capture' && remoteSession.canCapture()));
+    });
+    session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+      callback(!!details.isMainFrame && isTrustedRendererUrl(details.requestingUrl || contents?.getURL()) && (['media', 'notifications'].includes(permission) || (permission === 'display-capture' && remoteSession.canCapture())));
     });
     session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+      if (!remoteSession.canCapture() || !isTrustedRendererUrl(_request.frame?.url)) { callback({}); return; }
       desktopCapturer
         .getSources({ types: ["screen"] })
         .then((sources) => {
@@ -3783,7 +3428,7 @@ app.whenReady().then(() => {
   try {
     productivityStore = new Store(STORE_DEFAULTS);
     const isMe = (activeSettings.userRole || "me") === "me";
-    const currentUserName = isMe ? (activeSettings.userName || "Badsha") : (activeSettings.partnerName || "Ayzil");
+    const currentUserName = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
     const existingProfile = productivityStore.get("userProfile", {});
     if (!existingProfile.name) {
       productivityStore.set("userProfile", {
@@ -3809,6 +3454,9 @@ app.whenReady().then(() => {
     );
 
     productivityTracker.start();
+    void productivityTracker.scanAllInstalledApps().catch(error => {
+      console.warn('[Productivity] Installed-app scan failed:', error.message);
+    });
     console.log("[Productivity Engine] Tracker and Blocker initialized successfully.");
   } catch (prodErr) {
     console.error("[Productivity Engine] Initialization error:", prodErr);
@@ -3838,6 +3486,9 @@ app.whenReady().then(() => {
       createOverlayWindow();
     }
   });
+}).catch(error => {
+  dialog.showErrorBox('Baymax could not start', error.message);
+  app.quit();
 });
 
 app.on("before-quit", () => {

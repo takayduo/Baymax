@@ -1,0 +1,11 @@
+const fs=require('node:fs'),path=require('node:path');
+const {createTracker}=require('../electron/productivity/tracker-runtime');
+const data={};const store={get:(key,fallback)=>data[key] ?? fallback,set:(key,value)=>data[key]=value};
+const Tracker=createTracker({app:{},getLocalDateKey:()=>'',DEFAULT_CATEGORIES:{},ICON_MAP:{},SYSTEM_IGNORED_PROCS:[]});
+const tracker=new Tracker(store,()=>{});
+const rows=JSON.parse(fs.readFileSync(path.join(__dirname,'discovered-apps.json'),'utf8').replace(/^\uFEFF/,''));
+for(const row of rows)tracker.register(row);
+tracker.cleanStore();
+const all=tracker.getKnownApps(true),visible=tracker.getKnownApps();
+const result={registrations:rows.length,catalogEntries:all.length,visibleApps:visible.length,hiddenUtilities:all.length-visible.length,examples:visible.filter(a=>/Antigravity|Discord|OBS|Chrome|Word|Excel|WhatsApp|Photoshop/i.test(a.name)).map(a=>a.name),unwantedVisible:visible.filter(a=>/^(Scale|Scale Host|Uninstall Node.js|Windows Media Player Legacy|Windows Terminal)$/i.test(a.name)).map(a=>a.name)};
+fs.writeFileSync(path.join(__dirname,'catalog-summary.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));

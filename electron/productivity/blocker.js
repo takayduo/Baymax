@@ -53,48 +53,55 @@ class AppBlocker {
   }
 
   start(config = {}) {
-    this.isActive = true;
-    this.mode = config.mode || 'Strict Lock';
-    this.durationMinutes = Number(config.durationMinutes) || 25;
-    this.startTime = Date.now();
-    this.endTime = this.startTime + (this.durationMinutes * 60 * 1000);
-    this.recentlyBlocked.clear();
-    this.pendingCloses.clear();
-    this.failedKills.clear();
-    this.lastProcessAlertTimes.clear();
+    if (this.isActive) this.stop();
+    const minutes = Number(config.durationMinutes ?? 25);
+    if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 1440) throw new Error('Focus duration must be between 0 and 1440 minutes.');
+    if (!['Strict Lock','Light Focus','Deep Silence'].includes(config.mode || 'Strict Lock')) throw new Error('Invalid focus mode');
+    this.isActive = true; this.phase = 'work'; this.mode = config.mode || 'Strict Lock';
+    this.durationMinutes = minutes; this.timerMode = config.timerMode === 'pomodoro' ? 'pomodoro' : 'classic';
+    this.breakMinutes = Math.max(1, Math.min(120, Number(config.breakMinutes) || 5));
+    this.startTime = Date.now(); this.endTime = this.startTime + minutes * 60000;
+    this.sessionId = require('node:crypto').randomUUID(); this.recorded = false;
+    this.recentlyBlocked.clear(); this.clearPendingCloses(); this.failedKills.clear(); this.lastProcessAlertTimes.clear();
     this.lastDistractionAlertTime = 0;
-    console.log(`[Blocker] Started in ${this.mode} mode (${this.durationMinutes}m, ends at ${new Date(this.endTime).toLocaleTimeString()})`);
-
-    this.enforce();
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = setInterval(() => this.enforce(), 1500);
+    clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => this.enforce(), 1000);
+    this.persistState(); this.enforce();
   }
-
-  stop() {
-    this.isActive = false;
-    this.durationMinutes = 0;
-    this.startTime = null;
-    this.endTime = null;
-    this.recentlyBlocked.clear();
-    this.failedKills.clear();
-    this.clearPendingCloses();
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
+  persistState() {
+    this.store.set('focusState', { active: this.isActive, phase: this.phase || 'ended', sessionId: this.sessionId, mode: this.mode, durationMinutes: this.durationMinutes, timerMode: this.timerMode, startTime: this.startTime, endTime: this.endTime });
+    this.store.saveSync?.();
+    this.broadcaster('focus-state-changed', this.getStatus(false));
+  }
+  recordSession(completed) {
+    if (this.recorded || this.phase !== 'work' || !this.startTime) return;
+    this.recorded = true;
+    const seconds = Math.max(0, (Math.min(Date.now(), this.endTime) - this.startTime) / 1000);
+    if (seconds <= 0) return;
+    const sessions = this.store.get('focusSessions', []);
+    if (!sessions.some(s => s.id === this.sessionId)) sessions.unshift({ id: this.sessionId, date: new Date(this.startTime).toISOString(), durationMinutes: seconds / 60, actualSeconds: seconds, completed, mode: this.mode });
+    this.store.set('focusSessions', sessions);
+  }
+  tick() {
+    if (!this.isActive || Date.now() < this.endTime) return;
+    if (this.phase === 'work') {
+      this.recordSession(true); this.clearPendingCloses();
+      if (this.timerMode === 'pomodoro') {
+        this.phase = 'break'; this.endTime += this.breakMinutes * 60000;
+        if (Date.now() < this.endTime) { this.persistState(); return; }
+      }
     }
-    console.log('[Blocker] Stopped');
+    this.stop(true);
   }
-
-  getStatus() {
-    const remainingSeconds = this.endTime ? Math.max(0, Math.round((this.endTime - Date.now()) / 1000)) : 0;
-    return {
-      active: this.isActive,
-      mode: this.mode,
-      durationMinutes: this.durationMinutes || 25,
-      startTime: this.startTime,
-      endTime: this.endTime,
-      remainingSeconds,
-    };
+  stop(completed = false) {
+    if (this.isActive) this.recordSession(completed);
+    this.isActive = false; this.phase = 'ended'; this.endTime = null;
+    this.recentlyBlocked.clear(); this.failedKills.clear(); this.clearPendingCloses();
+    clearInterval(this.pollTimer); this.pollTimer = null; this.persistState();
+  }
+  getStatus(check = true) {
+    if (check) this.tick();
+    return { active: this.isActive, phase: this.phase || 'ended', mode: this.mode, timerMode: this.timerMode || 'classic', durationMinutes: this.durationMinutes || 25, startTime: this.startTime, endTime: this.endTime, remainingSeconds: this.isActive ? Math.max(0, Math.ceil((this.endTime - Date.now()) / 1000)) : 0 };
   }
 
   clearPendingCloses() {
@@ -110,6 +117,8 @@ class AppBlocker {
   getProcessCategory(procName) {
     const key = procName.toLowerCase().replace(/\.exe$/i, '').trim();
     const userCats = this.store.get('appCategories', {});
+    const known = Object.values(this.store.get('knownApps', {})).filter(a => a.processName === key || a.aliases?.includes(key));
+    for (const app of known) if (userCats[app.id]) return userCats[app.id];
     if (userCats[key]) return userCats[key];
 
     try {
@@ -173,16 +182,19 @@ class AppBlocker {
       }
     }
 
-    return Array.from(blocked).filter(b => !isProtectedProcess(b));
+    const known = this.store.get('knownApps', {});
+    return [...new Set(Array.from(blocked).map(b => known[b]?.processName || b))].filter(b => /^[a-z0-9_. -]+$/i.test(b) && !isProtectedProcess(b));
   }
 
   enforce() {
-    if (!this.isActive) return;
+    this.tick();
+    if (!this.isActive || this.phase !== 'work') return;
 
     const blockedList = this.getBlockedProcessNames();
 
     execFile('tasklist.exe', ['/FO', 'CSV', '/NH'], { windowsHide: true }, (err, stdout) => {
-      if (err || !stdout) return;
+      this.tick();
+      if (!this.isActive || this.phase !== 'work' || err || !stdout) return;
 
       const lines = stdout.split('\n');
       const runningBlockedProcs = new Set();
@@ -278,7 +290,8 @@ class AppBlocker {
   }
 
   forceKillProcess(procName) {
-    if (!this.isActive || isProtectedProcess(procName)) return;
+    this.tick();
+    if (!this.isActive || this.phase !== 'work' || isProtectedProcess(procName)) return;
     if (this.failedKills.has(procName)) return;
 
     execFile('taskkill.exe', ['/IM', `${procName}.exe`, '/F'], { windowsHide: true }, (err, stdout, stderr) => {

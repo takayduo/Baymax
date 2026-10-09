@@ -1,5 +1,6 @@
+import Icon from "../components/Icon";
 import React, { useState } from 'react';
-import { useAppContext } from '../context/AppContext';
+import { useAppContext, getElectronAPI } from '../context/AppContext';
 import { AppUsage, AppCategory } from '../data/mockData';
 import { formatTime } from '../utils/logic';
 
@@ -9,6 +10,19 @@ export default function Classification() {
   const [isScanningAll, setIsScanningAll] = useState(false);
   const [filter, setFilter] = useState<'all' | 'productive' | 'neutral' | 'wasteful'>('all');
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
+
+  const [showHidden, setShowHidden] = useState(false);
+  const [libraryOverride, setLibraryOverride] = useState<AppUsage[] | null>(null);
+  const [health, setHealth] = useState<any>(null);
+  React.useEffect(() => {
+    const api=getElectronAPI();
+    const refresh=() => { api?.getKnownApps?.(true).then(setLibraryOverride); api?.getTrackingHealth?.().then(setHealth); };
+    refresh(); const timer=setInterval(refresh,3000); return () => clearInterval(timer);
+  }, []);
+  const setHidden = async (app: AppUsage) => {
+    const api=getElectronAPI(); await api?.setAppHidden(app.id,!app.hidden);
+    setLibraryOverride(await api.getKnownApps(true));
+  };
 
   // Add Custom App Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -20,7 +34,7 @@ export default function Classification() {
   // Merge persistent library (knownApps) + live tracked usage apps
   const allApps = React.useMemo(() => {
     const merged = new Map<string, AppUsage>();
-    for (const app of knownApps) {
+    for (const app of libraryOverride || knownApps) {
       merged.set(app.id, { ...app });
     }
     for (const app of apps) {
@@ -40,12 +54,11 @@ export default function Classification() {
       }
       return a.name.localeCompare(b.name);
     });
-  }, [apps, knownApps]);
+  }, [apps, knownApps, libraryOverride]);
 
   const filteredApps = React.useMemo(() => {
-    if (filter === 'all') return allApps;
-    return allApps.filter((a) => a.category === filter);
-  }, [allApps, filter]);
+    return allApps.filter(a => (showHidden || !a.hidden) && (filter === 'all' || a.category === filter));
+  }, [allApps, filter, showHidden]);
 
   const handleCategoryChange = (id: string, newCategory: AppCategory) => {
     updateAppCategory(id, newCategory);
@@ -101,7 +114,7 @@ export default function Classification() {
     try {
       const added = await addCustomApp({
         name: newAppName.trim(),
-        processName: newAppProcess.trim() || newAppName.trim(),
+        processName: newAppProcess.trim(),
         category: newAppCategory,
       });
       if (added) {
@@ -114,6 +127,7 @@ export default function Classification() {
       setNewAppCategory('wasteful');
     } catch (err) {
       console.error('Failed to add app:', err);
+      setScanFeedback(String(err));
     } finally {
       setIsSavingApp(false);
     }
@@ -131,7 +145,7 @@ export default function Classification() {
         <div className="flex items-center gap-2">
           {scanFeedback && (
             <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px]">check_circle</span>
+              <Icon className="app-icon text-[13px]" name="check_circle" />
               {scanFeedback}
             </span>
           )}
@@ -140,7 +154,7 @@ export default function Classification() {
             onClick={() => setIsAddModalOpen(true)}
             className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-medium rounded-lg flex items-center gap-1.5 transition-all cursor-pointer border border-white/10 shadow-sm"
           >
-            <span className="material-symbols-outlined text-[14px]">add</span>
+            <Icon className="app-icon text-[14px]" name="add" />
             <span>Add App</span>
           </button>
 
@@ -149,9 +163,7 @@ export default function Classification() {
             disabled={isScanning || isScanningAll}
             className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-medium rounded-lg flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 border border-white/10"
           >
-            <span className={`material-symbols-outlined text-[14px] ${isScanning ? 'animate-spin' : ''}`}>
-              {isScanning ? 'progress_activity' : 'radar'}
-            </span>
+            <Icon className={`app-icon text-[14px] ${isScanning ? 'animate-spin' : ''}`} name={isScanning ? 'progress_activity' : 'radar'} />
             <span>{isScanning ? 'Scanning...' : 'Scan Running Apps'}</span>
           </button>
 
@@ -160,14 +172,16 @@ export default function Classification() {
             disabled={isScanning || isScanningAll}
             className="px-3 py-1.5 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
           >
-            <span className={`material-symbols-outlined text-[14px] ${isScanningAll ? 'animate-spin' : ''}`}>
-              {isScanningAll ? 'progress_activity' : 'apps'}
-            </span>
+            <Icon className={`app-icon text-[14px] ${isScanningAll ? 'animate-spin' : ''}`} name={isScanningAll ? 'progress_activity' : 'apps'} />
             <span>{isScanningAll ? 'Scanning All...' : 'Scan All Apps'}</span>
           </button>
         </div>
       </div>
 
+      <div className="flex items-center justify-between text-xs text-zinc-400 mb-2">
+        <span>{health?.error ? `Tracking needs attention: ${health.error}` : health?.paused ? 'Tracking paused while locked or suspended' : health?.idle ? 'Idle — active time is paused' : health?.active ? 'Tracking is active' : 'Tracker reconnecting — usage may be incomplete'}</span>
+        <label><input type="checkbox" checked={showHidden} onChange={e=>setShowHidden(e.target.checked)} /> Show hidden apps and utilities</label>
+      </div>
       {/* Filter Tabs */}
       <div className="flex items-center justify-between flex-shrink-0 mb-2">
         <div className="flex items-center gap-1 bg-[#141518] border border-white/10 p-0.5 rounded-lg">
@@ -203,9 +217,7 @@ export default function Classification() {
                 {app.icon && app.icon.startsWith('data:') ? (
                   <img src={app.icon} className="w-5 h-5 object-contain rounded flex-shrink-0" alt="" />
                 ) : (
-                  <span className="material-symbols-outlined text-[16px] text-zinc-400 flex-shrink-0">
-                    {app.icon || 'apps'}
-                  </span>
+                  <Icon className="app-icon text-[16px] text-zinc-400 flex-shrink-0" name={app.icon || 'apps'} />
                 )}
                 <div className="min-w-0 flex flex-col">
                   <span className="text-xs font-medium text-white truncate">{app.name}</span>
@@ -247,6 +259,7 @@ export default function Classification() {
                 >
                   Distraction
                 </button>
+                <button onClick={() => void setHidden(app)} className="px-2 text-[10px] text-zinc-400 hover:text-white">{app.hidden ? "Restore" : "Hide"}</button>
               </div>
             </div>
           ))
@@ -263,7 +276,7 @@ export default function Classification() {
           <div className="w-full max-w-sm bg-[#141518] border border-white/15 rounded-xl shadow-2xl p-5 flex flex-col gap-4 text-white">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-white text-[18px]">add_circle</span>
+                <Icon className="app-icon text-white text-[18px]" name="add_circle" />
                 <h3 className="text-sm font-semibold">Add Custom Application</h3>
               </div>
               <button
@@ -271,7 +284,7 @@ export default function Classification() {
                 onClick={() => setIsAddModalOpen(false)}
                 className="text-zinc-400 hover:text-white transition-colors cursor-pointer"
               >
-                <span className="material-symbols-outlined text-[18px]">close</span>
+                <Icon className="app-icon text-[18px]" name="close" />
               </button>
             </div>
 
@@ -283,21 +296,17 @@ export default function Classification() {
                   required
                   placeholder="e.g. League of Legends, Valorant, Figma"
                   value={newAppName}
-                  onChange={(e) => {
-                    setNewAppName(e.target.value);
-                    if (!newAppProcess || newAppProcess === newAppName.toLowerCase().replace(/\s+/g, '')) {
-                      setNewAppProcess(e.target.value.toLowerCase().replace(/\s+/g, ''));
-                    }
-                  }}
+                  onChange={(e) => setNewAppName(e.target.value)}
                   className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-zinc-400 font-medium mb-1 block">Process Name / Identifier (optional)</label>
+                <label className="text-[11px] text-zinc-400 font-medium mb-1 block">Exact process name (required)</label>
                 <input
                   type="text"
                   placeholder="e.g. leagueclient, valorant, figma"
+                  required
                   value={newAppProcess}
                   onChange={(e) => setNewAppProcess(e.target.value)}
                   className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30 font-mono"

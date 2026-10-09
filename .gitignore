@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Production build output
 /dist/
@@ -53,3 +52,15 @@ engine/config/api_keys.json
 engine/config/certs/
 engine/memory/long_term.json
 engine/memory/sessions.json
+
+# Preserved source backup and local validation outputs
+_backups/
+audit/build-*/
+audit/smoke-user-data/
+
+# Windows distribution and packaging caches
+/release/
+/build/
+/.build-cache/
+/audit/settings-smoke-profile/
+/audit/package-profile-*/

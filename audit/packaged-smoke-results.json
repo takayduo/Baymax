@@ -1,0 +1,41 @@
+{
+  "checks": [
+    "Required renderer, native icons, remote viewer and Productivity assets are packaged",
+    "Known local credentials, saved memory and temporary smoke fixtures are absent from the package",
+    "Packaged engine imports successfully and discovers 21 actions with Python absent from PATH",
+    "Actual Baymax.exe boots with an isolated profile and opens all eight embedded settings categories",
+    "Packaged notification audio is readable through the production asset protocol",
+    "Packaged executable renders the compact 90px Home card"
+  ],
+  "errors": [],
+  "homeHeight": 89.984375,
+  "engine": {
+    "success": true,
+    "actions": [
+      "browser_control",
+      "close_app",
+      "code_helper",
+      "computer_control",
+      "computer_settings",
+      "desktop_control",
+      "dev_agent",
+      "file_controller",
+      "file_processor",
+      "flight_finder",
+      "game_updater",
+      "manage_schedule",
+      "open_app",
+      "productivity_manager",
+      "reminder",
+      "send_message",
+      "send_partner_message",
+      "video_player",
+      "weather_report",
+      "web_search",
+      "youtube_video"
+    ],
+    "failures": [],
+    "prompt_exists": true,
+    "data_separate": true
+  }
+}

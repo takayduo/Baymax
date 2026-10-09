@@ -1,0 +1,63 @@
+
+> baymax@1.0.0 build
+> node scripts/build.cjs
+
+✔ 40 x 1.5s intervals total 60s, assigned to previous foreground (6.6317ms)
+✔ real tools monitored, idle and unknown foreground stop accrual (0.7723ms)
+✔ midnight split and stale library usage reset (0.364ms)
+✔ catalog keeps executable identities distinct, hides installer shortcuts (7.4171ms)
+✔ stdout carries JSON across arbitrary and UTF8 chunk boundaries (2.4619ms)
+✔ week aggregation matches displayed calendar dates (0.4657ms)
+✔ focus expires without a renderer; Pomodoro break survives and records once (1.9324ms)
+✔ remote input requires acceptance, exact session and peer; end and expiry revoke it (0.3816ms)
+✔ app command resolution rejects shell text and ambiguous guessed names (0.5812ms)
+✔ task merge converges, retains offline edits and deletion tombstones (1.2943ms)
+✔ settings encrypt secrets and never return them through public settings (0.9641ms)
+✔ engine RPC rejects unauthorized requests and executes duplicate request IDs once (54.5565ms)
+✔ action parser preserves quoted braces, deduplicates commands and uses absolute roles (1.0941ms)
+✔ ambiguous application names fail instead of choosing an arbitrary executable (0.2479ms)
+✔ JSON persistence preserves corrupt files and reports unsuccessful writes (6.8214ms)
+✔ utility migration preserves history and allows real apps to be restored (0.3644ms)
+✔ updater refuses dirty installations before downloading or writing files (1.7218ms)
+✔ asset protocol rejects invalid URLs and traversal without reading private files (1.6367ms)
+✔ OAuth rejects wrong state and replacing a flow cannot close the new server (2.2072ms)
+✔ stale Supabase authentication cannot replace the latest connection (3.1267ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 173.3161
+vite v6.4.3 building for production...
+transforming...
+✓ 37 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) G:/baymax/src/core/voice.ts is dynamically imported by G:/baymax/src/main.ts but also statically imported by G:/baymax/src/island/island.ts, G:/baymax/src/views/chat.ts, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                     0.56 kB │ gzip:  0.30 kB
+dist/settings.html                  0.61 kB │ gzip:  0.38 kB
+dist/assets/panel-g8iLaAX1.css      7.02 kB │ gzip:  2.01 kB
+dist/assets/island-CcjN0T7a.css    20.09 kB │ gzip:  4.77 kB
+dist/assets/settings-DXknXF1-.js    0.09 kB │ gzip:  0.10 kB
+dist/assets/panel-_6Heytsf.js      61.04 kB │ gzip: 17.14 kB
+dist/assets/island-CFpzitUc.js    152.56 kB │ gzip: 48.37 kB
+✓ built in 494ms
+vite v6.4.2 building for production...
+transforming...
+✓ 703 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   1.52 kB │ gzip:   0.67 kB
+dist/assets/index-DDvm7sP1.css   44.12 kB │ gzip:   8.21 kB
+dist/assets/index-CB1D6vQ4.js   658.54 kB │ gzip: 199.09 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.43s
+Both frontends passed type checks, regression tests and production builds.

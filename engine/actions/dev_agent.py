@@ -1,3 +1,4 @@
+from core.paths import python_command
 import subprocess
 import sys
 import json
@@ -7,9 +8,8 @@ from pathlib import Path
 
 
 def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    from core.paths import data_root
+    return data_root()
 
 
 BASE_DIR         = get_base_dir()
@@ -247,7 +247,7 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
     for dep in dependencies:
         pkg_name = re.split(r"[>=<!]", dep)[0].strip()
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "show", pkg_name],
+            python_command() + ["-m", "pip", "show", pkg_name],
             capture_output=True, text=True
         )
         if result.returncode != 0:
@@ -261,7 +261,7 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
     print(f"[DevAgent] 📦 Installing: {to_install}")
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install"] + to_install,
+            python_command() + ["-m", "pip", "install"] + to_install,
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=120, cwd=str(project_dir)
@@ -300,7 +300,7 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
     try:
         parts = run_command.split()
         if parts[0].lower() == "python":
-            parts[0] = sys.executable
+            parts[:1] = python_command()
 
         result = subprocess.run(
             parts,
@@ -341,7 +341,7 @@ def _try_auto_install(error_output: str, project_dir: Path) -> bool:
     print(f"[DevAgent] 🔧 Auto-installing missing package: {pkg}")
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", pkg],
+            python_command() + ["-m", "pip", "install", pkg],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=60, cwd=str(project_dir)

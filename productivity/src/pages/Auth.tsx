@@ -1,3 +1,4 @@
+import Icon from "../components/Icon";
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
@@ -352,7 +353,7 @@ export default function Auth() {
               ) : (
                 <>
                   I've Clicked the Verification Link
-                  <span className="material-symbols-outlined text-[16px]">verified_user</span>
+                  <Icon className="app-icon text-[16px]" name="verified_user" />
                 </>
               )}
             </button>
@@ -511,7 +512,7 @@ export default function Auth() {
                 Processing...
               </>
             ) : showForgot ? 'Send Reset Link' : isLogin ? 'Sign In' : 'Sign Up'}
-            {!isConnecting && <span className="material-symbols-outlined text-[16px]">arrow_forward</span>}
+            {!isConnecting && <Icon className="app-icon text-[16px]" name="arrow_forward" />}
           </button>
         </form>
 

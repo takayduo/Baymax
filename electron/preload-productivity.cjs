@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
  * Secure bridge between Electron main process and the Productivity React renderer.
  * Matches 100% of distrack electronAPI.
  */
-contextBridge.exposeInMainWorld('electronAPI', {
+if (process.isMainFrame) contextBridge.exposeInMainWorld('electronAPI', {
   // -- Tracking --
   getTrackedApps: (timeframe) => ipcRenderer.invoke('get-tracked-apps', timeframe),
   getDailyTotals: () => ipcRenderer.invoke('get-daily-totals'),
@@ -21,7 +21,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // -- Scan running apps & all installed apps --
   scanRunningApps: () => ipcRenderer.invoke('scan-running-apps'),
   scanAllApps: () => ipcRenderer.invoke('scan-all-installed-apps'),
-  getKnownApps: () => ipcRenderer.invoke('get-known-apps'),
+  getTrackingHealth: () => ipcRenderer.invoke("get-tracking-health"),
+  setAppHidden: (id, hidden) => ipcRenderer.invoke("set-app-hidden", id, hidden),
+  getKnownApps: (includeHidden) => ipcRenderer.invoke('get-known-apps', includeHidden),
   addCustomApp: (appData) => ipcRenderer.invoke('add-custom-app', appData),
 
   // -- Focus sessions --

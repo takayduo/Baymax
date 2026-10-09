@@ -2,6 +2,10 @@ export type AppCategory = 'productive' | 'neutral' | 'wasteful';
 
 export interface AppUsage {
   id: string;
+  hidden?: boolean;
+  processName?: string;
+  path?: string;
+  source?: string;
   name: string;
   timeSpentMinutes: number;
   totalSeconds?: number;

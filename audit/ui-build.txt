@@ -1,0 +1,64 @@
+
+> baymax@1.0.0 build
+> node scripts/build.cjs
+
+✔ 40 x 1.5s intervals total 60s, assigned to previous foreground (6.7819ms)
+✔ real tools monitored, idle and unknown foreground stop accrual (0.7928ms)
+✔ midnight split and stale library usage reset (0.3652ms)
+✔ catalog keeps executable identities distinct, hides installer shortcuts (7.5861ms)
+✔ stdout carries JSON across arbitrary and UTF8 chunk boundaries (2.6606ms)
+✔ week aggregation matches displayed calendar dates (0.4327ms)
+✔ focus expires without a renderer; Pomodoro break survives and records once (1.9575ms)
+✔ remote input requires acceptance, exact session and peer; end and expiry revoke it (0.3469ms)
+✔ app command resolution rejects shell text and ambiguous guessed names (0.6129ms)
+✔ task merge converges, retains offline edits and deletion tombstones (1.2982ms)
+✔ settings encrypt secrets and never return them through public settings (0.964ms)
+✔ engine RPC rejects unauthorized requests and executes duplicate request IDs once (57.0188ms)
+✔ action parser preserves quoted braces, deduplicates commands and uses absolute roles (1.3192ms)
+✔ ambiguous application names fail instead of choosing an arbitrary executable (0.3319ms)
+✔ JSON persistence preserves corrupt files and reports unsuccessful writes (7.8536ms)
+✔ utility migration preserves history and allows real apps to be restored (0.4491ms)
+✔ updater refuses dirty installations before downloading or writing files (2.293ms)
+✔ asset protocol rejects invalid URLs and traversal without reading private files (1.8802ms)
+✔ OAuth rejects wrong state and replacing a flow cannot close the new server (2.2326ms)
+✔ stale Supabase authentication cannot replace the latest connection (2.0724ms)
+✔ Overlay hover has a stable wake region and coalesces native click-through changes (1.2479ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 182.9321
+vite v6.4.3 building for production...
+transforming...
+✓ 38 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) G:/baymax/src/core/voice.ts is dynamically imported by G:/baymax/src/main.ts but also statically imported by G:/baymax/src/island/island.ts, G:/baymax/src/views/chat.ts, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/settings.html                  0.61 kB │ gzip:  0.38 kB
+dist/index.html                     0.75 kB │ gzip:  0.42 kB
+dist/assets/panel-g8iLaAX1.css      7.02 kB │ gzip:  2.01 kB
+dist/assets/island--FIK7ZnC.css    25.51 kB │ gzip:  6.01 kB
+dist/assets/settings-DaLHsRsi.js    0.09 kB │ gzip:  0.10 kB
+dist/assets/panel-C9A5A55D.js      60.95 kB │ gzip: 17.10 kB
+dist/assets/island-D9d4fqTp.js    151.77 kB │ gzip: 49.05 kB
+✓ built in 547ms
+vite v6.4.2 building for production...
+transforming...
+✓ 2348 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.98 kB │ gzip:   0.53 kB
+dist/assets/index-C9wN4CRA.css   44.05 kB │ gzip:   8.23 kB
+dist/assets/index-DO1sjI1I.js   667.96 kB │ gzip: 201.85 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 4.86s
+Both frontends passed type checks, regression tests and production builds.

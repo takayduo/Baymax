@@ -76,7 +76,8 @@ if getattr(sys, "frozen", False):
 else:
     _BASE = Path(__file__).resolve().parent.parent
 
-_KEY_FILE = _BASE / "config" / "api_keys.json"
+from core.paths import data_root
+_KEY_FILE = data_root() / "config" / "api_keys.json"
 
 # Ladders, tried left to right. Change a model HERE and the whole app follows.
 FAST = "fast"      # short classification, extraction, one-line decisions

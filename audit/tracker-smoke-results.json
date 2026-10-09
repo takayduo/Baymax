@@ -1,0 +1,12 @@
+{
+  "health": {
+    "active": true,
+    "paused": false,
+    "idle": false,
+    "lastSampleAt": 1791505324630,
+    "parseErrors": 0,
+    "error": null
+  },
+  "sampledApps": [],
+  "note": "Read-only live foreground helper; idle state mocked active; persistence in memory only."
+}

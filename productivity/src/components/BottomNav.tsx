@@ -1,3 +1,4 @@
+import Icon from "./Icon";
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -30,7 +31,7 @@ export default function BottomNav() {
         >
           {({ isActive }) => (
             <>
-              <span className={cn("material-symbols-outlined text-[24px] mb-1", isActive && "fill")}>{item.icon}</span>
+              <Icon className={cn("app-icon text-[24px] mb-1", isActive && "fill")} name={item.icon} />
               <span className="text-[9px] uppercase tracking-widest font-bold">{item.label}</span>
             </>
           )}

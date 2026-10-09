@@ -1,6 +1,7 @@
+import Icon from "../components/Icon";
 import React, { useMemo } from 'react';
 import { useAppContext } from '../context/AppContext';
-import { formatTime } from '../utils/logic';
+import { formatTime, localDateKey } from '../utils/logic';
 import { ResponsiveContainer, BarChart, Bar, XAxis, Tooltip as RechartsTooltip, Cell } from 'recharts';
 
 export default function Dashboard() {
@@ -13,11 +14,11 @@ export default function Dashboard() {
   const intentionalityScore = totalSeconds > 0 ? Math.round((productiveSeconds / totalSeconds) * 100) : 0;
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
-  const screenTime = totalSeconds > 0 ? `${h}h ${m}m` : '0h 0m';
+  const screenTime = formatTime(totalSeconds / 60);
 
   const topApps = [...apps]
     .sort((a, b) => b.timeSpentMinutes - a.timeSpentMinutes)
-    .slice(0, 4);
+    ;
 
   const chartData = useMemo(() => {
     if (dailyTotals.length > 0) return dailyTotals;
@@ -35,14 +36,14 @@ export default function Dashboard() {
         day: days[i],
         label: days[i],
         value: 0,
-        date: d.toISOString().split('T')[0]
+        date: localDateKey(d)
       });
     }
     return mockTotals;
   }, [dailyTotals]);
 
   const todayIdx = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = localDateKey();
     const idx = chartData.findIndex(d => d.date === todayStr);
     return idx >= 0 ? idx : chartData.length - 1;
   }, [chartData]);
@@ -102,7 +103,7 @@ export default function Dashboard() {
         <div className="glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400 mb-1">
             <span className="text-[10px] font-semibold uppercase tracking-wider">Focus Score</span>
-            <span className="material-symbols-outlined text-[14px]">track_changes</span>
+            <Icon className="app-icon text-[14px]" name="track_changes" />
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono text-white">{focusScore}</span>
@@ -116,7 +117,7 @@ export default function Dashboard() {
         <div className="glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400 mb-1">
             <span className="text-[10px] font-semibold uppercase tracking-wider">Screen Time</span>
-            <span className="material-symbols-outlined text-[14px]">timer</span>
+            <Icon className="app-icon text-[14px]" name="timer" />
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono text-white">{screenTime}</span>
@@ -129,7 +130,7 @@ export default function Dashboard() {
         <div className="glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400 mb-1">
             <span className="text-[10px] font-semibold uppercase tracking-wider">Peak Flow</span>
-            <span className="material-symbols-outlined text-[14px]">bolt</span>
+            <Icon className="app-icon text-[14px]" name="bolt" />
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-xl font-bold font-mono text-white truncate">{peakFlow}</span>
@@ -140,7 +141,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Main Content Grid: Activity Chart & Top Apps */}
+      {/* Main Content Grid: Activity Chart & All App Usage */}
       <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
         {/* Weekly Activity Bar Chart */}
         <div className="col-span-7 glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col min-h-0">
@@ -184,11 +185,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Top Apps List */}
+        {/* All App Usage List */}
         <div className="col-span-5 glass-card p-3 rounded-xl border border-white/10 bg-[#121316] flex flex-col min-h-0">
           <div className="flex items-center justify-between mb-2 flex-shrink-0">
-            <span className="text-xs font-semibold text-white">Top Active Apps</span>
-            <span className="text-[10px] text-zinc-400">Today</span>
+            <span className="text-xs font-semibold text-white">All App Usage</span>
+            <span className="text-[10px] text-zinc-400">{timeframe === 'weekly' ? 'This week' : 'Today'}</span>
           </div>
           <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
             {topApps.length > 0 ? (
@@ -200,9 +201,7 @@ export default function Dashboard() {
                       {app.icon && app.icon.startsWith('data:') ? (
                         <img src={app.icon} className="w-4 h-4 object-contain rounded flex-shrink-0" alt="" />
                       ) : (
-                        <span className="material-symbols-outlined text-[14px] text-zinc-400 flex-shrink-0">
-                          {app.icon || 'apps'}
-                        </span>
+                        <Icon className="app-icon text-[14px] text-zinc-400 flex-shrink-0" name={app.icon || 'apps'} />
                       )}
                       <span className="text-xs text-white truncate font-medium">{app.name}</span>
                     </div>

@@ -1,3 +1,4 @@
+import Icon from "./Icon";
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -37,7 +38,7 @@ export default function Sidebar() {
           >
             {({ isActive }) => (
                 <>
-                    <span className={cn("material-symbols-outlined text-[22px]", isActive ? "fill text-primary" : "text-on-surface group-hover:text-primary")}>{item.icon}</span>
+                    <Icon className={cn("app-icon text-[22px]", isActive ? "fill text-primary" : "text-on-surface group-hover:text-primary")} name={item.icon} />
                     <span className="text-[8px] uppercase tracking-widest font-bold scale-90">{item.label}</span>
                 </>
             )}

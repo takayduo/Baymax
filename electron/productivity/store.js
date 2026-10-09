@@ -23,6 +23,7 @@ class Store {
       }
     } catch (e) {
       console.error('[Store] Failed to load:', e.message);
+      throw new Error('Productivity data could not be read. The original file has been preserved.', {cause:e});
     }
   }
 
@@ -35,8 +36,10 @@ class Store {
         const tmpPath = `${this.path}.tmp`;
         fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), 'utf8');
         fs.renameSync(tmpPath, this.path);
+        this.lastError = null;
       } catch (e) {
         console.error('[Store] Failed to save:', e.message);
+        this.lastError = 'Usage could not be saved to disk';
       }
     }, 500);
   }
@@ -48,8 +51,11 @@ class Store {
       const tmpPath = `${this.path}.tmp`;
       fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), 'utf8');
       fs.renameSync(tmpPath, this.path);
+      this.lastError = null;
     } catch (e) {
       console.error('[Store] Failed to save:', e.message);
+      this.lastError = 'Usage could not be saved to disk';
+      throw e;
     }
   }
 
@@ -67,6 +73,7 @@ class Store {
 
   set(key, value) {
     const keys = key.split('.');
+    if (keys.some(k => ['__proto__','constructor','prototype'].includes(k))) throw new Error('Invalid store key');
     let obj = this.data;
     for (let i = 0; i < keys.length - 1; i++) {
       if (!obj[keys[i]] || typeof obj[keys[i]] !== 'object') {
@@ -80,6 +87,7 @@ class Store {
 
   delete(key) {
     const keys = key.split('.');
+    if (keys.some(k => ['__proto__','constructor','prototype'].includes(k))) throw new Error('Invalid store key');
     let obj = this.data;
     for (let i = 0; i < keys.length - 1; i++) {
       if (!obj[keys[i]]) return;

@@ -35,6 +35,7 @@ WHAT BELONGS HERE AND WHAT DOES NOT
 
 from __future__ import annotations
 
+import uuid
 import threading
 import time
 from dataclasses import dataclass
@@ -53,6 +54,7 @@ class _Pending:
     detail:  str
     run:     Callable[[], str]
     at:      float
+    request_id: str
 
 
 _pending: Optional[_Pending] = None
@@ -95,7 +97,7 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
 
     with _lock:
         _pending = _Pending(key=key, title=title, detail=detail,
-                            run=run, at=time.monotonic())
+                            run=run, at=time.monotonic(), request_id=str(uuid.uuid4()))
 
     try:
         _show_cb(title, detail)
@@ -112,7 +114,12 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
     )
 
 
-def resolve(accepted: bool) -> None:
+def pending_id():
+    with _lock:
+        return _pending.request_id if _pending else None
+
+
+def resolve(accepted: bool, request_id=None) -> None:
     """Called by the UI when the user presses CONFIRM or CANCEL.
 
     Runs the stored callable on a worker thread — this is invoked from the Qt
@@ -121,6 +128,8 @@ def resolve(accepted: bool) -> None:
     global _pending
 
     with _lock:
+        if request_id is not None and (_pending is None or _pending.request_id != request_id):
+            return
         p, _pending = _pending, None
 
     if _hide_cb:

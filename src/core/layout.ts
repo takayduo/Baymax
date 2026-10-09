@@ -26,7 +26,8 @@ export type IslandViewName =
   | "partner-file"
   | "couple-chat"
   | "remote-control"
-  | "productivity";
+  | "productivity"
+  | "preferences";
 
 export type BotStateName =
   | "idle"
@@ -72,8 +73,8 @@ export const WAKE_STRIP_W = 240;
 export const WAKE_STRIP_H = 6;
 
 export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
-  overview: { height: 160, botX: 68, botY: null, botDiameter: 58, agentMode: "pills" },
-  empty: { height: 160, botX: 70, botY: null, botDiameter: 62, agentMode: "none" },
+  overview: { height: 146, botX: 47, botY: null, botDiameter: 40, agentMode: "pills" },
+  empty: { height: 220, botX: 70, botY: null, botDiameter: 62, agentMode: "none" },
   approval: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
   question: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
   error: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
@@ -85,14 +86,15 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   "partner-file": { height: 176, botX: 60, botY: 101, botDiameter: 52, agentMode: "column" },
   mail: { height: 240, botX: 56, botY: null, botDiameter: 46, agentMode: "column" },
   prompt: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
-  schedule: { height: 260, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
+  schedule: { height: 344, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   searching: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   result: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   note: { height: 160, botX: 60, botY: null, botDiameter: 50, agentMode: "column" },
   settings: { height: 188, botX: 54, botY: null, botDiameter: 46, agentMode: "none" },
   greeting: { height: 150, botX: 320, botY: 90, botDiameter: 0, agentMode: "none" },
-  "couple-chat": { height: 280, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
-  "remote-control": { height: 260, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
+  "couple-chat": { height: 354, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
+  "remote-control": { height: 146, botX: 40, botY: null, botDiameter: 0, agentMode: "none" },
+  preferences: { height: 580, botX: 42, botY: null, botDiameter: 0, agentMode: "none" },
   productivity: { height: 580, botX: 42, botY: null, botDiameter: 0, agentMode: "none" },
 };
 
@@ -102,13 +104,14 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
 
 /** Chat view grows with the conversation — IslandContainer.chatPromptHeight. */
 export function chatPromptHeight(messageCount: number): number {
-  return Math.min(300, 240 + messageCount * 40);
+  return Math.min(440, 334 + messageCount * 32);
 }
 
 export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
+  remoteConsent = false,
 ): { w: number; h: number } {
   switch (mode) {
     case "hidden":
@@ -118,15 +121,15 @@ export function islandSize(
     case "compact":
       return { w: COMPACT_W, h: NOTCH_H };
     case "expanded": {
-      if (view === "productivity") {
+      if (view === "productivity" || view === "preferences") {
         return { w: 980, h: 580 };
       }
       const h = view === "prompt"
         ? chatPromptHeight(chatCount)
         : view === "couple-chat"
-        ? 280
+        ? 354
         : view === "remote-control"
-        ? 260
+        ? (remoteConsent ? 244 : 146)
         : (VIEW_LAYOUTS[view]?.height ?? 160);
       return { w: EXPANDED_W, h };
     }

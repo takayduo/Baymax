@@ -70,6 +70,7 @@ function getLocalVersionInfo() {
  * Checks GitHub for the latest commit on the main branch.
  */
 async function checkForUpdates() {
+  if (app.isPackaged) return { success: false, error: "This installer build uses manual updates. Install a newer Baymax release when available.", local: getLocalVersionInfo() };
   const local = getLocalVersionInfo();
   try {
     const res = await fetch(GITHUB_API_URL, {
@@ -121,168 +122,44 @@ async function checkForUpdates() {
 /**
  * Recursively copies directory contents while preserving user-specific files.
  */
-function copyDirRecursive(src, dest, protectedFiles = new Set()) {
-  if (!fs.existsSync(dest)) {
-    fs.mkdirSync(dest, { recursive: true });
-  }
-
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-
-    if (protectedFiles.has(entry.name.toLowerCase())) {
-      console.log(`[Updater] Preserving user file: ${entry.name}`);
-      continue;
-    }
-
-    if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === ".git") {
-        continue;
-      }
-      copyDirRecursive(srcPath, destPath, protectedFiles);
-    } else {
-      try {
-        fs.copyFileSync(srcPath, destPath);
-      } catch (err) {
-        console.warn(`[Updater] Could not copy ${entry.name}:`, err);
-      }
-    }
-  }
-}
-
-/**
- * Performs the update: pulls/downloads latest code, builds bundle, and relaunches.
- */
 async function performUpdate(onProgress = () => {}) {
-  const check = await checkForUpdates();
-  if (!check.success || !check.remote) {
-    throw new Error(check.error || "Cannot check for updates right now");
-  }
-
-  const remote = check.remote;
-  let updateApplied = false;
-
-  // Strategy 1: If .git exists, try git pull
-  if (fs.existsSync(path.join(appDir, ".git"))) {
-    try {
-      onProgress("Checking git repository and pulling latest changes...");
-      execSync("git pull origin main", { cwd: appDir, stdio: ["ignore", "pipe", "pipe"] });
-      updateApplied = true;
-      console.log("[Updater] Git pull succeeded!");
-    } catch (gitErr) {
-      console.warn("[Updater] git pull failed, falling back to ZIP download:", gitErr.message);
-      updateApplied = false;
-    }
-  }
-
-  // Strategy 2: Download and extract ZIP (Works on any PC with zero Git dependency)
-  if (!updateApplied) {
-    onProgress("Downloading latest files from GitHub...");
-    const tempDir = path.join(process.env.TEMP || "C:\\Windows\\Temp", "Mochi_Update_" + Date.now());
-    const zipPath = path.join(tempDir, "update.zip");
-    const extractDir = path.join(tempDir, "extracted");
-
-    fs.mkdirSync(tempDir, { recursive: true });
-    fs.mkdirSync(extractDir, { recursive: true });
-
-    try {
-      // 1. Download zip
-      const zipRes = await fetch(GITHUB_ZIP_URL);
-      if (!zipRes.ok) throw new Error(`Download failed with HTTP ${zipRes.status}`);
-      const arrayBuffer = await zipRes.arrayBuffer();
-      fs.writeFileSync(zipPath, Buffer.from(arrayBuffer));
-
-      onProgress("Extracting update package...");
-      // Use built-in Windows tar.exe to extract zip fast without extra npm modules
-      try {
-        execSync(`tar.exe -xf "${zipPath}" -C "${extractDir}"`, { stdio: "ignore" });
-      } catch (tarErr) {
-        // Fallback to PowerShell Expand-Archive
-        execSync(`powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`, { stdio: "ignore" });
-      }
-
-      onProgress("Applying updated features...");
-      // Locate the extracted repo root (typically Mochi-Eye-main)
-      const extractedFolders = fs.readdirSync(extractDir).filter((f) => {
-        return fs.statSync(path.join(extractDir, f)).isDirectory();
-      });
-      const updateSourceDir = extractedFolders.length > 0 ? path.join(extractDir, extractedFolders[0]) : extractDir;
-
-      // Protected user files that MUST NEVER be overwritten
-      const protectedFiles = new Set([
-        "settings.json",
-        "chat_history.json",
-        "schedule.json",
-        "node_modules",
-        ".git",
-        ".env",
-      ]);
-
-      copyDirRecursive(updateSourceDir, appDir, protectedFiles);
-      updateApplied = true;
-      console.log("[Updater] Files updated successfully from ZIP!");
-    } finally {
-      // Cleanup temp directory
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (cleanErr) {
-        // ignore
-      }
-    }
-  }
-
-  // 3. Rebuild frontend bundle with Vite
-  onProgress("Building updated application bundle (almost done)...");
-  const viteBin = path.join(appDir, "node_modules", "vite", "bin", "vite.js");
-  if (fs.existsSync(viteBin)) {
-    try {
-      execSync(`"${process.execPath}" "${viteBin}" build`, {
-        cwd: appDir,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-        stdio: "ignore",
-        timeout: 30000,
-      });
-    } catch (buildErr) {
-      console.warn("[Updater] Direct vite build error, attempting npm run build:", buildErr.message);
-      try {
-        execSync("npm run build", { cwd: appDir, stdio: "ignore", timeout: 45000 });
-      } catch (npmErr) {
-        console.error("[Updater] Build failed:", npmErr);
-      }
-    }
-  }
-
-  // 4. Update version.json
-  try {
-    fs.writeFileSync(
-      versionJsonPath,
-      JSON.stringify(
-        {
-          version: "1.0.0",
-          commit: remote.commit,
-          commitDate: remote.date,
-          commitMessage: remote.message,
-        },
-        null,
-        2
-      ),
-      "utf-8"
-    );
-  } catch (e) {
-    console.warn("[Updater] Could not save updated version.json:", e);
-  }
-
-  onProgress("Restarting Mochi...");
-  await new Promise((r) => setTimeout(r, 1000));
-
-  // 5. Relaunch the app smoothly!
-  app.relaunch();
-  app.exit(0);
+  if (app.isPackaged) return { success: false, error: "Install a newer Baymax release to update this packaged app." };
+  const { execFile } = require('node:child_process');
+  const run = (file, args, cwd, timeout=120000) => new Promise((resolve,reject) => execFile(file,args,{cwd,windowsHide:true,timeout,maxBuffer:8*1024*1024,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}},(err,out,stderr)=>err ? reject(new Error(`${file} failed: ${stderr || err.message}`)) : resolve(out.trim())));
+  // No destructive ZIP fallback. A dirty or non-Git installation is reviewable
+  // local work and must be committed/backed up before an in-app update.
+  if (!fs.existsSync(path.join(appDir,'.git'))) throw new Error('Automatic updates require a clean Git installation. Install a fresh copy beside this folder.');
+  if (await run('git',['status','--porcelain','--untracked-files=normal'],appDir)) throw new Error('Local changes detected. Commit or back them up before updating.');
+  const check=await checkForUpdates();
+  if (!check.success) throw new Error(check.error);
+  if (!check.updateAvailable) return {success:true,updated:false};
+  const remote=check.remote;
+  if (!/^[a-f0-9]{40}$/.test(remote.commit)) throw new Error('Invalid update revision');
+  const stamp=Date.now(), parent=path.dirname(appDir);
+  const stage=path.join(parent,`.baymax-stage-${stamp}`), backup=path.join(parent,`.baymax-backup-${stamp}`);
+  onProgress('Preparing an isolated update...');
+  await run('git',['clone','--no-checkout',`https://github.com/${REPO_OWNER}/${REPO_NAME}.git`,stage],parent,300000);
+  await run('git',['checkout','--detach',remote.commit],stage);
+  if (await run('git',['rev-parse','HEAD'],stage) !== remote.commit) throw new Error('Update revision mismatch');
+  for (const required of ['package-lock.json','productivity/package-lock.json','scripts/build.cjs']) if (!fs.existsSync(path.join(stage,required))) throw new Error(`Update lacks required validation file: ${required}`);
+  onProgress('Installing locked dependencies and validating both frontends...');
+  await run('cmd.exe',['/d','/s','/c','npm ci'],stage,600000);
+  await run('cmd.exe',['/d','/s','/c','npm ci'],path.join(stage,'productivity'),600000);
+  await run('cmd.exe',['/d','/s','/c','npm run build'],stage,300000);
+  // Engine dependency changes are prepared in an isolated virtual environment.
+  onProgress('Validating the Python engine...');
+  await run('python',['-m','venv',path.join(stage,'engine','.venv')],stage,120000);
+  const stagedPython=path.join(stage,'engine','.venv','Scripts','python.exe');
+  await run(stagedPython,['-m','pip','install','-r',path.join(stage,'engine','requirements.txt')],stage,900000);
+  await run(stagedPython,['-m','pip','check'],stage);
+  fs.writeFileSync(path.join(stage,'engine','python_path.txt'),path.join(appDir,'engine','.venv','Scripts','python.exe'));
+  fs.writeFileSync(path.join(stage,'version.json'),JSON.stringify({version:'1.0.0',commit:remote.commit,commitDate:remote.date,commitMessage:remote.message},null,2));
+  // The helper lives outside the folders it moves and keeps a rollback copy.
+  const helper=path.join(parent,`.baymax-apply-${stamp}.ps1`);
+  fs.copyFileSync(path.join(__dirname,'..','scripts','apply-update.ps1'),helper);
+  onProgress('Validation passed. Restarting into the prepared update...');
+  const child=spawn('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',helper,'-Root',appDir,'-Stage',stage,'-Backup',backup,'-WaitPid',String(process.pid)],{detached:true,stdio:'ignore',windowsHide:true});
+  await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
+  child.unref(); app.quit(); return {success:true,updated:true,backup};
 }
-
-module.exports = {
-  getLocalVersionInfo,
-  checkForUpdates,
-  performUpdate,
-};
+module.exports = { getLocalVersionInfo, checkForUpdates, performUpdate };

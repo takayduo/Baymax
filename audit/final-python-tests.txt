@@ -1,0 +1,9 @@
+test_action_failures_are_not_success (test_engine.EngineRegressions.test_action_failures_are_not_success) ... ok
+test_confirmation_without_ui_is_refused (test_engine.EngineRegressions.test_confirmation_without_ui_is_refused) ... ok
+test_confirmation_wrong_id_and_expiry_never_execute (test_engine.EngineRegressions.test_confirmation_wrong_id_and_expiry_never_execute) ... ok
+test_environment_key_is_used_without_a_config_file (test_engine.EngineRegressions.test_environment_key_is_used_without_a_config_file) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK

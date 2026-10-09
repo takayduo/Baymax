@@ -9,9 +9,8 @@ from pathlib import Path
 from config import is_windows, is_mac, is_linux
 
 def _get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    from core.paths import data_root
+    return data_root()
 
 
 BASE_DIR        = _get_base_dir()

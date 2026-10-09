@@ -1,3 +1,4 @@
+from core.paths import python_command
 import subprocess
 import sys
 import json
@@ -7,9 +8,8 @@ from pathlib import Path
 
 
 def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    from core.paths import data_root
+    return data_root()
 
 BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
@@ -210,7 +210,7 @@ Fixed code:"""
 
 def _run_file(path: Path, args: list, timeout: int) -> str:
     interpreters = {
-        ".py":  [sys.executable],
+        ".py":  python_command(),
         ".js":  ["node"],
         ".ts":  ["ts-node"],
         ".sh":  ["bash"],

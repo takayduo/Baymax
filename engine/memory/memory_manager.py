@@ -6,10 +6,11 @@ from pathlib import Path
 import sys
 
 
+from core.paths import data_root
+
+
 def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return data_root()
 
 
 BASE_DIR         = get_base_dir()

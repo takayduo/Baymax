@@ -17,6 +17,8 @@ import { buildRemoteControl } from "./remoteControl";
 import { buildProductivity } from "./productivity";
 import { Bridge } from "../core/bridge";
 import { Sound } from "../core/sound";
+import { mountSettings } from "../settings/panel";
+import { assistantName } from "../core/branding";
 import { VoiceManager } from "../core/voice";
 
 export interface ViewActions {
@@ -55,7 +57,7 @@ function card(wash: Wash, ...children: (Node | string)[]): HTMLElement {
 
 function btn(
   label: string,
-  kind: "primary" | "secondary",
+  kind: "primary" | "secondary" | "glass",
   onClick: () => void,
   kbd?: string,
 ): HTMLElement {
@@ -110,7 +112,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
     "button",
     {
       class: "tab",
-      title: "Remote Co-Pilot (Mochi Ultra)",
+      title: `${assistantName(State.settings.assistantName)} · Partner PC`,
       onclick: () => go("remote-control"),
     },
     svg(ICONS.monitor, 13)
@@ -121,7 +123,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
     "button",
     {
       class: "tab",
-      title: "Productivity & Focus Workspace (Baymax)",
+      title: `${assistantName(State.settings.assistantName)} · Productivity`,
       onclick: () => go("productivity"),
     },
     svg(ICONS.timer, 13)
@@ -137,9 +139,15 @@ export function buildHeader(actions: ViewActions): ViewHost {
     actions.setView(v);
   }
 
+  const labeledTabs: Array<[HTMLElement, string]> = [[tabHome, "Home"], [tabChat, "Chat"], [tabCouple, "Partner"], [tabRemote, "PC"], [tabSched, "Tasks"], [tabProductivity, "Focus"]];
+  for (const [tab, label] of labeledTabs) {
+    tab.append(h("span", { class: "tab-label", text: label }));
+    tab.setAttribute("aria-label", label);
+  }
+  tabDrop.setAttribute("aria-label", "Share a file");
   const el = h(
-    "div",
-    { id: "header" },
+    "nav",
+    { id: "header", "aria-label": "Main navigation" },
     h("div", { class: "tabs" }, tabHome, tabChat, tabCouple, tabRemote, tabSched, tabProductivity, tabDrop),
     h("div", { class: "header-actions" }, micBtn, gearBtn, soundBtn),
   );
@@ -148,12 +156,14 @@ export function buildHeader(actions: ViewActions): ViewHost {
     el,
     sync() {
       const v = State.view;
+      for (const button of [micBtn, gearBtn, soundBtn]) button.setAttribute("aria-label", button.title);
+      gearBtn.classList.toggle("on", v === "settings" || v === "preferences");
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabCouple.classList.toggle("on", v === "couple-chat");
       tabRemote.classList.toggle("on", v === "remote-control");
       const isMe = (State.settings.userRole || "me") === "me";
-      const rawPartner = isMe ? (State.settings.partnerName || "Ayzil") : (State.settings.userName || "Badsha");
+      const rawPartner = isMe ? (State.settings.partnerName || "Partner") : (State.settings.userName || "You");
       const partnerName = (rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1)) || "Partner";
       tabCouple.title = `Chat with ${partnerName}`;
       tabRemote.title = `Remote Co-Pilot — ${partnerName} 🖥️`;
@@ -186,6 +196,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
       micBtn.classList.toggle("on", micOn);
       micBtn.append(svg(micOn ? ICONS.mic : ICONS.micOff, 14));
 
+      labeledTabs.forEach(([tab]) => tab.setAttribute("aria-current", tab.classList.contains("on") ? "page" : "false"));
       el.style.opacity = v === "confused" ? "0" : "1";
     },
   };
@@ -197,8 +208,8 @@ function renderCreatorHomeCard(actions: ViewActions): HTMLElement {
   const isMe = (State.settings.userRole || "me") === "me";
   const userRole = isMe ? "me" : "her";
   const partnerRole = isMe ? "her" : "me";
-  const rawMe = isMe ? (State.settings.userName || "Badsha") : (State.settings.partnerName || "Ayzil");
-  const rawPartner = isMe ? (State.settings.partnerName || "Ayzil") : (State.settings.userName || "Badsha");
+  const rawMe = isMe ? (State.settings.userName || "You") : (State.settings.partnerName || "Partner");
+  const rawPartner = isMe ? (State.settings.partnerName || "Partner") : (State.settings.userName || "You");
   const userName = (rawMe.charAt(0).toUpperCase() + rawMe.slice(1)) || "Me";
   const partnerName = (rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1)) || "Partner";
   const partnerIcon = isMe ? "💖" : "👤";
@@ -208,51 +219,48 @@ function renderCreatorHomeCard(actions: ViewActions): HTMLElement {
   const nextTask = myTasks.find((s) => !s.completed);
   const doneCount = myTasks.filter((s) => s.completed).length;
 
-  const headerRow = h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:6px" },
-    h("span", { style: "font-size:13px;font-weight:600;color:#fff", text: `Hey ${userName} ✨` }),
-    h("span", { style: "font-size:10.5px;color:rgba(255,255,255,0.45);font-variant-numeric:tabular-nums", text: `${doneCount}/${myTasks.length} Done` })
+  const headerRow = h("div", { class: "home-heading" },
+    h("span", { class: "home-title", text: userName === "You" ? "Your day" : `Hello, ${userName}` }),
+    h("span", { class: "home-count", text: `${doneCount} of ${myTasks.length} done` })
   );
 
-  let taskText = "All caught up today! 🎉";
-  let subText = `Plan day with ${partnerName} ${partnerIcon} or chat with AI`;
+  let taskText = myTasks.length ? "Everything is checked off" : "Start with one small task";
+  let subText = `Ask ${assistantName(State.settings.assistantName)} a question or plan what comes next.`;
   if (nextTask) {
-    taskText = `${nextTask.time} • ${nextTask.title}`;
-    subText = nextTask.assignedBy === partnerRole ? `Planned by ${partnerName} ${partnerIcon}` : `Planned by you 🎬`;
+    taskText = nextTask.time ? `${nextTask.time} • ${nextTask.title}` : nextTask.title;
+    subText = nextTask.assignedBy === partnerRole ? `From ${partnerName}` : "Your next task";
   }
 
-  const taskTitle = h("div", {
-    style: "font-size:12px;font-weight:500;color:rgba(255,255,255,0.92);white-space:nowrap;overflow:hidden;text-overflow:ellipsis",
-    text: taskText
-  });
-  const taskSub = h("div", {
-    style: "font-size:10.5px;color:rgba(255,255,255,0.45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis",
-    text: subText
-  });
+  const taskTitle = h("div", { class: "home-next-task", text: taskText, title: `${taskText}\n${subText}` });
 
-  const actionsRow = h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:auto" },
-    btn("Plan Day", "secondary", () => actions.setView("schedule")),
-    btn("Ask AI", "primary", () => actions.setView("prompt"))
+  const actionsRow = h("div", { class: "home-actions" },
+    btn("New task", "glass", () => actions.setView("schedule")),
+    btn("Chat", "glass", () => actions.setView("prompt"))
   );
 
-  return h("div", {
-    style: "display:flex;flex-direction:column;gap:5px;height:100%;padding:8px 12px 8px 104px;box-sizing:border-box"
-  }, headerRow, taskTitle, taskSub, actionsRow);
+  return h("div", { class: "home-summary" }, headerRow, taskTitle, actionsRow);
 }
 
-function buildAppPill(label: string, appKey: string, iconColor: string, actions: ViewActions): HTMLElement {
+function buildAppPill(label: string, appKey: string, iconColor: string, actions: ViewActions, reportError: (message: string) => void): HTMLElement {
+  async function run(close = false) {
+    actions.blip();
+    reportError("");
+    try {
+      const result = await (close ? Bridge.closeApp(appKey) : Bridge.launchApp(appKey));
+      if (!result.success) reportError(result.error || `Could not ${close ? "close" : "open"} ${label}. Check its path in Settings.`);
+    } catch (error) { reportError(error instanceof Error ? error.message : `Could not open ${label}.`); }
+  }
   const pill = h(
-    "div",
+    "button",
     {
       class: "pill",
       title: `Left-click: Open ${label} | Right-click: Close ${label}`,
       onclick: () => {
-        actions.blip();
-        void Bridge.launchApp(appKey);
+        void run();
       },
       oncontextmenu: (e: Event) => {
         e.preventDefault();
-        actions.blip();
-        void Bridge.closeApp(appKey);
+        void run(true);
       },
     },
     h("span", { style: `display:inline-block;width:7px;height:7px;border-radius:50%;background:${iconColor};margin-right:6px` }),
@@ -297,7 +305,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let pillIds = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | null = null;
+  let mode: "ticker" | "card" | "home" | null = null;
   let cardKey = "";
 
   const hooks: IntegrationCardHooks = {
@@ -368,10 +376,12 @@ function buildOverview(actions: ViewActions): ViewHost {
           leftBody.append(renderIntegrationCard(task, hooks));
         }
       } else {
-        // Creator Studio Day at a Glance Card
-        mode = "card";
-        clear(leftBody);
-        leftBody.append(renderCreatorHomeCard(actions));
+        const homeKey = JSON.stringify([State.schedule, State.settings.userRole, State.settings.userName, State.settings.partnerName, State.settings.assistantName]);
+        if (mode !== "home" || cardKey !== homeKey) {
+          mode = "home"; cardKey = homeKey;
+          clear(leftBody);
+          leftBody.append(renderCreatorHomeCard(actions));
+        }
       }
 
       jump.style.display = detailOpen ? "none" : "";
@@ -387,15 +397,17 @@ function buildOverview(actions: ViewActions): ViewHost {
           pruneMiniBots();
         }
       } else {
-        if (pillIds !== "creator_apps") {
-          pillIds = "creator_apps";
+        const pathsKey = JSON.stringify(State.settings.appPaths || {});
+        if (pillIds !== pathsKey) {
+          pillIds = pathsKey;
           clear(pills);
-          pills.append(
-            buildAppPill("Discord", "discord", "#5865F2", actions),
-            buildAppPill("WhatsApp", "whatsapp", "#25D366", actions),
-            buildAppPill("OBS Studio", "obs", "#a855f7", actions),
-            buildAppPill("Premiere", "premiere", "#ea580c", actions)
-          );
+          const apps = Object.entries(State.settings.appPaths || {}).filter(([, value]) => !!value).slice(0, 4);
+          pills.dataset.count = String(apps.length);
+          const launchError = h("div", { class: "launch-error", role: "alert", hidden: true });
+          const reportError = (message: string) => { launchError.textContent = message; launchError.hidden = !message; };
+          for (const [name] of apps) pills.append(buildAppPill(name.charAt(0).toUpperCase() + name.slice(1), name, "#97aaa6", actions, reportError));
+          if (!apps.length) pills.append(h("div", { class: "launch-empty" }, h("span", { text: "Your app shortcuts" }), btn("Add an app", "secondary", () => actions.setView("preferences"))));
+          pills.append(launchError);
         }
       }
     },
@@ -447,23 +459,23 @@ function lighten(hex: string, amount: number): string {
 // ── Empty ─────────────────────────────────────────────────────────────────────
 
 function buildEmpty(actions: ViewActions): ViewHost {
-  const title = h("div", { class: "title", text: "Creator Studio Ready ✨" });
-  const sub = h("div", { class: "sub", text: "Mochi is listening — ask me anything, view your schedule, or drop a file." });
+  const title = h("div", { class: "title", text: "Ready when you are" });
+  const sub = h("div", { class: "sub", text: `${assistantName(State.settings.assistantName)} is ready — ask a question, plan a task, or drop a file.` });
   const body = h(
     "div",
     { class: "stack", style: "padding:0 18px 0 118px;flex-direction:row;align-items:center;gap:12px" },
     h("div", { style: "display:flex;flex-direction:column;gap:5px" }, title, sub),
     h("div", { class: "grow" }),
-    btn("Plan Day", "secondary", () => actions.setView("schedule")),
-    btn("Ask AI", "primary", () => actions.setView("prompt")),
+    btn("Add a task", "secondary", () => actions.setView("schedule")),
+    btn("Ask your assistant", "primary", () => actions.setView("prompt")),
   );
   return {
     el: h("div", { class: "view" }, card(null, body)),
     sync() {
       const isMe = (State.settings.userRole || "me") === "me";
-      const rawPartner = isMe ? (State.settings.partnerName || "Ayzil") : (State.settings.userName || "Badsha");
+      const rawPartner = isMe ? (State.settings.partnerName || "Partner") : (State.settings.userName || "You");
       const partnerName = (rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1)) || "Partner";
-      sub.textContent = `Mochi is active — talk or ask, plan with ${partnerName}, or drop video files.`;
+      sub.textContent = `${assistantName(State.settings.assistantName)} is active — talk or ask, plan with ${partnerName}, or drop video files.`;
     },
   };
 }
@@ -596,7 +608,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       State.settings.autostart = !State.settings.autostart;
       startupSwitch.classList.toggle("on", State.settings.autostart);
       Sound.play("blip");
-      await Bridge.saveSettings(State.settings);
+      await Bridge.saveSettings({ autostart: State.settings.autostart });
     },
   });
 
@@ -633,7 +645,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       h("button", {
         class: "link-btn",
         style: "color:#8e939c;font-size:11.5px",
-        text: "Settings…",
+        text: "All settings…",
         onclick: () => actions.openSettingsWindow(),
       }),
       h("button", {
@@ -664,7 +676,8 @@ function buildSettings(actions: ViewActions): ViewHost {
         h("span", { text: "Claude Code" }),
       );
       clear(apiBadge);
-      apiBadge.append(dot("#F4505E", 6), h("span", { text: "API" }));
+      const hasKey = s.aiProvider === "groq" ? !!s.groqApiKey : s.aiProvider === "openrouter" ? !!s.openrouterApiKey : !!s.geminiApiKey;
+      apiBadge.append(dot(hasKey ? "#22C55E" : "#F4505E", 6), h("span", { text: hasKey ? "AI key saved" : "Add AI key" }));
     },
   };
 }
@@ -697,6 +710,14 @@ export function buildViews(
   map.set("confused", buildConfused());
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
+  const preferences = h("div", { class: "view preferences-view" });
+  let preferencesMounted = false;
+  map.set("preferences", { el: preferences, sync() {
+    if (State.view === "preferences" && !preferencesMounted) {
+      preferencesMounted = true;
+      void mountSettings(preferences, () => actions.setView("settings"));
+    }
+  } });
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("schedule", buildSchedule(actions));
   map.set("upload", buildUpload());

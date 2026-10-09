@@ -1,3 +1,4 @@
+from core.paths import python_command
 import os
 import platform
 import re
@@ -815,7 +816,7 @@ def _schedule_windows(hour: int, minute: int) -> str:
     subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"], capture_output=True, **_CNW)
     for extra in (["/RL", "HIGHEST", "/RU", "SYSTEM"], []):
         cmd    = ["schtasks", "/Create", "/TN", task_name,
-                  "/TR", f'"{sys.executable}" "{script_path}" --scheduled',
+                  "/TR", subprocess.list2cmdline(python_command() + [str(script_path), "--scheduled"]),
                   "/SC", "DAILY", "/ST", f"{hour:02d}:{minute:02d}", "/F", *extra]
         result = subprocess.run(cmd, capture_output=True, text=True, **_CNW)
         if result.returncode == 0:

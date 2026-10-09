@@ -20,7 +20,8 @@ for stream in (sys.stdout, sys.stderr):
         except Exception:
             pass
 
-BASE_DIR = Path(__file__).resolve().parent
+from core.paths import resource_root
+BASE_DIR = resource_root()
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
@@ -94,8 +95,7 @@ def cmd_execute_action(name: str, parameters: dict):
     if not reg.has(name):
         return {"success": False, "error": f"Action '{name}' is not registered."}
     try:
-        result = reg.run(name, parameters or {})
-        return {"success": True, "result": result}
+        return reg.run_result(name, parameters or {})
     except Exception as e:
         return {"success": False, "error": f"Execution error: {e}", "traceback": traceback.format_exc()}
 

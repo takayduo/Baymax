@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mochi Eye — Remote Desktop</title>
+  <title>Partner desktop</title>
   <style>
     * {
       box-sizing: border-box;
@@ -165,7 +165,7 @@
   <div id="toolbar">
     <div class="badge">
       <span class="badge-dot"></span>
-      <span id="partnerTitle">Mochi Eye — Controlling Partner's PC</span>
+      <span id="partnerTitle">Connecting to your partner’s PC</span>
     </div>
     <span class="badge" id="dataChannelBadge" style="font-size: 11px; opacity: 0.85; font-weight: 500;" title="P2P DataChannel state">⚡ Direct P2P</span>
     <button class="btn" id="btnCursorMode" title="Toggle Cursor: Single (Remote Only) vs Dual (Local + Remote) [Ctrl+Shift+C]">🖱️ Cursor: Single</button>
@@ -589,7 +589,8 @@
         const info = await window.viewerAPI.getPartnerInfo();
         if (info && info.partnerName) {
           partnerName = info.partnerName;
-          partnerTitle.textContent = `Mochi Eye — Controlling ${partnerName}'s PC`;
+          partnerTitle.textContent = `${info.assistantName || 'Baymax'} — Controlling ${partnerName}'s PC`;
+          document.title = partnerTitle.textContent;
           loadingText.textContent = `Connecting to ${partnerName}'s desktop...`;
         }
         if (info && info.remoteResolution) {

@@ -1,0 +1,56 @@
+{
+  "appId": "app.baymax.desktop",
+  "productName": "Baymax",
+  "asar": false,
+  "npmRebuild": false,
+  "electronDist": "node_modules/electron/dist",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*.js",
+    "electron/**/*.ps1",
+    "electron/**/*.sql",
+    "electron/bin/InputInjector.exe",
+    "productivity/dist/**/*",
+    "public/remote-viewer.html",
+    "public/icons/*",
+    "package.json",
+    "version.json",
+    "LICENSE*",
+    "!**/*.map",
+    "!**/test*",
+    "!**/.env*"
+  ],
+  "extraResources": [
+    {
+      "from": "build/engine/BaymaxEngine",
+      "to": "engine",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "signAndEditExecutable": true,
+    "icon": "public/icons/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "deleteAppDataOnUninstall": false,
+    "artifactName": "Baymax-Setup-${version}-${arch}.${ext}"
+  }
+}

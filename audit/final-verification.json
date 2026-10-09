@@ -1,0 +1,11 @@
+{
+  "nodeTests": 20,
+  "pythonTests": 4,
+  "electronChecks": 7,
+  "bothTypechecks": "passed",
+  "bothProductionBuilds": "passed",
+  "windowsForegroundHelper": "passed with Chrome",
+  "isolatedProfile": true,
+  "liveAccountTests": "not performed",
+  "report": "REPAIR_STATUS.md"
+}

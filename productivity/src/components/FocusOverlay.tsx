@@ -1,3 +1,4 @@
+import Icon from "./Icon";
 import React, { useState, useEffect, useRef } from 'react';
 import { getElectronAPI } from '../context/AppContext';
 
@@ -105,7 +106,7 @@ export default function FocusOverlay() {
         <div className="w-full max-w-md bg-surface border border-error/20 p-8 shadow-2xl relative z-10 flex flex-col items-center text-center">
           {/* Warning Icon with pulse */}
           <div className="w-16 h-16 rounded-full bg-error/10 border border-error/30 flex items-center justify-center mb-6 animate-pulse">
-            <span className="material-symbols-outlined text-error text-3xl">dangerous</span>
+            <Icon className="app-icon text-error text-3xl" name="dangerous" />
           </div>
 
           <h2 className="text-2xl font-serif text-error mb-2 tracking-tight">Focus Interruption</h2>
@@ -147,7 +148,7 @@ export default function FocusOverlay() {
     return (
       <div className="fixed bottom-6 right-6 z-50 bg-surface border border-primary/20 p-5 shadow-2xl flex items-center gap-4 animate-slide-in-right max-w-sm text-primary">
         <div className="w-10 h-10 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
-          <span className="material-symbols-outlined text-primary text-xl">verified</span>
+          <Icon className="app-icon text-primary text-xl" name="verified" />
         </div>
         <div>
           <h4 className="text-xs font-bold uppercase tracking-wider text-primary">Focus Preserved</h4>
@@ -164,7 +165,7 @@ export default function FocusOverlay() {
       <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-background/85 backdrop-blur-lg text-primary">
         <div className="w-full max-w-md bg-surface border border-outline-variant p-8 shadow-2xl text-center flex flex-col items-center">
           <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mb-6">
-            <span className="material-symbols-outlined text-primary text-2xl">admin_panel_settings</span>
+            <Icon className="app-icon text-primary text-2xl" name="admin_panel_settings" />
           </div>
 
           <h2 className="text-xl font-serif mb-2 tracking-tight text-primary">Privilege Required</h2>

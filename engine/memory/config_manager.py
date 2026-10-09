@@ -1,11 +1,14 @@
+import os
 import json
 import sys
 from pathlib import Path
 
+from core.paths import data_root
+
+
 def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return data_root()
+
 
 BASE_DIR    = get_base_dir()
 CONFIG_DIR  = BASE_DIR / "config"
@@ -35,13 +38,15 @@ def save_api_keys(gemini_api_key: str) -> None:
     )
 
 def load_api_keys() -> dict:
-    if not CONFIG_FILE.exists():
-        return {}
+    data = {}
     try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if CONFIG_FILE.exists():
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     except Exception as e:
         print(f"❌ Failed to load api_keys.json: {e}")
-        return {}
+    if os.environ.get("GEMINI_API_KEY"):
+        data["gemini_api_key"] = os.environ["GEMINI_API_KEY"]
+    return data
 
 def get_gemini_key() -> str | None:
     return load_api_keys().get("gemini_api_key")
@@ -70,7 +75,7 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             data = {}
-    data["assistant_name"] = assistant_name.strip() or "JARVIS"
+    data["assistant_name"] = assistant_name.strip() or "Baymax"
     data["user_name"] = user_name.strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 

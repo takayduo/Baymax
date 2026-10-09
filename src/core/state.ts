@@ -112,6 +112,8 @@ export interface Settings {
   shareChannel: string;
   syncUrl: string;
   syncApiKey?: string;
+  syncEmail?: string;
+  syncPassword?: string;
   notifyPartnerOnline?: boolean;
   appPaths: Record<string, string>;
 
@@ -168,23 +170,17 @@ export const DEFAULT_SETTINGS: Settings = {
   openrouterModel: "meta-llama/llama-3.3-70b-instruct:free",
   groqModel: "openai/gpt-oss-120b",
   micEnabled: true,
-  userName: "Badsha",
-  partnerName: "Ayzil",
+  userName: "You",
+  partnerName: "Partner",
   userRole: "me",
   gdriveApiKey: "",
   gdriveFolderId: "",
   gdriveUploadUrl: "",
   shareChannel: "coucou-badsha-ayzil",
-  syncUrl: "https://brxmmguaybfozzyrditx.supabase.co/",
-  syncApiKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyeG1tZ3VheWJmb3p6eXJkaXR4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDQzNTksImV4cCI6MjEwNjUyMDM1OX0.JW8GbyVOSoUfjHvNVCcPpSGsAf9Qq-BCtGP2RRRIboM",
+  syncUrl: "",
+  syncApiKey: "",
   notifyPartnerOnline: true,
-  appPaths: {
-    discord: "Discord",
-    whatsapp: "WhatsApp",
-    obs: "OBS",
-    premiere: "Premiere",
-    notepad: "Notepad",
-  },
+  appPaths: {},
 
   // Mark-LV PC Control & Agent Engine Defaults
   assistantName: "Baymax",

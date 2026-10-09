@@ -6,6 +6,7 @@ import { ICONS } from "./icons";
 import { Bridge, type ChatContext } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type ChatMessage } from "../core/state";
+import { assistantName } from "../core/branding";
 import { VoiceManager } from "../core/voice";
 import type { ViewHost } from "./views";
 
@@ -39,8 +40,8 @@ function contextChip(label: string): HTMLElement {
 
 function userProfileBadge(): HTMLElement {
   const isMe = (State.settings.userRole || "me") === "me";
-  const myName = (State.settings.userName && State.settings.userName !== "Me" ? State.settings.userName : "Badsha");
-  const partnerName = (State.settings.partnerName && State.settings.partnerName !== "Her" ? State.settings.partnerName : "Ayzil");
+  const myName = (State.settings.userName && State.settings.userName !== "Me" ? State.settings.userName : "You");
+  const partnerName = (State.settings.partnerName && State.settings.partnerName !== "Her" ? State.settings.partnerName : "Partner");
   const activeName = isMe ? myName : partnerName;
   const icon = isMe ? "👤" : "💖";
   const color = isMe ? "#38bdf8" : "#f43f5e";
@@ -55,7 +56,7 @@ function userProfileBadge(): HTMLElement {
         Sound.play("blip");
         const nextRole = isMe ? "her" : "me";
         State.settings.userRole = nextRole;
-        await Bridge.saveSettings(State.settings);
+        await Bridge.saveSettings({ userRole: nextRole });
         State.notify();
       },
     },
@@ -68,11 +69,12 @@ function userProfileBadge(): HTMLElement {
 
 function engineBadge(): HTMLElement {
   const voice = State.settings.voiceName || "Charon";
+  const provider = State.settings.aiProvider === "groq" ? "Groq" : State.settings.aiProvider === "openrouter" ? "OpenRouter" : "Gemini Live";
   const badge = h(
     "button",
     {
       class: "chip",
-      title: `Gemini Live Engine (Voice: ${voice}). Click to configure in Settings.`,
+      title: `${provider}${provider === "Gemini Live" ? ` · ${voice}` : ""}. Configure AI & voice in Settings.`,
       style: "cursor:pointer;border:none;background:rgba(255,255,255,0.08);padding:3px 8px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.85);margin-right:6px",
       onclick: () => {
         Sound.play("blip");
@@ -80,7 +82,7 @@ function engineBadge(): HTMLElement {
       },
     },
     h("i", { class: "chip-dot", style: "background:#3b82f6" }),
-    h("span", { text: `🎙️ ${voice}` })
+    h("span", { text: provider === "Gemini Live" ? `${provider} · ${voice}` : provider })
   );
   return badge;
 }
@@ -88,19 +90,21 @@ function engineBadge(): HTMLElement {
 export function buildPrompt(onHeightChange: () => void): ViewHost {
   const chipRow = h("div", { class: "chip-row", style: "display:flex;align-items:center;gap:6px" });
   const log = h("div", { class: "chat-log" });
-  const input = h("input", {
-    type: "text",
+  const input = h("textarea", {
+    rows: "1",
+    "aria-label": "Message your assistant",
     class: "chat-input",
     placeholder: "Ask me anything…",
     spellcheck: "false",
-  }) as HTMLInputElement;
+  }) as HTMLTextAreaElement;
   const send = h("button", { class: "send-btn", title: "Send" }, svg(ICONS.arrowUp, 11));
   const bar = h("div", { class: "chat-bar" }, input, send);
 
+  const errorStatus = h("div", { class: "chat-error", role: "alert", hidden: true });
   const el = h(
     "div",
     { class: "view" },
-    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, bar)),
+    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, errorStatus, bar)),
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
@@ -111,6 +115,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     const query = input.value.trim();
     if (!query || sending) return;
     input.value = "";
+    errorStatus.hidden = true;
     sending = true;
     Sound.play("send");
 
@@ -135,8 +140,9 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       Sound.play("finish");
     } catch (err) {
       State.stateOverride = null;
-      State.noteMessage = String(err).replace(/^Error:\s*/, "");
-      State.view = "note";
+      input.value = query;
+      errorStatus.textContent = `Could not send. ${String(err).replace(/^Error:\s*/, "")}`;
+      errorStatus.hidden = false;
       Sound.play("error");
     } finally {
       sending = false;
@@ -146,20 +152,21 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     }
   }
 
+  input.addEventListener("input", () => { send.disabled = sending || !input.value.trim(); });
   send.addEventListener("click", () => void submit());
   input.addEventListener("keydown", (e) => {
-    if ((e as KeyboardEvent).key === "Enter") {
+    if ((e as KeyboardEvent).key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       void submit();
     }
-    e.stopPropagation(); // Escape closes the island, not the chat
+    if (e.key !== "Escape") e.stopPropagation();
   });
 
   return {
     el,
     sync() {
       const curVoice = State.settings.voiceName || "Charon";
-      const curRole = State.settings.userRole || "me";
+      const curRole = `${State.settings.userRole}|${State.settings.userName}|${State.settings.partnerName}|${State.settings.aiProvider}`;
       if (
         chipRow.dataset.voice !== curVoice ||
         chipRow.dataset.role !== curRole
@@ -172,9 +179,19 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
 
       const thinking = State.stateOverride === "thinking";
       const count = State.chatHistory.length + (thinking ? 0.5 : 0);
-      if (count !== renderedCount) {
+      if (count !== renderedCount || log.dataset.assistant !== assistantName(State.settings.assistantName)) {
+        log.dataset.assistant = assistantName(State.settings.assistantName);
         renderedCount = count;
         clear(log);
+        if (!State.chatHistory.length && !thinking) {
+          const suggestions = h("div", { class: "chat-suggestions" });
+          for (const prompt of ["Help me plan my day", "Explain something simply"]) {
+            suggestions.append(h("button", { text: prompt, onclick: () => { input.value = prompt; send.disabled = false; input.focus(); } }));
+          }
+          log.append(h("div", { class: "chat-empty" },
+            h("h2", { text: `A moment with ${assistantName(State.settings.assistantName)}` }),
+            h("p", { text: "Ask a question, work through an idea, or make a plan." }), suggestions));
+        }
         for (const m of State.chatHistory) log.append(bubble(m));
         if (thinking) log.append(typingDots());
         log.scrollTop = log.scrollHeight;
@@ -182,6 +199,10 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
 
       input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
       input.disabled = sending;
+      send.disabled = sending || !input.value.trim();
+      send.setAttribute("aria-label", sending ? "Sending message" : "Send message");
+      log.setAttribute("aria-live", "polite");
+      log.setAttribute("aria-busy", String(thinking));
     },
     focus() {
       input.focus();

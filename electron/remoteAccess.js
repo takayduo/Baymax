@@ -93,14 +93,9 @@ function startInputInjector() {
 function injectInput(cmd) {
   if (!cmd || typeof cmd !== "string") return;
 
-  if (!inputInjectorProc || !inputInjectorProc.stdin || inputInjectorProc.stdin.destroyed) {
-    console.log("[RemoteAccess] Injector not running, auto-starting now...");
-    const started = startInputInjector();
-    if (!started || !inputInjectorProc) {
-      console.error("[RemoteAccess] Failed to auto-start input injector");
-      return;
-    }
-  }
+  if (/[^\x20-\x7e]/.test(cmd) || cmd.length > 200) return false;
+  if (!/^(?:mn -?\d+(?:\.\d+)? -?\d+(?:\.\d+)?|m -?\d+ -?\d+|[du] [012](?: -?\d+(?:\.\d+)? -?\d+(?:\.\d+)?)?|w -?\d+|k \d+ [01]|t \d+|bounds -?\d+ -?\d+ \d+ \d+)$/.test(cmd.trim())) return false;
+  if (!inputInjectorProc?.stdin || inputInjectorProc.stdin.destroyed) return false;
 
   try {
     inputInjectorProc.stdin.write(cmd.trim() + "\n");
@@ -220,7 +215,7 @@ function createRemoteViewerWindow({ partnerName, remoteResolution, initialOffer,
     minWidth: 800,
     minHeight: 500,
     backgroundColor: "#09090b",
-    title: `Mochi Eye — Controlling ${partnerName}'s PC`,
+    title: `Partner desktop — ${partnerName}`,
     icon: path.join(__dirname, "../public/icons/icon.ico"),
     autoHideMenuBar: true,
     webPreferences: {

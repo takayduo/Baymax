@@ -1,3 +1,4 @@
+import Icon from "./Icon";
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
@@ -38,7 +39,7 @@ export default function TopBar() {
             ) : userProfile.name ? (
               <span className="text-primary text-sm font-bold uppercase">{userProfile.name.charAt(0)}</span>
             ) : (
-              <span className="material-symbols-outlined text-primary text-[20px]">person</span>
+              <Icon className="app-icon text-primary text-[20px]" name="person" />
             )}
           </div>
           {profileOpen && (
@@ -57,7 +58,7 @@ export default function TopBar() {
                 className="text-left px-4 py-3 text-[10px] uppercase tracking-widest hover:bg-surface-bright transition-colors text-on-surface hover:text-primary flex items-center justify-between w-full"
               >
                 Settings
-                <span className="material-symbols-outlined text-[16px]">settings</span>
+                <Icon className="app-icon text-[16px]" name="settings" />
               </button>
             </div>
           )}

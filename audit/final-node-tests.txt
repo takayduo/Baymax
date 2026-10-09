@@ -1,0 +1,28 @@
+✔ 40 x 1.5s intervals total 60s, assigned to previous foreground (6.6706ms)
+✔ real tools monitored, idle and unknown foreground stop accrual (0.9132ms)
+✔ midnight split and stale library usage reset (0.356ms)
+✔ catalog keeps executable identities distinct, hides installer shortcuts (7.5013ms)
+✔ stdout carries JSON across arbitrary and UTF8 chunk boundaries (2.4654ms)
+✔ week aggregation matches displayed calendar dates (0.4087ms)
+✔ focus expires without a renderer; Pomodoro break survives and records once (1.895ms)
+✔ remote input requires acceptance, exact session and peer; end and expiry revoke it (0.3533ms)
+✔ app command resolution rejects shell text and ambiguous guessed names (0.5797ms)
+✔ task merge converges, retains offline edits and deletion tombstones (1.3332ms)
+✔ settings encrypt secrets and never return them through public settings (1.0083ms)
+✔ engine RPC rejects unauthorized requests and executes duplicate request IDs once (54.3908ms)
+✔ action parser preserves quoted braces, deduplicates commands and uses absolute roles (1.0884ms)
+✔ ambiguous application names fail instead of choosing an arbitrary executable (0.2557ms)
+✔ JSON persistence preserves corrupt files and reports unsuccessful writes (6.1545ms)
+✔ utility migration preserves history and allows real apps to be restored (0.4499ms)
+✔ updater refuses dirty installations before downloading or writing files (1.6829ms)
+✔ asset protocol rejects invalid URLs and traversal without reading private files (1.6873ms)
+✔ OAuth rejects wrong state and replacing a flow cannot close the new server (2.0478ms)
+✔ stale Supabase authentication cannot replace the latest connection (1.9859ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 178.8398

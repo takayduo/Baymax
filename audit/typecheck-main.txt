@@ -1,0 +1,3 @@
+src/main.ts(191,20): error TS2339: Property 'speakText' does not exist on type 'VoiceService'.
+src/views/coupleChat.ts(120,29): error TS2339: Property 'senderRole' does not exist on type 'PartnerChatMessage'.
+src/views/coupleChat.ts(120,47): error TS2339: Property 'senderRole' does not exist on type 'PartnerChatMessage'.
