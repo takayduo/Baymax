@@ -279,6 +279,26 @@ class AccountService extends EventEmitter {
      };
     }
    }
+   if(activeEntitlement.plan==='duo'&&activeEntitlement.purchaserId===this.saved?.user?.id&&activeEntitlement.subscriptionId){
+    try{
+     const seatsOnSub=await this.rest(`seats?select=user_id,state&subscription_id=eq.${encodeURIComponent(activeEntitlement.subscriptionId)}&state=eq.active`).catch(()=>[]);
+     const partnerSeatRow=Array.isArray(seatsOnSub)?seatsOnSub.find(s=>s.user_id!==this.saved.user.id):null;
+     if(partnerSeatRow){
+      const partnerProfile=await this.rest(`profiles?select=username,display_name&user_id=eq.${encodeURIComponent(partnerSeatRow.user_id)}`).catch(()=>[]);
+      activeEntitlement.partnerSeat={
+       userId:partnerSeatRow.user_id,
+       username:partnerProfile?.[0]?.username||'partner',
+       displayName:partnerProfile?.[0]?.display_name||partnerProfile?.[0]?.username||'Partner',
+       state:'active'
+      };
+     }else{
+      activeEntitlement.partnerSeat=null;
+     }
+    }catch(e){
+     console.warn('[Account] Failed to query partner seat:', e);
+     activeEntitlement.partnerSeat=null;
+    }
+   }
   }catch(err){
    console.warn('[Account] Entitlement query fallback failed:', err);
    activeEntitlement=this.saved?.snapshot?.entitlement||{plan:'free'};
@@ -450,6 +470,13 @@ class AccountService extends EventEmitter {
    if(otherMember?.userId){
     void this.broadcastToUser(otherMember.userId,unpairPayload);
    }
+   const ent=this.saved?.snapshot?.entitlement;
+   if(ent?.plan==='duo'&&ent.purchaserId===this.saved?.user?.id&&otherMember?.userId&&ent.subscriptionId){
+    await this.rest(`seats?subscription_id=eq.${encodeURIComponent(ent.subscriptionId)}&user_id=eq.${encodeURIComponent(otherMember.userId)}`,{
+     method:'PATCH',
+     body:JSON.stringify({state:'revoked'})
+    }).catch(()=>{});
+   }
    try{
     await this.rest('rpc/end_pair',{method:'POST',body:JSON.stringify({p_actor:this.saved.user.id})});
    }catch{
@@ -465,6 +492,27 @@ class AccountService extends EventEmitter {
    this.changed();
    await this.refresh().catch(()=>{});
    return {ended:true};
+  }
+  if(op==='revoke-seat'||op==='revoke-partner-seat'){
+   const ent=this.saved?.snapshot?.entitlement;
+   if(!ent||ent.plan!=='duo'||ent.purchaserId!==this.saved?.user?.id) throw new Error('Only the Duo purchaser can revoke partner seats.');
+   let revoked = false;
+   try{
+    const r=await this.rest('rpc/revoke_partner_seat',{method:'POST',body:'{}'});
+    if(r?.success) revoked = true;
+   }catch{}
+   if(!revoked&&ent.subscriptionId){
+    const seatsOnSub=await this.rest(`seats?select=user_id,state&subscription_id=eq.${encodeURIComponent(ent.subscriptionId)}&state=eq.active`).catch(()=>[]);
+    const partnerSeatRow=Array.isArray(seatsOnSub)?seatsOnSub.find(s=>s.user_id!==this.saved.user.id):null;
+    if(partnerSeatRow){
+     await this.rest(`seats?subscription_id=eq.${encodeURIComponent(ent.subscriptionId)}&user_id=eq.${encodeURIComponent(partnerSeatRow.user_id)}`,{
+      method:'PATCH',
+      body:JSON.stringify({state:'revoked'})
+     }).catch(()=>{});
+    }
+   }
+   await this.refresh().catch(()=>{});
+   return {revoked:true};
   }
   let result={};
   try{result=await this.api('account',{...args,op});}catch{}
