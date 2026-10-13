@@ -34,14 +34,17 @@ def main():
         from core.paths import resource_root, data_root
         from mochi_bridge import get_registry
         import mochi_runner
+        from core.avatar import CATALOG, ACCESSORIES
         registry = get_registry()
         records = registry._all_records
         failures = [{"name": r.name, "error": r.error} for r in records if not r.valid]
         result = {"success": not failures, "actions": sorted(registry.names()),
                   "failures": failures, "prompt_exists": (resource_root() / "core" / "prompt.txt").is_file(),
                   "data_separate": data_root() != resource_root()}
+        result["companions"] = len(CATALOG)
+        result["accessories"] = len(ACCESSORIES)
         print(json.dumps(result))
-        if failures or not result["prompt_exists"]:
+        if failures or not result["prompt_exists"] or result["companions"] != 20:
             raise SystemExit(1)
     else:
         print("BaymaxEngine: bridge <command> | live | hud | --self-test")

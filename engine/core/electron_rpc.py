@@ -12,7 +12,7 @@ def request(action, parameters):
     req = urllib.request.Request(url, data=body, headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
     # Ignore system proxy settings for the private loopback connection.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(req, timeout=30) as response:
+    with opener.open(req, timeout=90) as response:
         result = json.load(response)
     if not result.get('success'):
         raise RuntimeError(result.get('error') or 'Baymax could not complete the action')

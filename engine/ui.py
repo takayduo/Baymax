@@ -415,7 +415,7 @@ class HudCanvas(QWidget):
         self.state    = "INITIALISING"
         self._assistant_name = assistant_name
 
-        # The holographic head that fills the HUD. If it could not be imported
+        # The selected wardrobe companion that fills the HUD. If it could not be imported
         # we fall back to the old glowing core so the panel is never empty.
         self._avatar = None
         if HoloAvatar is not None:
@@ -501,6 +501,11 @@ class HudCanvas(QWidget):
         """
         try:
             if not frames:
+                self._visemes = None
+                self._vis_i = None
+                self._live_amp = self._amp_disp = 0.0
+                if self._avatar is not None:
+                    self._avatar.clear_speech()
                 return
             hop = max(1e-3, float(hop))
             at = float(at)
@@ -542,7 +547,9 @@ class HudCanvas(QWidget):
             lv = 0.0
         elif lv > 1.0:
             lv = 1.0
-        if lv > self._live_amp:
+        if lv == 0.0:
+            self._live_amp = self._amp_disp = 0.0
+        elif lv > self._live_amp:
             self._live_amp = lv
 
     def _make_grid(self, W: int, H: int) -> QPixmap:
@@ -859,7 +866,7 @@ class HudCanvas(QWidget):
             self._grid_key   = _gkey
         p.drawPixmap(0, 0, self._grid_cache)
 
-        # ── holographic head ────────────────────────────────────────────────
+        # ── wardrobe companion ────────────────────────────────────────────────
         # Sized to the band between the top of the canvas and the status line,
         # capped by width, so it fills the HUD at any window size — including
         # fullscreen — without ever colliding with the status text below.

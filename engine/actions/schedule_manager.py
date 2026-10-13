@@ -17,7 +17,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "'add' to create a task, 'complete' to mark done, 'list' to view tasks. Default: 'list'",
+                "description": "'add' to create a task, 'complete' to mark done, 'delete' to delete an exact task, 'list' to view tasks. Default: 'list'",
             },
             "title": {
                 "type": "STRING",
@@ -29,7 +29,7 @@ TOOL = {
             },
             "for_who": {
                 "type": "STRING",
-                "description": "Who the task is for: 'me', 'her', or 'both'. Default: 'me'",
+                "description": "Omit for the current user; 'partner' for their partner; 'both' for both. Literal 'me'/'her' identify configured roles, not pronouns.",
             },
         },
         "required": [

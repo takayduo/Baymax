@@ -1,6 +1,8 @@
+import { allowed } from './account';
 // Voice & Audio Coordinator for Mochi Ultra
 // Supports both Google Gemini Multimodal Live Engine AND Secondary Groq AI Engine (with Local TTS)
-import { Bridge } from "./bridge";
+import { Bridge, type TalkKeyState } from "./bridge";
+import { HoldAudio } from './holdAudio';
 import { Sound } from "./sound";
 import { State } from "./state";
 
@@ -129,6 +131,17 @@ class VoiceService {
   private currentAudioLevel = 0;
   private _engineState = "listening";
   private _localSpeaking = false;
+  private holdAudio = new HoldAudio();
+  private voiceMode = '';
+  private micGeneration = 0;
+  private micStarting = false;
+  private initialized = false;
+  private talkKeySuspended = false;
+  private voiceProvider = '';
+  private voiceGeneration = 0;
+  private cancelLocalSpeech: (() => void) | null = null;
+  private backgroundSpeechStopped = false;
+  private localSpeechIsCheckIn = false;
 
   // Web Audio VAD for Groq Whisper Mode
   private isListening = false;
@@ -147,6 +160,17 @@ class VoiceService {
 
   init(onUpdate?: () => void) {
     this.onGeometryUpdate = onUpdate;
+    if (this.initialized) return;
+    this.initialized = true;
+    Bridge.on('push-to-talk-state', (state: TalkKeyState) => this.onTalkKey(state));
+    Bridge.on('ai-speech-reset', () => {
+      this.currentAudioLevel = 0;
+      this._engineState = 'idle';
+      State.stateOverride = null;
+      this.onGeometryUpdate?.();
+      State.notify();
+    });
+    void Bridge.getPushToTalkState().then(state => this.onTalkKey(state)).catch(() => {});
 
     // Listen for assistant state changes from Mark-LV Python engine (Gemini Mode)
     Bridge.on("ai-state", (state: string) => {
@@ -176,6 +200,7 @@ class VoiceService {
 
     // Listen for live transcripts
     Bridge.on("ai-transcript", (data: { role: string; text: string; speaker?: string }) => {
+      if ((State.settings.aiProvider || 'gemini') !== 'gemini') return;
       if (!data || !data.text) return;
       const text = data.text.trim();
       if (!text) return;
@@ -200,17 +225,25 @@ class VoiceService {
       State.notify();
     });
 
-    // Listen for settings changes to re-evaluate active voice mode
-    Bridge.on("settings-changed", () => {
-      this.syncEngineMode();
-    });
-
-    this.syncEngineMode();
+    // Island.applySettings synchronizes voice only AFTER boot/event preferences are applied.
   }
 
   syncEngineMode() {
+    if(!allowed('local')||((State.settings.aiProvider||'gemini')!=='groq'&&!allowed('gemini'))){this.stopGroqMic();this.stopSpeech();void Bridge.aiMute(true).catch(()=>{});return;}
+    if(State.voiceCallActive){this.stopGroqMic();void Bridge.aiMute(true).catch(()=>{});return;}
+    if (this.localSpeechIsCheckIn && State.settings.proactiveTalkingEnabled !== true) this.stopSpeech();
     const provider = State.settings.aiProvider || "gemini";
+    if (provider !== this.voiceProvider) {
+      this.voiceProvider = provider; ++this.voiceGeneration;
+      this.cancelLocalSpeech?.();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    }
     const micOn = State.settings.micEnabled ?? true;
+    const mode = JSON.stringify([provider, micOn, State.settings.pushToTalkEnabled, State.settings.pushToTalkKey]);
+    if (mode !== this.voiceMode) {
+      this.voiceMode = mode; this.holdAudio.reset(); this.clearCapture();
+      // Ignore a key already held during a mode change. Require a fresh press.
+    }
 
     if (provider === "groq") {
       // Groq mode: start web mic for whisper transcription
@@ -231,7 +264,10 @@ class VoiceService {
     return this.currentAudioLevel;
   }
 
+  get speechGeneration(): number { return this.voiceGeneration; }
+
   start() {
+    if(State.voiceCallActive)return;
     if ((State.settings.aiProvider || "gemini") === "groq") {
       void this.startGroqMic();
     } else {
@@ -249,11 +285,32 @@ class VoiceService {
 
   // ── Groq Mode: Web Microphone VAD & Whisper ───────────────────────────────
 
+  private clearCapture() {
+    this.audioChunks = []; this.preRollBuffer = []; this.silenceFrames = 0; this.speakingFrames = 0;
+    this.currentAudioLevel = 0;
+  }
+
+  private onTalkKey(state: TalkKeyState) {
+    this.talkKeySuspended = state.suspended;
+    if (State.voiceCallActive || (State.settings.aiProvider || 'gemini') !== 'groq' || !State.settings.pushToTalkEnabled || State.settings.micEnabled === false || !state.enabled || !state.ready || state.suspended || state.error) {
+      this.holdAudio.reset(); this.clearCapture(); return;
+    }
+    if (state.held && !this.holdAudio.held) {
+      if (this._localSpeaking) this.stopSpeech();
+      this.clearCapture(); this.holdAudio.reset(true);
+    } else if (!state.held && this.holdAudio.held) {
+      this.audioChunks = this.holdAudio.release(); this.currentAudioLevel = 0;
+      if (this.audioChunks.length && !this.isProcessing) void this.handleSpeechComplete();
+    }
+  }
+
   private async startGroqMic() {
-    if (this.isListening) return;
+    if (State.voiceCallActive || this.isListening || this.micStarting || State.settings.micEnabled === false) return;
+    this.micStarting = true;
+    const generation = ++this.micGeneration;
 
     try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           sampleRate: 16000,
@@ -262,6 +319,8 @@ class VoiceService {
           autoGainControl: true,
         },
       });
+      if (State.voiceCallActive || generation !== this.micGeneration || State.settings.aiProvider !== 'groq' || !(State.settings.micEnabled ?? true)) { stream.getTracks().forEach(track => track.stop()); return; }
+      this.micStream = stream;
 
       this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
         sampleRate: 16000,
@@ -278,11 +337,11 @@ class VoiceService {
 
       this.processor.onaudioprocess = (e) => {
         if (this._localSpeaking || this.isProcessing) {
-          this.audioChunks = [];
-          this.silenceFrames = 0;
-          this.speakingFrames = 0;
+          this.clearCapture();
           return;
         }
+
+        if (this.talkKeySuspended || (State.settings.pushToTalkEnabled && !this.holdAudio.held)) { this.clearCapture(); return; }
 
         const inputData = e.inputBuffer.getChannelData(0);
         let sum = 0;
@@ -292,6 +351,8 @@ class VoiceService {
         const rms = Math.sqrt(sum / inputData.length);
         this.currentAudioLevel = Math.min(1, rms * 4);
         if (this.onGeometryUpdate) this.onGeometryUpdate();
+
+        if (State.settings.pushToTalkEnabled) { this.holdAudio.push(inputData); return; }
 
         const dynamicThreshold = Math.max(0.026, this.ambientNoiseRms * 2.4);
 
@@ -337,11 +398,14 @@ class VoiceService {
       console.log("[Voice] Groq Microphone VAD active and listening!");
     } catch (err) {
       console.warn("[Voice] Failed to start Groq microphone:", err);
-      this.isListening = false;
+      if (generation === this.micGeneration) this.stopGroqMic();
+    } finally {
+      if (generation === this.micGeneration) this.micStarting = false;
     }
   }
 
   private stopGroqMic() {
+    ++this.micGeneration; this.micStarting = false; this.holdAudio.reset();
     this.isListening = false;
     this.audioChunks = [];
     this.preRollBuffer = [];
@@ -365,6 +429,8 @@ class VoiceService {
   private async handleSpeechComplete() {
     if (this.isProcessing || this.audioChunks.length === 0) return;
     this.isProcessing = true;
+    this.backgroundSpeechStopped = false;
+    const generation = this.voiceGeneration;
 
     let totalLen = 0;
     for (const c of this.audioChunks) totalLen += c.length;
@@ -376,6 +442,7 @@ class VoiceService {
     }
 
     this.audioChunks = [];
+    this.preRollBuffer = [];
     this.silenceFrames = 0;
     this.speakingFrames = 0;
 
@@ -384,6 +451,7 @@ class VoiceService {
       const base64 = await blobToBase64(wavBlob);
 
       const res = await Bridge.transcribeAudio(base64);
+      if (generation !== this.voiceGeneration) return;
       if (!res.success || !res.text) return;
 
       const transcript = res.text.trim();
@@ -398,6 +466,7 @@ class VoiceService {
       State.notify();
 
       const reply = await Bridge.chatSend(transcript, null);
+      if (generation !== this.voiceGeneration) return;
       if (reply && reply.text) {
         State.chatHistory.push({ id: nextChatId++, role: "assistant", content: reply.text });
         State.stateOverride = "finished";
@@ -408,6 +477,7 @@ class VoiceService {
       }
     } catch (err) {
       console.error("[Voice] Groq transcription error:", err);
+      if (generation !== this.voiceGeneration) return;
       State.stateOverride = "error";
       Sound.play("error");
       setTimeout(() => {
@@ -415,14 +485,15 @@ class VoiceService {
         State.notify();
       }, 2000);
     } finally {
-      this.isProcessing = false;
+      if (generation === this.voiceGeneration) this.isProcessing = false;
     }
   }
 
   // ── Speech Output (Local TTS for Groq / WebSocket PCM for Gemini) ──────────
 
-  async speak(text: string) {
-    if (!text || !text.trim()) return;
+  async speak(text: string, checkIn = false) {
+    if (State.voiceCallActive || !text || !text.trim()) return;
+    if (!checkIn) this.backgroundSpeechStopped = false;
 
     const provider = State.settings.aiProvider || "gemini";
     if (provider === "gemini") {
@@ -434,6 +505,8 @@ class VoiceService {
     const cleanSpoken = cleanForSpeech(text);
     if (!cleanSpoken) return;
 
+    this.cancelLocalSpeech?.();
+    this.localSpeechIsCheckIn = checkIn;
     this._localSpeaking = true;
     State.stateOverride = "finished";
     State.notify();
@@ -461,25 +534,33 @@ class VoiceService {
 
         await new Promise<void>((resolve) => {
           let finished = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
           const done = () => {
             if (!finished) {
               finished = true;
-              this._localSpeaking = false;
-              State.stateOverride = null;
-              State.notify();
+              clearTimeout(timer);
+              if (this.cancelLocalSpeech === done) {
+                this.cancelLocalSpeech = null;
+                this._localSpeaking = false;
+                this.localSpeechIsCheckIn = false;
+                State.stateOverride = null;
+                State.notify();
+              }
               resolve();
             }
           };
+          this.cancelLocalSpeech = done;
 
           utter.onend = done;
           utter.onerror = done;
           window.speechSynthesis.speak(utter);
 
-          setTimeout(() => {
+          timer = setTimeout(() => {
             if (!finished) done();
           }, 20000);
         });
       } catch (e) {
+        this.cancelLocalSpeech?.();
         console.warn("[Local TTS Error]:", e);
         this._localSpeaking = false;
         State.stateOverride = null;
@@ -489,8 +570,16 @@ class VoiceService {
   }
 
   stopSpeech() {
+    this.localSpeechIsCheckIn = false;
+    this.backgroundSpeechStopped = true;
+    ++this.voiceGeneration;
+    this.isProcessing = false;
+    this.currentAudioLevel = 0;
+    this.holdAudio.reset();
+    this.clearCapture();
+    this.cancelLocalSpeech?.();
     this._localSpeaking = false;
-    this._engineState = "listening";
+    this._engineState = "idle";
     State.stateOverride = null;
 
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -506,6 +595,11 @@ class VoiceService {
       this._engineState === "speaking" ||
       State.stateOverride === "finished"
     );
+  }
+
+  async speakCheckIn(text: string) {
+    if (State.settings.proactiveTalkingEnabled !== true || this.backgroundSpeechStopped) return;
+    await this.speak(text, true);
   }
 
   isBusy(): boolean {

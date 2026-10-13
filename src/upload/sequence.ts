@@ -1,4 +1,5 @@
 // The drop choreography — port of UploadSequenceEngine.swift, itself a port of
+import { companionMouth } from "../companion/geometry";
 // design/prototype/upload-sequence.html.
 //
 // The engine is pure arithmetic: it owns no DOM and draws nothing. It takes the
@@ -514,13 +515,12 @@ class UploadSequence {
     const mc = Math.max(0, Math.min(f.morph, 1));
     const rx = R * (1.04 - 0.04 * mc);
     const ry = R * (0.97 - 0.03 * mc);
-    const mh = f.mouth * R * mc;
-    const mw = 2 * rx - 0.24 * R;
+    const mouth = companionMouth(R, mc, f.mouth);
     f.mouthRect = {
-      x: x + (-mw / 2) * sx,
-      y: y + f.hop + (-ry + 0.1 * R) * sy,
-      w: mw * sx,
-      h: mh * sy,
+      x: x + mouth.x * sx,
+      y: y + f.hop + mouth.y * sy,
+      w: mouth.w * sx,
+      h: mouth.h * sy,
     };
     return f;
   }

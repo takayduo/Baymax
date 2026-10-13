@@ -1,7 +1,7 @@
-// Island open/close FSM — port of IslandStateMachine.swift.
+// Baymax island navigation and visibility state.
 // No DOM, no Tauri: it only reports transitions.
 
-export type FsmState = "hidden" | "petit" | "home" | "coucou";
+export type FsmState = "hidden" | "petit" | "home" | "welcome";
 
 export class IslandStateMachine {
   state: FsmState = "hidden";
@@ -12,22 +12,17 @@ export class IslandStateMachine {
   homeToPetitDelay = 15;
   /** petit → hidden delay, seconds. */
   petitToHiddenDelay = 60;
-  /** coucou → petit once the greeting animation ends (no hover). */
-  greetAutoCollapseDelay = 0.6;
-  /** coucou → petit while the mouse hovers the greeting. */
-  greetHoverCollapseDelay = 10;
   /** An alert waiting for an answer stays open, even when the mouse leaves. */
   pinned = false;
 
   private petitHide: number | null = null;
   private homeCollapse: number | null = null;
-  private greetCollapse: number | null = null;
 
   // ── Inputs ──────────────────────────────────────────────────────────────────
 
   launch() {
     this.cancelTimers();
-    this.transition("coucou");
+    this.transition("welcome");
   }
 
   mouseEntered() {
@@ -42,8 +37,7 @@ export class IslandStateMachine {
       case "home":
         this.clear("homeCollapse");
         break;
-      case "coucou":
-        this.scheduleGreetCollapse(this.greetHoverCollapseDelay);
+      case "welcome":
         break;
     }
   }
@@ -58,8 +52,7 @@ export class IslandStateMachine {
       case "home":
         this.scheduleHomeCollapse();
         break;
-      case "coucou":
-        this.clear("greetCollapse");
+      case "welcome":
         this.transition("petit");
         break;
     }
@@ -71,9 +64,9 @@ export class IslandStateMachine {
     this.transition("home");
   }
 
-  /** Greeting animation finished (T.end). Doesn't override a running hover timer. */
+  /** Welcome complete; return to the current home view. */
   greetComplete() {
-    if (this.state !== "coucou") return;
+    if (this.state !== "welcome") return;
     this.cancelTimers();
     this.transition("home");
   }
@@ -122,15 +115,8 @@ export class IslandStateMachine {
     }, this.homeToPetitDelay * 1000);
   }
 
-  private scheduleGreetCollapse(delay: number) {
-    this.clear("greetCollapse");
-    this.greetCollapse = window.setTimeout(() => {
-      this.greetCollapse = null;
-      if (this.state === "coucou") this.transition("petit");
-    }, delay * 1000);
-  }
 
-  private clear(which: "petitHide" | "homeCollapse" | "greetCollapse") {
+  private clear(which: "petitHide" | "homeCollapse") {
     const id = this[which];
     if (id != null) window.clearTimeout(id);
     this[which] = null;
@@ -139,7 +125,6 @@ export class IslandStateMachine {
   cancelTimers() {
     this.clear("petitHide");
     this.clear("homeCollapse");
-    this.clear("greetCollapse");
   }
 
   private transition(next: FsmState) {

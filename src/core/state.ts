@@ -1,3 +1,4 @@
+import type { CompanionPreferences } from "../companion/appearance";
 // App state — mirror of AppState.swift (the parts the island needs).
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
@@ -84,6 +85,7 @@ export interface IntegrationInfo {
 import type { ScheduleItem, PartnerChatMessage } from "./bridge";
 
 export interface Settings {
+  companion?: CompanionPreferences;
   soundEnabled: boolean;
   soundVolume: number;
   autoCloseInterval: number;
@@ -122,7 +124,11 @@ export interface Settings {
   voiceName?: string;
   wakeWordEnabled?: boolean;
   pushToTalkEnabled?: boolean;
+  pushToTalkKey?: string;
   proactiveAudio?: boolean;
+  proactiveTalkingEnabled?: boolean;
+  musicHeadphonesEnabled?: boolean;
+  userInterests?: string;
   thinkingEnabled?: boolean;
   mediaResolution?: "default" | "low" | "medium" | "high";
   morningBriefEnabled?: boolean;
@@ -187,7 +193,11 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceName: "Charon",
   wakeWordEnabled: false,
   pushToTalkEnabled: false,
+  pushToTalkKey: "Control+Space",
   proactiveAudio: true,
+  proactiveTalkingEnabled: false,
+  musicHeadphonesEnabled: true,
+  userInterests: '',
   thinkingEnabled: false,
   mediaResolution: "medium",
   morningBriefEnabled: true,
@@ -274,6 +284,7 @@ class AppState {
   lastActivity = performance.now();
 
   settings: Settings = { ...DEFAULT_SETTINGS };
+  account: import('./account').AccountSnapshot | null = null;
 
   private listeners = new Set<Listener>();
 
@@ -359,7 +370,10 @@ class AppState {
     this.loadIntegrationTasks();
   }
 
+  voiceCallActive = false;
+
   defaultView(): IslandViewName {
+    if (this.voiceCallActive) return "couple-chat";
     return this.tasks.length === 0 ? "empty" : "overview";
   }
 }

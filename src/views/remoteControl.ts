@@ -4,6 +4,7 @@ import { ICONS } from './icons';
 import { Bridge } from '../core/bridge';
 import { Sound } from '../core/sound';
 import { State } from '../core/state';
+import {allowed,requireFeature} from '../core/account';
 import { startHostScreenSharing, stopHostScreenSharing } from '../remote/hostStream';
 import type { ViewActions, ViewHost } from './views';
 
@@ -46,10 +47,11 @@ export function buildRemoteControl(_actions: ViewActions): ViewHost {
       lastStatus = status; error = '';
     }
     const partner = partnerName();
-    const key = JSON.stringify([status, partner, State.partnerOnline, State.remoteRequesterName, busy, error, screens, loadingScreens]);
+    const key = JSON.stringify([allowed('pcControl'),status, partner, State.partnerOnline, State.remoteRequesterName, busy, error, screens, loadingScreens]);
     if (renderedKey === key) return;
     renderedKey = key;
     clear(content);
+    if(!allowed('pcControl')){content.append(h('div',{class:'remote-row'},h('div',{class:'remote-icon'},svg(ICONS.monitor,21)),h('div',{class:'remote-copy'},h('h2',{text:'Remote PC Control'}),h('p',{text:'Connect with your partner’s permission. Included in Pro & Duo.'})),h('button',{class:'btn glass',text:'Explore plans',onclick:()=>requireFeature('pcControl')})));return;}
     const title = h('h2');
     const presence = h('span', { class: `remote-presence${State.partnerOnline ? ' online' : ''}`, text: State.partnerOnline ? 'Online' : 'Offline' });
     const subtitle = h('p');

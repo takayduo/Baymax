@@ -46,6 +46,16 @@ _VK = {
     "space": 0x20, "f8": 0x77, "f9": 0x78, "f10": 0x79,
     "capslock": 0x14, "insert": 0x2D,
 }
+_VK.update({chr(code).lower(): code for code in range(65, 91)})
+_VK.update({f"f{i}": 111 + i for i in range(1, 13)})
+_VK["pause"] = 19
+
+
+def configured_chord():
+    from memory.config_manager import load_api_keys
+    value = load_api_keys().get("push_to_talk_key", "Control+Space")
+    parts = str(value).lower().replace("control", "ctrl").replace("key", "").split("+")
+    return tuple(parts) if parts and all(p in _VK for p in parts) else DEFAULT_CHORD
 
 # Qt key sequence text for the same chord, used by the windowed fallback.
 _QT_NAME = {"ctrl": "Ctrl", "shift": "Shift", "alt": "Alt", "space": "Space",
@@ -58,14 +68,14 @@ _POLL_HZ = 30.0
 _DEBOUNCE_S = 0.06
 
 
-def chord_label(chord=DEFAULT_CHORD) -> str:
+def chord_label(chord=None) -> str:
     """Human-readable name of the chord, for the UI and the logs."""
-    return "+".join(_QT_NAME.get(k, k.title()) for k in chord)
+    return "+".join(_QT_NAME.get(k, k.title()) for k in (chord or configured_chord()))
 
 
-def qt_sequence(chord=DEFAULT_CHORD) -> str:
+def qt_sequence(chord=None) -> str:
     """The same chord as a QKeySequence string."""
-    return "+".join(_QT_NAME.get(k, k.title()) for k in chord)
+    return chord_label(chord)
 
 
 class PushToTalk:

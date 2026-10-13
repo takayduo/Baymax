@@ -1,7 +1,9 @@
+import {allowed as hasFeature,openPlans} from '../core/account';
 // Baymax — Productivity & Focus Workspace View (Distrack Inside Mochi)
 import { h } from "./dom";
 import { State } from "../core/state";
 import { assistantName } from "../core/branding";
+import { companionIconDataURL } from "../companion/nativeIcon";
 import type { ViewActions, ViewHost } from "./views";
 
 export function buildProductivity(_actions: ViewActions): ViewHost {
@@ -11,7 +13,7 @@ export function buildProductivity(_actions: ViewActions): ViewHost {
     : "http://localhost:3000";
 
   const iframe = h("iframe", {
-    src: iframeSrc,
+    src: "about:blank",
     class: "productivity-iframe",
     style:
       "width: 100%; height: 100%; border: 0; border-radius: 14px; background: #0A0A0A; display: block; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);",
@@ -36,11 +38,14 @@ export function buildProductivity(_actions: ViewActions): ViewHost {
     api?.[event]?.((data: any) => send({ type: 'baymax:event', event, data }));
   }
   let sentName = "";
+  let sentIcon = "";
   function syncIframeState() {
     const name = assistantName(State.settings.assistantName);
-    if (name !== sentName) {
-      send({ type: 'baymax:brand', assistantName: name });
+    const icon = companionIconDataURL();
+    if (name !== sentName || icon !== sentIcon) {
+      send({ type: 'baymax:brand', assistantName: name, companionIcon: icon });
       sentName = name;
+      sentIcon = icon;
     }
   }
   iframe.addEventListener('load', () => { sentName = ''; syncIframeState(); });
@@ -56,10 +61,15 @@ export function buildProductivity(_actions: ViewActions): ViewHost {
   );
 
   const el = h("div", { class: "view productivity-view" }, container);
+  const locked=h('div',{class:'feature-preview'},h('h2',{text:'A little more focus'}),h('p',{text:'Productivity, Insights and focus tools are included in Pro and Duo.'}),h('button',{class:'btn glass',text:'Upgrade Plan',onclick:()=>openPlans()}));container.append(locked);
 
   return {
     el,
     sync() {
+      const permitted=hasFeature('productivity');
+      if(permitted&&iframe.getAttribute('src')!==iframeSrc)iframe.src=iframeSrc;
+      if(!permitted&&iframe.getAttribute('src')!=='about:blank')iframe.src='about:blank';
+      iframe.style.display=permitted?'block':'none';locked.hidden=permitted;
       syncIframeState();
     },
   };

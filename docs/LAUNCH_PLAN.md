@@ -1,6 +1,8 @@
 # Baymax launch plan
 
-Updated 9 October 2026. Decisions from the owner: India first, international expansion later; the existing **Groq** integration for free chat; **bring your own API keys on every plan**. This is an implementation and launch plan. The central account service, Google account onboarding, billing and paid entitlements described here are **not deployed or activated in the current desktop build**.
+**14 October 2026 implementation update:** the owner's latest workflow restores **Remote PC Control to Pro/Duo** (explicit partner permission remains mandatory), adds original waving onboarding, direct authenticated `profiles` upsert, free tab navigation, and a dedicated Plans & Membership page. Blank Razorpay public key selects a server-backed **365-day beta membership**; the private server beta flag can disable new grants. The owner-approved monthly UI defaults are ₹199 Pro and ₹349 Duo, subject to configured provider prices. These decisions supersede conflicting earlier PC/pricing/onboarding wording below. Desktop code, versioned SQL and Edge Functions now exist locally; deployment and real provider acceptance testing remain separate. Follow [OWNER_GUIDE.md](OWNER_GUIDE.md) for setup and [RELEASE_STATUS.md](../RELEASE_STATUS.md) for measured validation.
+
+Updated 13 October 2026. Decisions from the owner: India first, international expansion later; the existing **Groq** integration for free chat; **bring your own API keys on every plan**; PC control removed from the launch scope; **Music Player solo playback is Free, while Listen Together (joining each other's session) is Pro/Duo**. This is the active implementation specification to build into the desktop app, Supabase SQL/Edge Functions, and billing adapter.
 
 ## Product and pricing structure
 
@@ -9,14 +11,15 @@ Updated 9 October 2026. Decisions from the owner: India first, international exp
 | Google account and unique username | Required | Required | Required for both people |
 | Groq chat using the user's key | Yes | Yes | Yes, separate keys |
 | Task manager | Yes, local-first | Yes | Yes |
+| Music player (solo playback & local playlists) | Yes (solo only) | Yes | Yes |
+| Listen Together (join partner's live music session) | No | Yes | Yes for two assigned users |
 | Partner messages and shared tasks | Own Supabase project | Baymax Cloud or own project | Baymax Cloud or own project |
 | Gemini Live, screen understanding | No | Yes | Yes for two assigned users |
-| AI PC control and partner remote control | No | Yes, with permission | Yes, with permission |
 | Productivity, tracking, Insights and focus management | No | Yes | Yes |
 | Hosted content storage/sync | No | Yes | Yes for both seats |
 | AI provider usage included | No | No | No |
 
-The free central account/username registry is still a Baymax-hosted service. “No Baymax Cloud on Free” means **no hosted conversations, tasks, files or productivity data**, not “no server cost.” Authentication, invitations, abuse prevention, email delivery, backups and bandwidth cost money. Local tasks and Groq chat should work before the user sets up partner sync. Do not force a database tutorial before the user can try these local features.
+The free central account/username registry is still a Baymax-hosted service. “No Baymax Cloud on Free” means **no hosted conversations, tasks, files or productivity data**, not “no server cost.” Authentication, invitations, abuse prevention, email delivery, backups and bandwidth cost money. Local tasks, solo music playback, and Groq chat should work before the user sets up partner sync. Do not force a database tutorial before the user can try these local features.
 
 Choose INR monthly and annual prices only after measuring hosting, payment charges, support and refunds. Do not carry forward the illustrative $3.99/$6.99 prices as a pricing decision. Display the total payable amount, taxes, renewal date, cancellation terms, and that AI charges belong to the API provider. Avoid “unlimited AI” claims. Free refers to Baymax's feature fee, not a guarantee of free Groq usage.
 
@@ -26,8 +29,8 @@ Choose INR monthly and annual prices only after measuring hosting, payment charg
 2. Continue with Google in the system browser. Use Supabase Auth, PKCE, state validation, a narrowly allowed callback, single-use codes, and an expiring login attempt. Store refresh tokens with Windows DPAPI. Never put a Google client secret or a Supabase service-role key in the EXE.
 3. Reserve a username transactionally: lowercase, 3–24 ASCII letters/numbers/underscores, a database unique constraint, reserved-name list, and a rate limit. Store the stable Auth UUID as identity; never use a mutable username as a foreign key.
 4. Show **Free**, **Pro — just me**, and **Duo — both of us**, with an equally clear “Continue free” action.
-5. Free enters the app and can later choose “Connect your database” for partner features. A verified paid checkout provisions Cloud automatically.
-6. Request microphone, screen capture, PC control and optional Google Drive access when those features are used. Signing into Baymax does not grant Drive access or paid Gemini usage.
+5. Free enters the app and can later choose “Connect your database” for partner features. A verified paid checkout (or an owner-granted comp subscription in Supabase) provisions Cloud automatically.
+6. Request microphone, screen capture and optional Google Drive access when those features are used. Signing into Baymax does not grant Drive access or paid Gemini usage.
 
 Supabase documents Google provider setup and the PKCE code exchange. Configure the Google OAuth client secret only in the Supabase dashboard/server, with the project callback URL; the desktop receives a public project URL/key. [Google provider](https://supabase.com/docs/guides/auth/social-login/auth-google), [PKCE](https://supabase.com/docs/guides/auth/sessions/pkce-flow).
 
@@ -37,18 +40,17 @@ An existing signed-in user can keep local features available offline. Require an
 
 **Pro:** each person owns their own subscription. Search an exact username, show that account's public display name, then send an invitation. Once accepted, create one relationship and configure the eligible shared backend. Billing and relationships are separate records.
 
-**Duo:** the buyer selects an existing username before checkout. The server resolves it to an immutable user ID and attaches it to a checkout intent. A verified payment gives the purchaser a seat and assigns/reserves the second seat. Send the partner an invitation. Acceptance creates the relationship and provisions shared data. Paying for a person must not expose their messages, start monitoring them, grant remote control or pair them without their acceptance.
+**Duo:** the buyer selects an existing username before checkout. The server resolves it to an immutable user ID and attaches it to a checkout intent. A verified payment gives the purchaser a seat and assigns/reserves the second seat. Send the partner an invitation. Acceptance creates the relationship and provisions shared data. Paying for a person must not expose their messages, start monitoring them, or pair them without their acceptance.
 
 If the partner has no account, create a cryptographically random, single-use invitation with an expiry; store only its hash. An optional verified-email restriction can bind redemption. After Google signup, the recipient reviews and accepts it. Do not silently select an account merely because an email string matches an unverified form field. A short readable “VIP-8492” code is not adequate as the sole secret.
 
 Rules to implement before launch:
 
 - One active relationship per account for v1; invitations expire, can be declined, and respect blocks. Accepting concurrently must not create duplicate pairs.
-- Pro + Pro can use Cloud. Duo's two assigned seats can use Cloud. Free + paid can use the custom database, or the paying user can upgrade to Duo. A single seat must not create an accidental unlimited free Cloud invitation route.
+- Pro + Pro can use Cloud and Listen Together. Duo's two assigned seats can use Cloud and Listen Together. Free users can play music solo, and Free + paid pairs can use a custom database for chat/tasks (or the paying user can upgrade to Duo to unlock Cloud and Listen Together for both). A single seat must not create an accidental unlimited free Cloud invitation route.
 - An already subscribed partner sees the conflict before Duo checkout. Do not sell overlapping seats without explaining the overlap; don't silently cancel their personal subscription.
-- Ending a relationship revokes shared access and pending remote sessions. It does not silently cancel a separately owned subscription. Seat reassignment needs a stated cooldown and confirmation; no transfer of the former partner's private data.
+- Ending a relationship revokes shared access and active Listen Together sessions. It does not silently cancel a separately owned subscription. Seat reassignment needs a stated cooldown and confirmation; no transfer of the former partner's private data.
 - Refunds, failed renewals and chargebacks change entitlements through backend events. Give a documented export/read-only window for hosted content after expiry; never silently switch to an empty database or delete shared content immediately.
-- Each PC-control session requires a fresh approval on the controlled PC. A relationship or paid seat is not remote-control consent.
 
 ## Supabase architecture
 
@@ -69,7 +71,7 @@ Suggested tables and invariants:
 - `partner_invites(id, sender_id, recipient_id, token_hash, status, expires_at)` and `blocks(blocker_id, blocked_id)`: participants only, rate-limited creation.
 - `pairs(id, status, backend_kind, backend_id)` plus `pair_members(pair_id, user_id)`: uniqueness/transactions enforce one current pair per person.
 - `checkout_intents(id, purchaser_id, recipient_id, provider, plan_code, provider_checkout_id, status)`: created by the server before redirecting to checkout.
-- `subscriptions(id, purchaser_id, provider_subscription_id unique, state, period_end)`; `seats(subscription_id, user_id, state)`; `payment_events(provider, event_id, received_at, processed_at)` with a unique provider/event pair. Server-only mutation.
+- `subscriptions(id, purchaser_id, provider, provider_subscription_id unique, plan_code, state, period_end)`; `seats(subscription_id, user_id, state)`; `payment_events(provider, event_id, received_at, processed_at)` with a unique provider/event pair. Server-only / owner-dashboard mutation. Supports `provider = 'manual_grant'` so the owner can grant free **Pro** or **Duo** subscriptions directly in the Supabase Table Editor or SQL Editor for friends, family, and beta testers without requiring a Razorpay payment.
 - `custom_backends(id, owner_id, endpoint, public_key, template_version, status)`: public connection locator only, disclosed only to accepted pair members. No database password or service-role credential here.
 - `messages(pair_id, id, sender_id, body, created_at)` and `tasks(pair_id, id, updated_by, revision, deleted_at, ...)`: UUIDs, pagination and idempotent writes; keep the existing outbox and deletion-tombstone behavior.
 
@@ -88,7 +90,7 @@ For a supportable free v1, provide a versioned template with tables and a small 
 5. Use cursor-based polling for this v1 adapter. Do not promise native cross-project Realtime unless a supported authentication integration has actually been implemented and tested.
 6. Make clear that the host administers the database and can access its stored content. The partner must agree before sending data. If end-to-end encryption is desired, design key exchange/recovery separately; Supabase alone is not E2EE.
 
-The existing app currently uses **separate Supabase Auth accounts in the same custom project**, with explicit `baymax_pairs` membership and private Realtime. Keep that functional until the adapter is ready; do not deploy the new registry SQL over the current project blindly.
+Private testing update, 12 October 2026: the current desktop build uses **open Supabase project mode**, explicitly requested by the owner: URL + anon key + channel, Me/Her role IDs, public Realtime and open table policies. This is not account authentication. Before public launch, replace it with protected identity and pair-scoped authorization; do not deploy the proposed registry SQL over the testing project blindly.
 
 Paid users may select “Use my database” in Settings. Run connection/schema/auth tests first, export a snapshot, reconcile pending writes and IDs, migrate with a checkpoint, and switch both accepted partners together. Preserve the old copy until verification passes. Provide an explicit rollback; never broadcast one partner's new backend configuration without the other's consent.
 
@@ -99,8 +101,8 @@ Paid users may select “Use my database” in Settings. Run connection/schema/a
 3. Implement versioned registry/content migrations from the schema above, deploy them to staging, and verify RLS as unrelated user A, user B, accepted partner C, anonymous caller and expired subscriber. Service-role credentials stay in Edge Functions only.
 4. Deploy server endpoints for username reservation/lookup, invite creation/acceptance/revocation, checkout creation, webhook handling, entitlement lookup, and data export/deletion. Apply authentication, rate limits and request-body validation to each.
 5. Create Razorpay test plans for Pro and Duo. Put API secret and webhook secret in Supabase secrets; the public app contains only public configuration. Configure signed webhooks and monitor retry failures.
-6. Build onboarding and an Account & plan settings page backed by these real endpoints. Enforce Gemini/PC/productivity capabilities in Electron IPC and the Python action dispatcher as well as the UI. Cloud access is always enforced on the server. A BYOK desktop client can be modified by its owner, so local checks alone cannot be unbreakable licensing.
-7. Publish the custom-project template and its upgrades separately. Test two clean Windows accounts, invite rejection/expiry, two simultaneous invites, paid/free pairs, queued offline messages, duplicate/out-of-order webhooks, refunds, account deletion and database migration.
+6. Build onboarding and an Account & plan settings page backed by these real endpoints. Enforce Gemini Live, Listen Together, and productivity capabilities in Electron IPC and the Python action dispatcher as well as the UI. Cloud access is always enforced on the server. A BYOK desktop client can be modified by its owner, so local checks alone cannot be unbreakable licensing.
+7. Publish the custom-project template and its upgrades separately. Test two clean Windows accounts, invite rejection/expiry, two simultaneous invites, paid/free pairs, manual friend comp grants (`manual_grant`), queued offline messages, duplicate/out-of-order webhooks, refunds, account deletion and database migration.
 8. Only then change to live payment keys and enable mandatory account onboarding. The current beta remains usable without pretending that a local flag is a paid subscription.
 
 ## Payment provider recommendation
@@ -119,7 +121,7 @@ Worldwide distribution is possible in principle, but this document is not legal 
 
 India has published the DPDP Rules 2025 and an enforcement timeline; requirements have phased commencement, so check the provisions applicable on the actual launch date rather than assuming every rule is already effective. [MeitY rules and timeline](https://www.meity.gov.in/documents/act-and-policies/digital-personal-data-protection-rules-2025-gDOxUjMtQWa?pageTitle=Digit).
 
-Also review the Baymax name/mascot and rights to all inherited artwork, sounds, code and fonts before commercial distribution. A repository's MIT label does not establish the rights to third-party branding/assets. Publish privacy, terms, cancellation/refund and support pages; explain what screen/PC access can do and collect permission at the point of use. Begin with an adult-only pilot if you are not implementing a minors/parental-consent flow.
+Also review the Baymax name/mascot and rights to all inherited artwork, sounds, code and fonts before commercial distribution. A repository's MIT label does not establish the rights to third-party branding/assets. Publish privacy, terms, cancellation/refund and support pages; explain what microphone and screen capture access can do and collect permission at the point of use. Begin with an adult-only pilot if you are not implementing a minors/parental-consent flow.
 
 ## Release boundary
 

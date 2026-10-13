@@ -1,6 +1,6 @@
 {
   "name": "baymax",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Baymax desktop companion and productivity app",
   "main": "electron/main.js",
   "scripts": {
@@ -10,10 +10,12 @@
     "start": "npm run build && electron .",
     "app": "electron .",
     "build:main": "vite build",
-    "test": "node --test tests/regressions.cjs",
+    "test": "node --test tests/regressions.cjs tests/account.cjs tests/cloud-sql.cjs",
+    "test:cloud": "deno task --config supabase/deno.json check",
     "typecheck": "tsc --noEmit && tsc --noEmit -p productivity/tsconfig.json",
     "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-local.ps1",
-    "package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-win.ps1"
+    "package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-win.ps1",
+    "dist:win": "npm run package:win"
   },
   "keywords": [
     "creator",
@@ -25,6 +27,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.9",
+    "deno": "^2.9.6",
     "electron": "^44.5.1",
     "electron-builder": "26.8.1",
     "esbuild": "^0.28.2",

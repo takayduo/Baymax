@@ -3,7 +3,7 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import brandIcon from '../assets/icon.png';
+import { useCompanionIcon } from '../companion';
 
 function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
@@ -17,11 +17,12 @@ const navItems = [
 ];
 
 export default function Sidebar() {
+  const brandIcon = useCompanionIcon();
   return (
     <nav className="hidden lg:flex flex-col relative lg:static h-full py-8 bg-surface-dim border-r border-outline-variant z-40 w-24 flex-shrink-0 items-center justify-start gap-10">
       <div className="flex flex-col items-center justify-center">
         <div className="w-12 h-12 flex items-center justify-center rounded-sm overflow-hidden">
-          <img src={brandIcon} className="w-full h-full object-contain" alt="Distrack Logo" />
+          <img src={brandIcon} className="w-full h-full object-contain" alt="Your companion" />
         </div>
       </div>
       <div className="flex flex-col w-full px-2 gap-5 items-center">

@@ -1,6 +1,12 @@
 // The embedded page gets only the Productivity RPC surface. It never receives
 // the parent's general Electron API, credentials, filesystem or remote input.
 import { assistantName, setAssistantName } from './branding';
+import { setCompanionIcon } from './companion';
+const native = (window as any).electronAPI;
+if (native?.getCompanionIcon) {
+  void native.getCompanionIcon().then(setCompanionIcon).catch(() => {});
+  native.onCompanionIconChanged?.(setCompanionIcon);
+}
 const methods = ['getTrackedApps','getDailyTotals','getAppCategories','updateAppCategory','scanRunningApps','scanAllApps','getKnownApps','addCustomApp','getFocusSessions','startFocusSession','stopFocusSession','getFocusActive','getBlocklist','toggleBlockApp','setBlocklist','getSettings','updateSettings','clearData','isOnboarded','setOnboarded','getUserProfile','setUserProfile','setAppHidden','getTrackingHealth'];
 const events = ['onTrackingUpdate','onFocusStateChanged','onAppBlocked','onAppCloseWarning','onAppCloseWarningCancelled','onAppBlockFailedPrivilege','onFocusDistractionWarning'];
 if (!window.electronAPI && window.parent !== window) {
@@ -22,7 +28,7 @@ if (!window.electronAPI && window.parent !== window) {
   window.addEventListener('message', e => {
     if (e.source !== window.parent || e.origin !== parentOrigin) return;
     const data = e.data;
-    if (data?.type === 'baymax:brand') { setAssistantName(data.assistantName); return; }
+    if (data?.type === 'baymax:brand') { setAssistantName(data.assistantName); setCompanionIcon(data.companionIcon); return; }
     if (data?.type === 'baymax:rpc-result') {
       const p = pending.get(data.id); if (!p) return;
       clearTimeout(p.timer); pending.delete(data.id);

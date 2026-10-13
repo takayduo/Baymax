@@ -35,6 +35,28 @@ def _title_hash(title: str) -> str:
     return hashlib.md5(title.encode("utf-8", errors="ignore")).hexdigest()[:12]
 
 
+_INTEREST_STOP_WORDS = set("i im am a an the and or of to in on for my me what how why with about into like likes love interested interests news topics updates work working care person user want follow latest things do doing enjoy really also".split())
+
+
+def interest_words(text: str) -> set[str]:
+    return {word for word in re.findall(r"[^\W_]+", str(text).casefold())
+            if len(word) >= 3 and word not in _INTEREST_STOP_WORDS}
+
+
+def matches_interests(text: str, interests: str) -> bool:
+    allowed = interest_words(interests)
+    return bool(allowed and allowed.intersection(interest_words(text)))
+
+
+def interest_topics(interests: str) -> list[str]:
+    topics = []
+    for value in re.split(r"[,;\n.!?]+", str(interests)):
+        topic = value.strip()[:120]
+        if interest_words(topic) and not _is_blocked(topic) and topic not in topics:
+            topics.append(topic)
+    return topics[:8]
+
+
 # ── Memory I/O ─────────────────────────────────────────────────────────────────
 
 def _load() -> dict:
@@ -43,15 +65,19 @@ def _load() -> dict:
     return data if isinstance(data, dict) else {}
 
 def _save(monitors: dict) -> None:
-    from memory.memory_manager import load_memory, MEMORY_PATH, _lock
-    memory = load_memory()
-    memory["monitors"] = monitors
+    from memory.memory_manager import MEMORY_PATH, _lock
     with _lock:
+        # A cancelled news search can finish on its worker thread after the user
+        # edits interests. Merge into the latest memory while holding the lock.
+        memory = json.loads(MEMORY_PATH.read_text(encoding='utf-8')) if MEMORY_PATH.exists() else {}
+        memory['monitors'] = monitors
         MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
+        temporary = MEMORY_PATH.with_suffix('.monitors.tmp')
+        temporary.write_text(
             json.dumps(memory, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        temporary.replace(MEMORY_PATH)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -62,6 +88,9 @@ def add_monitor(topic: str) -> str:
         return "Please specify a topic to monitor."
     if _is_blocked(topic):
         return "I don't monitor crypto or financial topics."
+    from memory.config_manager import get_user_interests
+    if not matches_interests(topic, get_user_interests()):
+        return "Add this topic to My Interests & News Topics in Settings before monitoring it."
     monitors = _load()
     slug = _slug(topic)
     if slug in monitors:
@@ -99,19 +128,27 @@ def list_monitors() -> list[str]:
     return [v.get("topic", k) for k, v in _load().items()]
 
 
-def check_all() -> list[str]:
+def check_all(interests: str | None = None) -> list[str]:
     """
     Run all pending topic checks (once per day per topic).
     Returns a list of [MONITOR_ALERT] strings — empty if nothing new.
     """
     from actions.web_search import _ddg_news
 
+    if interests is None:
+        from memory.config_manager import get_user_interests
+        interests = get_user_interests()
+    if not interest_words(interests):
+        return []
     monitors = _load()
+    for topic in interest_topics(interests):
+        monitors.setdefault(_slug(topic), {"topic": topic, "last_check": "", "last_hash": ""})
     if not monitors:
         return []
 
     today   = datetime.now().strftime("%Y-%m-%d")
     alerts  = []
+    seen_headlines = set()
     changed = False
 
     for slug, data in monitors.items():
@@ -119,8 +156,12 @@ def check_all() -> list[str]:
             continue                     # already checked today
 
         topic = data.get("topic", slug)
+        if _is_blocked(topic) or not matches_interests(topic, interests):
+            continue
         try:
             results = _ddg_news(topic, max_results=5)
+            results = [item for item in (results or []) if matches_interests(
+                item.get('title', '') + ' ' + item.get('snippet', ''), interests)]
             if not results:
                 monitors[slug]["last_check"] = today
                 changed = True
@@ -139,6 +180,9 @@ def check_all() -> list[str]:
                 continue                 # same headline as last check — no alert
 
             monitors[slug]["last_hash"] = h
+            if h in seen_headlines:
+                continue
+            seen_headlines.add(h)
 
             snippet = top.get("snippet", "")[:150]
             source  = top.get("source", "")

@@ -83,6 +83,24 @@ def _all_entries(memory: dict) -> list[tuple]:
     return entries
 
 
+def sync_user_interests(value: str) -> None:
+    """Update the settings-owned memory field without touching learned memories."""
+    value = str(value or "").strip()[:2000]
+    with _lock:
+        memory = json.loads(MEMORY_PATH.read_text(encoding="utf-8")) if MEMORY_PATH.exists() else _empty_memory()
+        preferences = memory.get("preferences")
+        if not isinstance(preferences, dict):
+            preferences = memory['preferences'] = {}
+        existing = preferences.get('user_interests')
+        if isinstance(existing, dict) and existing.get("value") == value:
+            return
+        preferences["user_interests"] = {"value": value, "updated": datetime.now().strftime("%Y-%m-%d")}
+        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = MEMORY_PATH.with_suffix('.interests.tmp')
+        temporary.write_text(json.dumps(memory, indent=2, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(MEMORY_PATH)
+
+
 # Set by main.py so a trim can reach the activity log. Deleting something a
 # person told you and mentioning it only on stdout is how a memory loses trust.
 _trim_notifier = None

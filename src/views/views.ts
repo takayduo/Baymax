@@ -13,13 +13,18 @@ import { buildChoose, buildPartnerFile, buildUpload, buildUploading } from "./up
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import { buildSchedule } from "./schedule";
 import { buildCoupleChat } from "./coupleChat";
-import { buildRemoteControl } from "./remoteControl";
+
 import { buildProductivity } from "./productivity";
 import { Bridge } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { mountSettings } from "../settings/panel";
 import { assistantName } from "../core/branding";
 import { VoiceManager } from "../core/voice";
+import {buildRemoteControl} from './remoteControl';
+import {buildOnboarding} from './onboarding';
+import {requireFeature} from '../core/account';
+import { Music } from '../music/player';
+import { buildMusic, musicControls, partnerMusicPill } from './music';
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -108,16 +113,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
     unreadBadge
   );
 
-  const tabRemote = h(
-    "button",
-    {
-      class: "tab",
-      title: `${assistantName(State.settings.assistantName)} · Partner PC`,
-      onclick: () => go("remote-control"),
-    },
-    svg(ICONS.monitor, 13)
-  );
-
+  const tabPC = h("button", {class:"tab",title:"Remote PC Control",onclick:()=>go("remote-control")},svg(ICONS.monitor,13));
   const tabSched = h("button", { class: "tab", title: "Schedule", onclick: () => go("schedule") }, svg(ICONS.calendar, 13));
   const tabProductivity = h(
     "button",
@@ -135,11 +131,13 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
 
   function go(v: IslandViewName) {
+    if(v==='remote-control'&&!requireFeature('pcControl'))return;
+    if(v==='productivity'&&!requireFeature('productivity'))return;
     actions.blip();
     actions.setView(v);
   }
 
-  const labeledTabs: Array<[HTMLElement, string]> = [[tabHome, "Home"], [tabChat, "Chat"], [tabCouple, "Partner"], [tabRemote, "PC"], [tabSched, "Tasks"], [tabProductivity, "Focus"]];
+  const labeledTabs: Array<[HTMLElement, string]> = [[tabHome, "Home"], [tabChat, "Chat"], [tabCouple, "Partner"], [tabPC, "PC Control"], [tabSched, "Tasks"], [tabProductivity, "Focus"]];
   for (const [tab, label] of labeledTabs) {
     tab.append(h("span", { class: "tab-label", text: label }));
     tab.setAttribute("aria-label", label);
@@ -148,7 +146,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "nav",
     { id: "header", "aria-label": "Main navigation" },
-    h("div", { class: "tabs" }, tabHome, tabChat, tabCouple, tabRemote, tabSched, tabProductivity, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabChat, tabCouple, tabPC, tabSched, tabProductivity, tabDrop),
     h("div", { class: "header-actions" }, micBtn, gearBtn, soundBtn),
   );
 
@@ -161,23 +159,14 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabCouple.classList.toggle("on", v === "couple-chat");
-      tabRemote.classList.toggle("on", v === "remote-control");
       const isMe = (State.settings.userRole || "me") === "me";
       const rawPartner = isMe ? (State.settings.partnerName || "Partner") : (State.settings.userName || "You");
       const partnerName = (rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1)) || "Partner";
       tabCouple.title = `Chat with ${partnerName}`;
-      tabRemote.title = `Remote Co-Pilot — ${partnerName} 🖥️`;
+      tabPC.classList.toggle("on",v==="remote-control");
       tabSched.classList.toggle("on", v === "schedule");
       tabProductivity.classList.toggle("on", v === "productivity");
       tabDrop.classList.toggle("on", v === "upload");
-
-      if (State.remoteAccessStatus === "incoming_request") {
-        tabRemote.style.color = "#3b82f6";
-      } else if (State.remoteAccessStatus === "active_host" || State.remoteAccessStatus === "active_viewer") {
-        tabRemote.style.color = "#22c55e";
-      } else {
-        tabRemote.style.color = "";
-      }
 
       if (State.unreadPartnerChatCount > 0) {
         unreadBadge.style.display = "inline-block";
@@ -235,9 +224,12 @@ function renderCreatorHomeCard(actions: ViewActions): HTMLElement {
 
   const actionsRow = h("div", { class: "home-actions" },
     btn("New task", "glass", () => actions.setView("schedule")),
-    btn("Chat", "glass", () => actions.setView("prompt"))
+    btn("Chat", "glass", () => actions.setView("prompt")),
+    musicControls(() => actions.setView('music'))
   );
 
+  const partnerMusic=partnerMusicPill();
+  if(!partnerMusic.hidden){taskTitle.replaceChildren(partnerMusic);taskTitle.title='Partner music';}
   return h("div", { class: "home-summary" }, headerRow, taskTitle, actionsRow);
 }
 
@@ -376,7 +368,7 @@ function buildOverview(actions: ViewActions): ViewHost {
           leftBody.append(renderIntegrationCard(task, hooks));
         }
       } else {
-        const homeKey = JSON.stringify([State.schedule, State.settings.userRole, State.settings.userName, State.settings.partnerName, State.settings.assistantName]);
+        const homeKey = JSON.stringify([State.schedule, State.settings.userRole, State.settings.userName, State.settings.partnerName, State.settings.assistantName, Music.playback.playing, Music.loading, Music.partnerTitle(), Music.peer.state]);
         if (mode !== "home" || cardKey !== homeKey) {
           mode = "home"; cardKey = homeKey;
           clear(leftBody);
@@ -621,7 +613,6 @@ function buildSettings(actions: ViewActions): ViewHost {
   const segButtons = [10, 15, 30].map((s) =>
     h("button", { onclick: () => actions.setAutoClose(s) }, `${s}s`),
   );
-  const claudeBadge = h("span", { class: "status-badge" });
   const apiBadge = h("span", { class: "status-badge" });
 
   const rows = h(
@@ -639,7 +630,6 @@ function buildSettings(actions: ViewActions): ViewHost {
     h(
       "div",
       { class: "settings-row", style: "gap:14px" },
-      claudeBadge,
       apiBadge,
       h("div", { class: "grow" }),
       h("button", {
@@ -670,11 +660,6 @@ function buildSettings(actions: ViewActions): ViewHost {
       volume.style.opacity = s.soundEnabled ? "1" : "0.4";
       autoLabel.textContent = `Auto-close · ${Math.round(s.autoCloseInterval)}s`;
       segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === [10, 15, 30][i]));
-      clear(claudeBadge);
-      claudeBadge.append(
-        dot(s.hooksInstalled ? "#22C55E" : "#F4505E", 6),
-        h("span", { text: "Claude Code" }),
-      );
       clear(apiBadge);
       const hasKey = s.aiProvider === "groq" ? !!s.groqApiKey : s.aiProvider === "openrouter" ? !!s.openrouterApiKey : !!s.geminiApiKey;
       apiBadge.append(dot(hasKey ? "#22C55E" : "#F4505E", 6), h("span", { text: hasKey ? "AI key saved" : "Add AI key" }));
@@ -701,6 +686,9 @@ export function buildViews(
   onChatHeightChange: () => void,
 ): Map<IslandViewName, ViewHost> {
   const map = new Map<IslandViewName, ViewHost>();
+  map.set('onboarding',buildOnboarding(actions));
+  map.set('remote-control',buildRemoteControl(actions));
+  map.set('music',buildMusic());
   map.set("overview", buildOverview(actions));
   map.set("empty", buildEmpty(actions));
   map.set("approval", buildApproval(actions));
@@ -725,7 +713,7 @@ export function buildViews(
   map.set("choose", buildChoose(actions));
   map.set("partner-file", buildPartnerFile(actions));
   map.set("couple-chat", buildCoupleChat(actions));
-  map.set("remote-control", buildRemoteControl(actions));
+
   map.set("productivity", buildProductivity(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
   map.set("mail", buildPlaceholder("Sending by email isn't in this version.", ""));

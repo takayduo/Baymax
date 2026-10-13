@@ -291,19 +291,21 @@ class AppBlocker {
 
   forceKillProcess(procName) {
     this.tick();
-    if (!this.isActive || this.phase !== 'work' || isProtectedProcess(procName)) return;
-    if (this.failedKills.has(procName)) return;
+    if (!this.isActive || this.phase !== 'work' || isProtectedProcess(procName) || this.failedKills.has(procName)) {
+      this.broadcaster('app-close-warning-cancelled', procName); return;
+    }
 
     execFile('taskkill.exe', ['/IM', `${procName}.exe`, '/F'], { windowsHide: true }, (err, stdout, stderr) => {
       this.pendingCloses.delete(procName);
 
       if (err) {
         // Suppress repeated attempts on unkillable processes
-        this.failedKills.add(procName);
+
         console.warn(`[Blocker] Could not kill ${procName}, marking unkillable:`, err.message);
 
         const errorMsg = (stderr || '').toLowerCase() + (err.message || '').toLowerCase();
         if (errorMsg.includes('access is denied') || errorMsg.includes('access denied')) {
+          this.failedKills.add(procName);
           const settings = this.store.get('settings', { notifications: true });
           if (settings.notifications && Notification.isSupported()) {
             try {
@@ -318,10 +320,11 @@ class AppBlocker {
           try {
             this.broadcaster('app-block-failed-privilege', procName);
           } catch (e) { /* ignore */ }
-        }
+        } else { this.broadcaster('app-close-warning-cancelled', procName); }
         return;
       }
 
+      this.broadcaster('app-blocked', procName);
       if (this.recentlyBlocked.has(procName)) return;
       this.recentlyBlocked.add(procName);
       setTimeout(() => this.recentlyBlocked.delete(procName), 30000);
@@ -344,9 +347,6 @@ class AppBlocker {
         }
       }
 
-      try {
-        this.broadcaster('app-blocked', procName);
-      } catch (e) { /* ignore */ }
     });
   }
 }

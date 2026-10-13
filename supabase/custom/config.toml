@@ -1,0 +1,3 @@
+project_id = "baymax-custom"
+[functions.custom-adapter]
+verify_jwt = false

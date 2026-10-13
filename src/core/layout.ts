@@ -5,7 +5,9 @@
 export type IslandMode = "hidden" | "compact" | "expanded";
 
 export type IslandViewName =
+  | "onboarding"
   | "overview"
+  | "music"
   | "empty"
   | "approval"
   | "question"
@@ -73,6 +75,8 @@ export const WAKE_STRIP_W = 240;
 export const WAKE_STRIP_H = 6;
 
 export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
+  onboarding: {height:510,botX:0,botY:0,botDiameter:0,agentMode:'none'},
+  music: {height:440,botX:59,botY:104,botDiameter:42,agentMode:'none'},
   overview: { height: 146, botX: 47, botY: null, botDiameter: 40, agentMode: "pills" },
   empty: { height: 220, botX: 70, botY: null, botDiameter: 62, agentMode: "none" },
   approval: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
@@ -86,13 +90,13 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   "partner-file": { height: 176, botX: 60, botY: 101, botDiameter: 52, agentMode: "column" },
   mail: { height: 240, botX: 56, botY: null, botDiameter: 46, agentMode: "column" },
   prompt: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
-  schedule: { height: 344, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
+  schedule: { height: 344, botX: 52, botY: null, botDiameter: 0, agentMode: "none" },
   searching: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   result: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
   note: { height: 160, botX: 60, botY: null, botDiameter: 50, agentMode: "column" },
   settings: { height: 188, botX: 54, botY: null, botDiameter: 46, agentMode: "none" },
   greeting: { height: 150, botX: 320, botY: 90, botDiameter: 0, agentMode: "none" },
-  "couple-chat": { height: 354, botX: 52, botY: null, botDiameter: 44, agentMode: "column" },
+  "couple-chat": { height: 354, botX: 40, botY: null, botDiameter: 0, agentMode: "none" },
   "remote-control": { height: 146, botX: 40, botY: null, botDiameter: 0, agentMode: "none" },
   preferences: { height: 580, botX: 42, botY: null, botDiameter: 0, agentMode: "none" },
   productivity: { height: 580, botX: 42, botY: null, botDiameter: 0, agentMode: "none" },
@@ -157,22 +161,23 @@ export function botPosition(
       return { cx: 40, cy: 16, diameter: 20, opacity: 1 };
     case "expanded": {
       const layout = VIEW_LAYOUTS[view];
+      const opacity = layout.botDiameter > 0 ? 1 : 0;
       if (view === "uploading") {
         return {
           cx: 36 + uploadProgress * 526,
           cy: layout.botY ?? 103,
           diameter: layout.botDiameter,
-          opacity: 1,
+          opacity,
         };
       }
       if (layout.botY != null) {
-        return { cx: layout.botX, cy: layout.botY, diameter: layout.botDiameter, opacity: 1 };
+        return { cx: layout.botX, cy: layout.botY, diameter: layout.botDiameter, opacity };
       }
       // Centre of the fixed 84 pt card (8 pt top inset + 34 pt header → content at y = 42)
       const headerBottom = 42;
       const cardH = 84;
       const cy = headerBottom + (islandH - headerBottom - cardH) / 2 + cardH / 2;
-      return { cx: layout.botX, cy, diameter: layout.botDiameter, opacity: 1 };
+      return { cx: layout.botX, cy, diameter: layout.botDiameter, opacity };
     }
   }
 }

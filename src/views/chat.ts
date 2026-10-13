@@ -38,55 +38,6 @@ function contextChip(label: string): HTMLElement {
   return chip;
 }
 
-function userProfileBadge(): HTMLElement {
-  const isMe = (State.settings.userRole || "me") === "me";
-  const myName = (State.settings.userName && State.settings.userName !== "Me" ? State.settings.userName : "You");
-  const partnerName = (State.settings.partnerName && State.settings.partnerName !== "Her" ? State.settings.partnerName : "Partner");
-  const activeName = isMe ? myName : partnerName;
-  const icon = isMe ? "👤" : "💖";
-  const color = isMe ? "#38bdf8" : "#f43f5e";
-
-  const badge = h(
-    "button",
-    {
-      class: "chip",
-      title: `Active user: ${activeName}. Click to toggle who is using this PC!`,
-      style: "cursor:pointer;border:none;background:rgba(255,255,255,0.08);padding:3px 8px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.85);margin-right:6px",
-      onclick: async () => {
-        Sound.play("blip");
-        const nextRole = isMe ? "her" : "me";
-        State.settings.userRole = nextRole;
-        await Bridge.saveSettings({ userRole: nextRole });
-        State.notify();
-      },
-    },
-    h("i", { class: "chip-dot", style: `background:${color}` }),
-    h("span", { text: `${icon} ${activeName}` }),
-    h("span", { style: "opacity:0.45;font-size:10px", text: "⇄" })
-  );
-  return badge;
-}
-
-function engineBadge(): HTMLElement {
-  const voice = State.settings.voiceName || "Charon";
-  const provider = State.settings.aiProvider === "groq" ? "Groq" : State.settings.aiProvider === "openrouter" ? "OpenRouter" : "Gemini Live";
-  const badge = h(
-    "button",
-    {
-      class: "chip",
-      title: `${provider}${provider === "Gemini Live" ? ` · ${voice}` : ""}. Configure AI & voice in Settings.`,
-      style: "cursor:pointer;border:none;background:rgba(255,255,255,0.08);padding:3px 8px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.85);margin-right:6px",
-      onclick: () => {
-        Sound.play("blip");
-        void Bridge.openSettingsWindow();
-      },
-    },
-    h("i", { class: "chip-dot", style: "background:#3b82f6" }),
-    h("span", { text: provider === "Gemini Live" ? `${provider} · ${voice}` : provider })
-  );
-  return badge;
-}
-
 export function buildPrompt(onHeightChange: () => void): ViewHost {
   const chipRow = h("div", { class: "chip-row", style: "display:flex;align-items:center;gap:6px" });
   const log = h("div", { class: "chat-log" });
@@ -125,9 +76,11 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     onHeightChange();
 
     const context: ChatContext | null = null;
+    const speechGeneration = VoiceManager.speechGeneration;
 
     try {
       const reply = await Bridge.chatSend(query, context);
+      if (speechGeneration !== VoiceManager.speechGeneration) return;
       if (reply && reply.text && reply.text !== "(Command sent to Mochi)") {
         const lastMsg = State.chatHistory[State.chatHistory.length - 1];
         if (!lastMsg || lastMsg.content !== reply.text) {
@@ -139,6 +92,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       State.triggerEmote("happy");
       Sound.play("finish");
     } catch (err) {
+      if (speechGeneration !== VoiceManager.speechGeneration) return;
       State.stateOverride = null;
       input.value = query;
       errorStatus.textContent = `Could not send. ${String(err).replace(/^Error:\s*/, "")}`;
@@ -174,7 +128,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         chipRow.dataset.voice = curVoice;
         chipRow.dataset.role = curRole;
         clear(chipRow);
-        chipRow.append(userProfileBadge(), engineBadge());
+    
       }
 
       const thinking = State.stateOverride === "thinking";

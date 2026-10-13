@@ -1,19 +1,23 @@
 # Never bundle local config, API keys, memory, certificates or downloaded plugins.
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+import sys
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, copy_metadata
 
 engine = Path(SPECPATH)
+music_runtime = engine.parent / '.build-cache' / 'music-core'
+sys.path.insert(0, str(music_runtime))
 datas = [(str(engine / 'core' / 'prompt.txt'), 'core')]
+datas += [(str(p), 'companions') for p in (engine.parent / 'public' / 'companions').glob('*.json')]
 for folder in ('actions', 'plugins'):
     for source in (engine / folder).glob('*.py'):
         datas.append((str(source), folder))
-for asset in (engine / 'core').glob('*.obj'):
-    datas.append((str(asset), 'core'))
 hidden = ['main', 'mochi_runner', 'mochi_bridge', 'ui']
 for folder in ('actions', 'core', 'memory', 'plugins'):
     hidden.extend(f'{folder}.{p.stem}' for p in (engine / folder).glob('*.py') if p.stem != '__init__')
 hidden += collect_submodules('google.genai')
-a = Analysis([str(engine / 'baymax_entry.py')], pathex=[str(engine)],
+hidden += collect_submodules('yt_dlp') + collect_submodules('yt_dlp_ejs')
+datas += collect_data_files('yt_dlp_ejs') + copy_metadata('yt-dlp') + copy_metadata('yt-dlp-ejs')
+a = Analysis([str(engine / 'baymax_entry.py')], pathex=[str(music_runtime), str(engine)],
     binaries=[], datas=datas, hiddenimports=hidden, hookspath=[], hooksconfig={},
     runtime_hooks=[], excludes=['torch', 'tensorflow', 'scipy', 'matplotlib', 'pandas', 'IPython', 'pytest',
                                 'transformers', 'sklearn', 'faster_whisper', 'ctranslate2', 'kokoro'],

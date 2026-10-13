@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "commit": "8071a579e4e802bf44b07eda9c66cac440e53b3c",
   "commitDate": "2026-10-07T23:07:47+05:30",
   "commitMessage": "feat: transform to Baymax, integrate Distrack productivity suite & focus engine with distraction blocking and voice commands"

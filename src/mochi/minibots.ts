@@ -39,7 +39,6 @@ export function createMiniBot(task: AgentTask, bodySize: number): HTMLElement {
 
   const engine = new BotEngine();
   engine.isMini = true;
-  engine.bodyColor = hexToRGB(task.color);
   engine.setState(task.state, true);
   if (task.emote) engine.setPermanentEmote(task.emote);
   if (task.miniEye) {
@@ -68,7 +67,6 @@ export function syncMiniBotStates(tasks: AgentTask[]) {
     const task = tasks.find((t) => t.id === mb.taskId);
     if (!task) continue;
     mb.engine.setState(task.state);
-    mb.engine.bodyColor = hexToRGB(task.color);
   }
 }
 

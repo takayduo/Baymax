@@ -7,6 +7,7 @@ node_modules/
 
 # Local reference upstream repository
 coucou_ref/
+/audit/avatar-lab-reference/
 
 # Logs
 *.log
@@ -55,8 +56,7 @@ engine/memory/sessions.json
 
 # Preserved source backup and local validation outputs
 _backups/
-audit/build-*/
-audit/smoke-user-data/
+audit/
 
 # Windows distribution and packaging caches
 /release/
@@ -64,3 +64,13 @@ audit/smoke-user-data/
 /.build-cache/
 /audit/settings-smoke-profile/
 /audit/package-profile-*/
+/audit/wardrobe-render-profile/
+/audit/wardrobe-render/
+
+/audit/music-smoke/
+/audit/music-smoke-profile/
+/audit/fourteen-smoke/
+/audit/fourteen-smoke-profile/
+/audit/remote-viewer-smoke-profile/
+
+/audit/onboarding-profile-*/

@@ -1,11 +1,34 @@
+import type { VoiceSignal } from '../call/voiceCall';
 // Thin wrapper over Electron IPC (and fallback for browser preview).
 import type { Settings } from "./state";
+import type { Library, Track } from '../music/model';
+import type { MusicSignal } from '../music/peer';
+export interface TalkKeyState { enabled: boolean; held: boolean; ready: boolean; suspended: boolean; key: string; error: string }
 
 declare global {
   interface Window {
     electronAPI?: {
+      accountSnapshot?():Promise<import('./account').AccountSnapshot>;
+      accountFiles?(op:string,args:unknown):Promise<any>;
+      accountConfig?(value:import('./account').CloudConfig):Promise<import('./account').AccountSnapshot>;
+      accountLogin?():Promise<unknown>;
+      accountCancelLogin?():Promise<unknown>;
+      accountLogout?():Promise<import('./account').AccountSnapshot>;
+      accountRefresh?():Promise<import('./account').AccountSnapshot>;
+      accountAction?(op:string,args:unknown):Promise<any>;
+      accountBilling?(op:string,args:unknown):Promise<any>;
+      voiceSignal?(value:VoiceSignal): Promise<boolean>;
+      setVoiceCallActive?(active:boolean): Promise<boolean>;
+      appActionResult?(result:unknown): void;
+      musicLoad?(): Promise<Library>;
+      musicSave?(library:Library): Promise<Library>;
+      musicSearch?(query:string): Promise<Track[]>;
+      writeClipboard?(text:string): Promise<boolean>;
+      musicResolve?(id:string, refresh?:boolean): Promise<string>;
+      musicSignal?(value:MusicSignal): Promise<boolean>;
       boot(): Promise<BootInfo>;
       saveSettings(settings: Partial<Settings>): Promise<boolean>;
+      setCompanionIcon?(png: string): Promise<boolean>;
       setCollapsed(collapsed: boolean): Promise<boolean>;
       setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): Promise<boolean>;
       setIslandRect(rect: { x: number; y: number; w: number; h: number }): Promise<boolean>;
@@ -23,6 +46,8 @@ declare global {
       chatReset(): Promise<boolean>;
       aiInterrupt?(): Promise<boolean>;
       aiMute?(muted: boolean): Promise<boolean>;
+      getPushToTalkState?(): Promise<TalkKeyState>;
+      suspendPushToTalk?(paused: boolean): Promise<boolean>;
       aiSetVoice?(voice: string): Promise<boolean>;
       transcribeAudio(audioBase64: string): Promise<{ success: boolean; text?: string; error?: string }>;
       kokoroTTS(text: string): Promise<{ success: boolean; base64?: string; error?: string }>;
@@ -94,6 +119,7 @@ export const IS_DESKTOP = typeof window !== "undefined" && !!window.electronAPI;
 export const IS_TAURI = IS_DESKTOP; // For Coucou compatibility
 
 export interface BootInfo {
+  account?:import('./account').AccountSnapshot;
   settings: Settings;
   schedule?: ScheduleItem[];
   screen: { x: number; y: number; width: number; height: number; scale: number };
@@ -174,6 +200,17 @@ export interface UpdateCheckResult {
 }
 
 export const Bridge = {
+  voiceSignal: async (value:VoiceSignal):Promise<boolean> => window.electronAPI?.voiceSignal?.(value) ?? false,
+  setVoiceCallActive: async (active:boolean):Promise<boolean> => window.electronAPI?.setVoiceCallActive?.(active) ?? true,
+  musicLoad: async ():Promise<Library> => {
+    if(window.electronAPI?.musicLoad)return window.electronAPI.musicLoad();
+    return {version:1,activePlaylistId:'favorites',currentTrackId:'',playlists:[{id:'favorites',name:'My playlist',tracks:[]}]};
+  },
+  musicSave: async (value:Library):Promise<Library> => {if(window.electronAPI?.musicSave)return window.electronAPI.musicSave(value);throw new Error('Saving playlists requires the desktop app.');},
+  musicSearch: async (query:string):Promise<Track[]> => {if(window.electronAPI?.musicSearch)return window.electronAPI.musicSearch(query);throw new Error('Music search requires the desktop app.');},
+  writeClipboard: async (text:string) => {if(window.electronAPI?.writeClipboard)await window.electronAPI.writeClipboard(text);else await navigator.clipboard.writeText(text);},
+  musicResolve: async (id:string, refresh=false):Promise<string> => {if(window.electronAPI?.musicResolve)return window.electronAPI.musicResolve(id, refresh);throw new Error('Music playback requires the desktop app.');},
+  musicSignal: async (value:MusicSignal):Promise<boolean> => window.electronAPI?.musicSignal?.(value) ?? false,
   boot: async (): Promise<BootInfo | null> => {
     if (window.electronAPI) return await window.electronAPI.boot();
     return {
@@ -195,7 +232,7 @@ export const Bridge = {
   },
 
   saveSettings: async (settings: Partial<Settings>): Promise<void> => {
-    if (window.electronAPI) await window.electronAPI.saveSettings(settings);
+    if (window.electronAPI) { if (await window.electronAPI.saveSettings(settings) === false) throw new Error('Settings were not saved'); }
     else localStorage.setItem("coucou_settings", JSON.stringify({ ...JSON.parse(localStorage.getItem("coucou_settings") || "{}"), ...settings }));
   },
 
@@ -281,6 +318,11 @@ export const Bridge = {
   aiMute: async (muted: boolean): Promise<boolean> => {
     if (window.electronAPI?.aiMute) return await window.electronAPI.aiMute(muted);
     return true;
+  },
+  getPushToTalkState: async (): Promise<TalkKeyState> => window.electronAPI?.getPushToTalkState?.() ?? { enabled: false, held: false, ready: false, suspended: false, key: 'Control+Space', error: '' },
+  suspendPushToTalk: async (paused: boolean): Promise<boolean> => {
+    if (!window.electronAPI?.suspendPushToTalk) throw new Error('The desktop app is required for a global talk key.');
+    return window.electronAPI.suspendPushToTalk(paused);
   },
 
   aiSetVoice: async (voice: string): Promise<boolean> => {

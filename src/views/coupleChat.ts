@@ -1,251 +1,110 @@
-// Couple Chat view — Real-time peer-to-peer chat between creator partners
-import { h, svg, clear } from "./dom";
-import { ICONS } from "./icons";
-import { Bridge, type PartnerChatMessage } from "../core/bridge";
-import { Sound } from "../core/sound";
-import { State } from "../core/state";
-import type { ViewActions, ViewHost } from "./views";
+import { h, svg } from './dom';
+import { ICONS } from './icons';
+import { Bridge } from '../core/bridge';
+import { State } from '../core/state';
+import type { ViewActions, ViewHost } from './views';
+import { Calls, localCallAppearance } from '../call/player';
+import { getAppearance } from '../companion/appearance';
+import { drawPortrait } from '../companion/render';
+import type { CallAppearance } from '../call/voiceCall';
 
-export function buildCoupleChat(actions: ViewActions): ViewHost {
-  const presenceBadge = h("span", {
-    class: "sched-presence-badge",
-    style: "font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,0.15);color:#22c55e;display:inline-flex;align-items:center;gap:4px;",
-    text: "🟢 Online",
-  });
+const phone='M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.6 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1z';
+function names(){
+  const me=State.settings.userRole!=='her';
+  return {mine:me?State.settings.userName || 'You':State.settings.partnerName || 'You',partner:me?State.settings.partnerName || 'Partner':State.settings.userName || 'Partner'};
+}
+export function dedupeMessages(){
+  State.partnerChatMessages=[...new Map(State.partnerChatMessages.filter(m=>m?.id).map(m=>[m.id,m])).values()].sort((a,b)=>a.timestamp-b.timestamp || a.id.localeCompare(b.id));
+}
+function button(label:string,run:()=>unknown,cls=''){
+  return h('button',{type:'button',class:`call-button ${cls}`,text:label,onclick:(event:Event)=>{event.stopPropagation();void run();}});
+}
+export function buildCoupleChat(_actions:ViewActions):ViewHost {
+  const title=h('strong',{class:'couple-title'});
+  const presence=h('span',{class:'couple-presence'});
+  const callButton=h('button',{type:'button',class:'call-button call-start',title:'Call partner','aria-label':'Call partner'},svg(phone,13)) as HTMLButtonElement;
+  const regularHeader=h('header',{class:'couple-header'},title,h('div',{class:'couple-header-actions'},presence,callButton));
+  callButton.addEventListener('click',()=>{if(State.partnerOnline)void Calls.call();});
+  const callArea=h('div',{class:'call-area'});
+  const log=h('div',{class:'chat-log couple-chat-log',role:'log','aria-label':'Partner messages'});
+  const error=h('div',{class:'chat-error',role:'status',hidden:true});
+  const input=h('input',{type:'text',class:'chat-input',maxlength:8000,placeholder:'Message your partner…','aria-label':'Message your partner'}) as HTMLInputElement;
+  const send=h('button',{type:'submit',class:'send-btn',title:'Send message','aria-label':'Send message',disabled:true},svg(ICONS.arrowUp,11)) as HTMLButtonElement;
+  const compose=h('form',{class:'chat-bar couple-compose'},input,send);
+  const body=h('div',{class:'chat-body couple-body'},regularHeader,callArea,log,error,compose);
+  const el=h('div',{class:'view couple-chat-view'},h('div',{class:'card chat-card'},body));
+  let sending=false,messageKey='',callKey='';
+  const tiles:{el:HTMLElement;canvas:HTMLCanvasElement;remote:boolean}[]=[];
 
-  const headerTitle = h("div", {
-    class: "sched-title",
-    style: "display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;",
-    text: "Partner chat",
-  });
-
-  const topRow = h(
-    "div",
-    {
-      class: "sched-header-row",
-      style: "display:flex;align-items:center;justify-content:space-between;padding:2px 4px 6px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:6px;",
-    },
-    headerTitle,
-    presenceBadge
-  );
-
-  const log = h("div", {
-    class: "chat-log couple-chat-log",
-    style: "flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 2px;scrollbar-width:thin;",
-  });
-
-  const input = h("input", {
-    type: "text",
-    class: "chat-input",
-    placeholder: "Message your partner…",
-    "aria-label": "Message your partner",
-    spellcheck: "false",
-    style: "font-size:12.5px;",
-  }) as HTMLInputElement;
-
-  const sendBtn = h(
-    "button",
-    {
-      class: "send-btn",
-      title: "Send Message",
-      style: "background:#d9e6e1;color:#14211c;",
-    },
-    svg(ICONS.arrowUp, 11)
-  );
-
-  const errorStatus = h("div", { class: "chat-error", role: "alert", hidden: true });
-  const bar = h("div", { class: "chat-bar", style: "margin-top:6px;" }, input, sendBtn);
-
-  const el = h(
-    "div",
-    { class: "view couple-chat-view" },
-    h(
-      "div",
-      { class: "card wash chat-card" },
-      h("div", { class: "chat-body", style: "height:100%;display:flex;flex-direction:column;" }, topRow, log, errorStatus, bar)
-    )
-  );
-  (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(244, 63, 94, 0.28)");
-
-  let sending = false;
-
-  function scrollToBottom() {
-    requestAnimationFrame(() => {
-      log.scrollTop = log.scrollHeight;
-    });
+  function portrait(appearance:CallAppearance,remote:boolean,mini=false){
+    const canvas=h('canvas',{width:160,height:160,'aria-label':remote?'Partner companion':'Your companion'}) as HTMLCanvasElement;
+    const tile=h('div',{class:`call-avatar${mini?' mini':''}`},canvas);
+    const ctx=canvas.getContext('2d');if(ctx)drawPortrait(ctx,160,getAppearance(appearance.companion.avatarId,appearance.companion),1,appearance.headphones);
+    tiles.push({el:tile,canvas,remote});return tile;
   }
-
-  function formatTime(timestamp: number): string {
-    const d = new Date(timestamp);
-    let hours = d.getHours();
-    const minutes = d.getMinutes().toString().padStart(2, "0");
-    const ampm = hours >= 12 ? "PM" : "AM";
-    hours = hours % 12 || 12;
-    return `${hours}:${minutes} ${ampm}`;
-  }
-
-  function getCoupleInfo() {
-    const isMe = (State.settings.userRole || "me") === "me";
-    const creator = (State.settings.userName && State.settings.userName !== "Me" ? State.settings.userName : "You");
-    const partner = (State.settings.partnerName && State.settings.partnerName !== "Her" ? State.settings.partnerName : "Partner");
-    const rawMe = isMe ? creator : partner;
-    const rawPartner = isMe ? partner : creator;
-    const myName = (rawMe.charAt(0).toUpperCase() + rawMe.slice(1)) || "Me";
-    const partnerName = (rawPartner.charAt(0).toUpperCase() + rawPartner.slice(1)) || "Partner";
-    const myIcon = isMe ? "👤" : "💖";
-    const partnerIcon = isMe ? "💖" : "👤";
-    return { isMe, myName, partnerName, myIcon, partnerIcon };
-  }
-
-  function renderMessages() {
-    clear(log);
-    const messages = State.partnerChatMessages || [];
-    const { isMe, myName, partnerName, partnerIcon } = getCoupleInfo();
-
-    if (messages.length === 0) {
-      const empty = h(
-        "div",
-        {
-          style:
-            "flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim);font-size:12px;text-align:center;gap:4px;padding:24px 0;",
-        },
-        h("div", { style: "font-size:24px;", text: "💌" }),
-        h("div", { text: `No messages yet! Say hi to ${partnerName} ✨` }),
-        h("div", { style: "font-size:11px;opacity:0.65;", text: "Messages arrive in real-time (<50ms) over WebSockets" })
-      );
-      log.append(empty);
-      return;
+  function renderCall(){
+    const local=localCallAppearance(),n=names();
+    const key=JSON.stringify([Calls.phase,Calls.compact,Calls.muted,Calls.remoteMuted,Calls.error,local,Calls.remoteAppearance,n]);
+    if(key===callKey)return;callKey=key;tiles.length=0;callArea.replaceChildren();
+    regularHeader.hidden=Calls.active && Calls.compact;
+    callArea.hidden=!Calls.active;
+    log.hidden=Calls.active && !Calls.compact;
+    compose.hidden=Calls.active && !Calls.compact;
+    error.hidden=!Calls.error;error.textContent=Calls.error;
+    if(!Calls.active)return;
+    if(Calls.compact){
+      const bar=h('div',{class:'call-compact',role:'group','aria-label':'Active voice call'});
+      const show=h('button',{type:'button',class:'call-expand',title:'Expand voice call','aria-label':'Expand voice call',onclick:()=>Calls.setCompact(false)},portrait(local,false,true),portrait(Calls.remoteAppearance,true,true),h('span',{class:'call-duration',text:'Connected'}));
+      bar.append(show,button(Calls.muted?'Unmute':'Mute',()=>Calls.toggleMute()),button('End',()=>Calls.end(),'danger'));callArea.append(bar);
+    }else{
+      const status=Calls.phase==='incoming'?`${n.partner} is calling…`:Calls.phase==='outgoing'?`Calling ${n.partner}…`:Calls.phase==='connecting'?'Connecting securely…':'Together, wherever you are';
+      const heading=h('div',{class:'call-heading'},h('span',{text:status}),h('small',{class:'call-duration',text:Calls.phase==='connected'?'0:00':'AI microphone paused'}));
+      const companions=h('div',{class:'call-companions'});
+      if(Calls.phase==='incoming')companions.append(h('div',{class:'call-person'},portrait(Calls.remoteAppearance,true),h('span',{text:n.partner})));
+      else for(const remote of [false,true])companions.append(h('div',{class:'call-person'},portrait(remote?Calls.remoteAppearance:local,remote),h('span',{text:remote?n.partner:n.mine}),h('small',{text:(remote?Calls.remoteMuted:Calls.muted)?'Muted':'Voice on'})));
+      const controls=h('div',{class:'call-controls'});
+      if(Calls.phase==='incoming')controls.append(button('Accept',()=>Calls.accept(),'accept'),button('Decline',()=>Calls.decline(),'danger'));
+      else if(Calls.phase==='connected')controls.append(button(Calls.muted?'Unmute':'Mute',()=>Calls.toggleMute()),button('Chat',()=>Calls.setCompact(true)),button('End call',()=>Calls.end(),'danger'));
+      else controls.append(button('Cancel call',()=>Calls.end(),'danger'));
+      callArea.append(h('section',{class:'voice-call-card'},heading,companions,controls));
     }
-
-    for (const msg of messages) {
-      const isFromMe = (msg.sender || "").toLowerCase() === myName.toLowerCase() ||
-                       (msg.senderRole && msg.senderRole === (isMe ? "me" : "her"));
-      const row = h("div", {
-        class: isFromMe ? "chat-row user" : "chat-row partner",
-        style: `display:flex;justify-content:${isFromMe ? "flex-end" : "flex-start"};width:100%;`,
-      });
-
-      const bubbleEl = h(
-        "div",
-        {
-          class: isFromMe ? "bubble couple-bubble me" : "bubble couple-bubble them",
-          style: isFromMe
-            ? "background:linear-gradient(135deg, #6366f1, #8b5cf6);color:#fff;border-radius:14px 14px 2px 14px;padding:7px 12px;max-width:82%;font-size:12.5px;box-shadow:0 2px 8px rgba(99,102,241,0.25);"
-            : "background:rgba(255,255,255,0.08);border:1px solid rgba(244,63,94,0.25);color:var(--ink);border-radius:14px 14px 14px 2px;padding:7px 12px;max-width:82%;font-size:12.5px;",
-        }
-      );
-
-      // Sender tag for partner messages
-      if (!isFromMe) {
-        const displaySender = msg.sender ? (msg.sender.charAt(0).toUpperCase() + msg.sender.slice(1)) : partnerName;
-        const senderTag = h("div", {
-          style: "font-size:10.5px;font-weight:700;color:#f43f5e;margin-bottom:2px;",
-          text: `${displaySender} ${partnerIcon}`,
-        });
-        bubbleEl.append(senderTag);
-      }
-
-      // Message content
-      const textEl = h("div", {
-        style: "word-break:break-word;line-height:1.45;",
-        text: msg.text,
-      });
-      bubbleEl.append(textEl);
-
-      // Footer: AI badge + timestamp
-      const footerEl = h("div", {
-        style: `display:flex;align-items:center;justify-content:${isFromMe ? "flex-end" : "flex-start"};gap:5px;margin-top:4px;font-size:9.5px;opacity:0.75;`,
-      });
-
-      if (msg.isAiGenerated) {
-        const aiBadge = h("span", {
-          style: "color:#fbbf24;font-weight:600;display:inline-flex;align-items:center;gap:2px;",
-          text: "✨ AI",
-        });
-        footerEl.append(aiBadge);
-      }
-
-      const timeEl = h("span", { text: formatTime(msg.timestamp || Date.now()) });
-      footerEl.append(timeEl);
-      if (isFromMe && msg.delivery) footerEl.append(h("span", { text: msg.delivery === "pending" ? " · Pending" : msg.delivery === "stored" ? " · Saved for delivery" : " · Sent" }));
-
-      bubbleEl.append(footerEl);
-      row.append(bubbleEl);
-      log.append(row);
-    }
-
-    scrollToBottom();
+    if(Calls.error.includes('Resume call audio'))callArea.append(button('Resume call audio',()=>Calls.resumeAudio()));
   }
-
-  async function sendMessage() {
-    const text = input.value.trim();
-    if (!text || sending) return;
-
-    input.value = "";
-    sending = true;
-    sendBtn.disabled = true;
-    errorStatus.hidden = true;
-    Sound.play("pop");
-
-    try {
-      const newMsg = await Bridge.sendChatMessage(text, false);
-      if (newMsg) {
-        State.partnerChatMessages.push(newMsg);
-        renderMessages();
-        State.notify();
-      }
-    } catch (err) {
-      input.value = text;
-      errorStatus.textContent = `Message could not be saved. ${String(err)}`;
-      errorStatus.hidden = false;
-    } finally {
-      sending = false;
-      sendBtn.disabled = !input.value.trim();
-      input.focus();
+  function renderMessages(){
+    dedupeMessages();
+    const messages=State.partnerChatMessages,n=names(),key=JSON.stringify([messages,n]);
+    if(key===messageKey)return;messageKey=key;
+    const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;
+    log.replaceChildren();
+    if(!messages.length)log.append(h('div',{class:'couple-empty'},h('strong',{text:`A little space for you and ${n.partner}`}),h('span',{text:'Send a message, or spend a moment on a call.'})));
+    for(const msg of messages){
+      const mine=msg.senderRole?msg.senderRole===(State.settings.userRole || 'me'):(msg.sender || '').toLowerCase()===n.mine.toLowerCase();
+      const footer=h('div',{class:'couple-message-meta'},h('time',{text:new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}));
+      if(msg.isAiGenerated)footer.append(h('span',{text:'AI'}));
+      if(mine)footer.append(h('span',{text:msg.delivery==='pending'?'Pending':msg.delivery==='stored'?'Saved':msg.delivery==='sent'?'Sent':''}));
+      log.append(h('div',{class:`chat-row ${mine?'user':'partner'}`},h('div',{class:`couple-bubble ${mine?'me':'them'}`},h('div',{text:msg.text}),footer)));
     }
+    if(atBottom)requestAnimationFrame(()=>{log.scrollTop=log.scrollHeight;});
   }
-
-  input.addEventListener("input", () => { sendBtn.disabled = sending || !input.value.trim(); });
-  sendBtn.addEventListener("click", () => void sendMessage());
-  input.addEventListener("keydown", (e) => {
-    if ((e as KeyboardEvent).key === "Enter" && !e.isComposing) {
-      e.preventDefault();
-      void sendMessage();
-    }
-  });
-
-  return {
-    el,
-    sync() {
-      const { partnerName, partnerIcon } = getCoupleInfo();
-      headerTitle.textContent = `Chat with ${partnerName} ${partnerIcon}`;
-      input.placeholder = `Message ${partnerName}...`;
-
-      if (State.partnerOnline) {
-        presenceBadge.style.background = "rgba(34,197,94,0.15)";
-        presenceBadge.style.color = "#22c55e";
-        presenceBadge.textContent = "🟢 Online";
-      } else {
-        presenceBadge.style.background = "rgba(255,255,255,0.06)";
-        presenceBadge.style.color = "var(--dim)";
-        presenceBadge.textContent = "⚪ Offline";
-      }
-
-      renderMessages();
-
-      // Mark unread as read since the user is looking at the chat
-      if (State.unreadPartnerChatCount > 0) {
-        State.unreadPartnerChatCount = 0;
-        void Bridge.markChatRead();
-      }
-    },
-    focus() {
-      const { partnerName } = getCoupleInfo();
-      input.placeholder = `Message ${partnerName}...`;
-      input.focus();
-      void Bridge.markChatRead();
-      State.unreadPartnerChatCount = 0;
-      State.notify();
-    },
-  };
+  async function sendMessage(){
+    const text=input.value.trim();if(!text || sending)return;
+    sending=true;send.disabled=true;input.value='';error.hidden=true;
+    try{
+      const msg=await Bridge.sendChatMessage(text,false);
+      if(msg){const index=State.partnerChatMessages.findIndex(m=>m.id===msg.id);if(index>=0)State.partnerChatMessages[index]={...State.partnerChatMessages[index],...msg};else State.partnerChatMessages.push(msg);dedupeMessages();State.notify();renderMessages();log.scrollTop=log.scrollHeight;}
+    }catch(reason){input.value=text;error.textContent=`Could not save message. ${reason instanceof Error?reason.message:reason}`;error.hidden=false;}
+    finally{sending=false;send.disabled=!input.value.trim();input.focus();}
+  }
+  compose.addEventListener('submit',event=>{event.preventDefault();void sendMessage();});
+  input.addEventListener('input',()=>send.disabled=sending || !input.value.trim());
+  return {el,sync(){
+    const n=names();title.textContent=`Chat with ${n.partner}`;input.placeholder=`Message ${n.partner}…`;
+    presence.textContent=State.partnerOnline?'Online':'Offline';presence.classList.toggle('online',State.partnerOnline);
+    callButton.disabled=!State.partnerOnline || Calls.active;callButton.title=State.partnerOnline?'Call partner':'Partner is offline';
+    renderCall();renderMessages();
+    if(State.view==='couple-chat' && State.mode==='expanded' && State.unreadPartnerChatCount){State.unreadPartnerChatCount=0;void Bridge.markChatRead();}
+  },focus(){if(!Calls.active || Calls.compact)input.focus();void Bridge.markChatRead();State.unreadPartnerChatCount=0;},tick(){
+    if(Calls.startedAt){const total=Math.max(0,Math.floor((Date.now()-Calls.startedAt)/1000));callArea.querySelectorAll('.call-duration').forEach(el=>el.textContent=`${Math.floor(total/60)}:${String(total%60).padStart(2,'0')}`);}
+    for(const tile of tiles){const level=tile.remote?Calls.remoteLevel:Calls.localLevel;tile.el.classList.toggle('speaking',level>.009);tile.canvas.style.transform=`translateY(${-Math.min(4,level*65)}px) scale(${1+Math.min(.05,level*.6)})`;}
+  }};
 }

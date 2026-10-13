@@ -1,6 +1,24 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 if (process.isMainFrame) contextBridge.exposeInMainWorld("electronAPI", {
+  accountSnapshot:()=>ipcRenderer.invoke('account-snapshot'),
+  accountFiles:(op,args)=>ipcRenderer.invoke('account-files',op,args),
+  accountConfig:value=>ipcRenderer.invoke('account-config',value),
+  accountLogin:()=>ipcRenderer.invoke('account-login'),
+  accountCancelLogin:()=>ipcRenderer.invoke('account-cancel-login'),
+  accountLogout:()=>ipcRenderer.invoke('account-logout'),
+  accountRefresh:()=>ipcRenderer.invoke('account-refresh'),
+  accountAction:(op,args)=>ipcRenderer.invoke('account-action',op,args),
+  accountBilling:(op,args)=>ipcRenderer.invoke('account-billing',op,args),
+  voiceSignal: value => ipcRenderer.invoke('voice-signal', value),
+  setVoiceCallActive: active => ipcRenderer.invoke('voice-call-active', active),
+  appActionResult: result => ipcRenderer.send('app-action-result', result),
+  musicLoad: () => ipcRenderer.invoke('music-load'),
+  musicSave: library => ipcRenderer.invoke('music-save', library),
+  musicSearch: query => ipcRenderer.invoke('music-search', query),
+  musicResolve: (id, refresh) => ipcRenderer.invoke('music-resolve', id, refresh),
+  writeClipboard: text => ipcRenderer.invoke('clipboard:writeText', text),
+  musicSignal: value => ipcRenderer.invoke('music-signal', value),
   getPathForFile: (file) => {
     try {
       if (webUtils && typeof webUtils.getPathForFile === "function") {
@@ -14,6 +32,7 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld("electronAPI", {
   prepareRemoteHost: () => ipcRenderer.invoke("prepare-remote-host"),
   boot: () => ipcRenderer.invoke("boot"),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
+  setCompanionIcon: (png) => ipcRenderer.invoke("set-companion-icon", png),
   setCollapsed: (collapsed) => ipcRenderer.invoke("set-collapsed", collapsed),
   setIgnoreMouseEvents: (ignore, options) => ipcRenderer.invoke("set-ignore-mouse-events", ignore, options),
   setIslandRect: (rect) => ipcRenderer.invoke("set-island-rect", rect),
@@ -164,17 +183,21 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld("electronAPI", {
   },
   sendOTPEmail: (email, otp) => ipcRenderer.invoke("send-otp-email", { email, otp }),
 
+  getPushToTalkState: () => ipcRenderer.invoke('get-push-to-talk-state'),
+  suspendPushToTalk: (paused) => ipcRenderer.invoke('suspend-push-to-talk', paused),
   // Events from Main Process
   on: (channel, callback) => {
     const validChannels = [
       "cursor",
       "tray",
       "settings-changed",
+      "account-changed",
       "open-preferences",
       "schedule-updated",
       "file-received",
       "incoming-file",
       "partner-presence",
+      "music-signal", "music-library", "app-action", "voice-signal",
       "sync-status",
       "partner-chat-received",
       "partner-chat-history",
@@ -189,9 +212,15 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld("electronAPI", {
       "host-signal",
       "update-progress",
       "update-available",
+      "partner-invite-received",
+      "partner-invite-accepted",
+      "partner-unpaired",
+      "account-notice",
       "ai-state",
+      "push-to-talk-state",
       "ai-transcript",
       "ai-audio-level",
+      "ai-speech-reset",
       "ai-content",
       "ai-confirm",
       "productivity-distraction-warning",

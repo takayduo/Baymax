@@ -1,0 +1,11 @@
+project_id = "baymax-central"
+
+[functions.account]
+verify_jwt = false
+[functions.billing]
+verify_jwt = false
+[functions.razorpay-webhook]
+verify_jwt = false
+[functions.content]
+verify_jwt = false
+# Each handler verifies the JWT itself; webhooks verify the raw HMAC signature.

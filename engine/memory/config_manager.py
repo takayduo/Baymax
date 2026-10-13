@@ -83,7 +83,7 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
 # ── Assistant voice ──────────────────────────────────────────────────────────
 # Gemini Live prebuilt voices. Names are proper nouns — identical in every
 # language, so this list is safe to show verbatim in any locale.
-AVAILABLE_VOICES = ["Charon", "Puck", "Kore", "Fenrir", "Aoede"]
+AVAILABLE_VOICES = ['Leda', 'Zephyr', 'Aoede', 'Despina', 'Laomedeia', 'Callirrhoe', 'Autonoe', 'Erinome', 'Vindemiatrix', 'Sulafat', 'Achernar', 'Kore', 'Pulcherrima', 'Gacrux', 'Puck', 'Achird', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Algenib', 'Rasalgethi', 'Alnilam', 'Schedar', 'Sadachbia', 'Sadaltager', 'Zubenelgenubi']
 DEFAULT_VOICE    = "Charon"
 
 
@@ -234,6 +234,25 @@ def get_proactive_audio_enabled() -> bool:
     one arrives.
     """
     return bool(load_api_keys().get("proactive_audio", True))
+
+
+def get_proactive_talking_enabled() -> bool:
+    return load_api_keys().get("proactive_talking_enabled", False) is True
+
+
+def save_proactive_talking_enabled(enabled: bool) -> None:
+    _patch_config(proactive_talking_enabled=bool(enabled))
+
+
+def get_user_interests() -> str:
+    return str(load_api_keys().get("user_interests", "") or "").strip()[:2000]
+
+
+def save_user_interests(interests: str) -> None:
+    value = str(interests or "").strip()[:2000]
+    _patch_config(user_interests=value)
+    from memory.memory_manager import sync_user_interests
+    sync_user_interests(value)
 
 
 def save_proactive_audio_enabled(enabled: bool) -> None:

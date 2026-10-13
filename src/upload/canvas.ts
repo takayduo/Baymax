@@ -1,3 +1,6 @@
+import { companionInk } from "../companion/appearance";
+import { drawCompanionBody } from "../companion/render";
+import { companionMouth } from "../companion/geometry";
 // The upload canvas — port of UploadCanvasView.swift.
 //
 // While the sequence engine is active this canvas draws the whole island body:
@@ -18,26 +21,6 @@ function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
   const rad = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, rad);
-}
-
-/** Superellipse body — port of usBodyPath(m, R). */
-function bodyPath(ctx: CanvasRenderingContext2D, m: number, R: number): { rx: number; ry: number } {
-  const mc = Math.max(0, Math.min(m, 1));
-  const n = 2.15 + (5.5 - 2.15) * mc;
-  const rx = R * (1.04 - 0.04 * mc);
-  const ry = R * (0.97 - 0.03 * mc);
-  ctx.beginPath();
-  for (let i = 0; i <= 96; i++) {
-    const a = (i / 96) * Math.PI * 2;
-    const ca = Math.cos(a);
-    const sa = Math.sin(a);
-    const px = rx * Math.sign(ca) * Math.pow(Math.abs(ca), 2 / n);
-    const py = ry * Math.sign(sa) * Math.pow(Math.abs(sa), 2 / n);
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-  return { rx, ry };
 }
 
 function text(
@@ -305,46 +288,15 @@ export class UploadCanvas {
     ctx.rotate(f.tilt);
     ctx.scale(f.sx, f.sy);
 
-    const { rx, ry } = bodyPath(ctx, f.morph, R);
-
-    // Body.
-    const bg = ctx.createLinearGradient(rx * 0.7, -ry * 0.9, -rx * 0.8, ry * 0.9);
-    bg.addColorStop(0, "#EDEDEF");
-    bg.addColorStop(1, "#C4C5CA");
-    ctx.fillStyle = bg;
-    ctx.fill();
-
-    // Edge shadow.
-    const sg = ctx.createRadialGradient(0, 0, R * 0.2, 0, 0, R * 1.3);
-    sg.addColorStop(0, "rgba(0,0,0,0)");
-    sg.addColorStop(0.62, "rgba(0,0,0,0)");
-    sg.addColorStop(1, "rgba(0,0,0,0.12)");
-    ctx.fillStyle = sg;
-    ctx.fill();
-
-    // The body path is reused as a clip for everything drawn inside it.
+    const rx = R * (1.04 - .04 * mc), ry = R * (.97 - .03 * mc);
+    // Keep the selected silhouette throughout suction and chewing.
+    const body = drawCompanionBody(ctx, rx, ry);
     ctx.save();
-    bodyPath(ctx, f.morph, R);
-    ctx.clip();
-
-    // Top rim, once Mochi is box-shaped enough to have one.
-    if (mc > 0.3) {
-      const a = Math.max(0, Math.min(1, (mc - 0.3) / 0.7));
-      ctx.beginPath();
-      ctx.moveTo(-rx * 0.72, -ry + 0.9);
-      ctx.lineTo(rx * 0.72, -ry + 0.9);
-      ctx.strokeStyle = `rgba(255,255,255,${0.6 * a})`;
-      ctx.lineWidth = 1.2;
-      ctx.lineCap = "round";
-      ctx.stroke();
-    }
+    ctx.clip(body);
 
     // Mouth hole.
-    const mh = f.mouth * R * mc;
+    const { x: mx, y: my, w: mw, h: mh } = companionMouth(R, mc, f.mouth);
     if (mh > 0.3) {
-      const mw = 2 * rx - 0.24 * R;
-      const mx = -mw / 2;
-      const my = -ry + 0.1 * R;
       const g = ctx.createLinearGradient(0, my, 0, my + mh);
       g.addColorStop(0, "#030304");
       g.addColorStop(1, "#101114");
@@ -365,8 +317,8 @@ export class UploadCanvas {
 
     // Eyes.
     const ew = R * 0.25;
-    const eh = R * (0.62 - 0.16 * mc);
-    const ey = R * (0.02 + 0.28 * mc);
+    const eh = R * (0.42 - 0.08 * mc);
+    const ey = -R * 0.06;
     const sp = R * 0.3;
     const lx = f.lookX * R * (0.34 - 0.08 * mc);
     const ly = f.lookY * R * (0.16 - 0.09 * mc);
@@ -462,7 +414,7 @@ const INK = "#0E0F12";
 function drawEye(ctx: CanvasRenderingContext2D, shape: UploadEyeShape, w: number, h: number) {
   switch (shape) {
     case "pill":
-      ctx.fillStyle = INK;
+      ctx.fillStyle = companionInk();
       rr(ctx, -w / 2, -h / 2, w, h, w / 2);
       ctx.fill();
       break;
@@ -476,7 +428,7 @@ function drawEye(ctx: CanvasRenderingContext2D, shape: UploadEyeShape, w: number
       ctx.lineTo(w / 2, hh / 2 - w / 2);
       ctx.arc(0, hh / 2 - w / 2, w / 2, 0, Math.PI, false);
       ctx.closePath();
-      ctx.fillStyle = INK;
+      ctx.fillStyle = companionInk();
       ctx.fill();
       break;
     }
@@ -484,7 +436,7 @@ function drawEye(ctx: CanvasRenderingContext2D, shape: UploadEyeShape, w: number
     case "content":
       ctx.beginPath();
       ctx.arc(0, -h * 0.12, w * 0.85, Math.PI * 0.15, Math.PI * 0.85, false);
-      ctx.strokeStyle = INK;
+      ctx.strokeStyle = companionInk();
       ctx.lineWidth = w * 0.5;
       ctx.lineCap = "round";
       ctx.stroke();

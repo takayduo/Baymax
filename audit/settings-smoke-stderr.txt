@@ -1,7 +1,16 @@
 Error occurred in handler for 'save-settings': Error: Test disk is read-only
-    at save-settings (G:\baymax\tests\settings-smoke.cjs:21:27)
+    at save-settings (G:\baymax\tests\settings-smoke.cjs:34:27)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:118948)
+Error occurred in handler for 'save-settings': Error: Test disk is read-only
+    at save-settings (G:\baymax\tests\settings-smoke.cjs:34:27)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:118948)
+Error occurred in handler for 'save-settings': Error: Test disk is read-only
+    at save-settings (G:\baymax\tests\settings-smoke.cjs:34:27)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:118948)
+Error occurred in handler for 'save-settings': Error: Test disk is read-only
+    at save-settings (G:\baymax\tests\settings-smoke.cjs:34:27)
     at async Session.<anonymous> (node:electron/js2c/browser_init:1:118948)
 Error occurred in handler for 'save-schedule-item': Error: Test task save failed
-    at save-schedule-item (G:\baymax\tests\settings-smoke.cjs:26:66)
+    at save-schedule-item (G:\baymax\tests\settings-smoke.cjs:43:66)
     at Session.<anonymous> (node:electron/js2c/browser_init:1:118964)
     at Session.emit (node:events:514:28)

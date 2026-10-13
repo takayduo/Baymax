@@ -136,14 +136,13 @@ class MochiHeadlessUI:
     def set_audio_level(self, level: float):
         """Called from audio loop with 0.0-1.0 RMS level. Throttled to ~20Hz to keep IPC light."""
         now = time.monotonic()
-        if now - self._last_audio_level_ts >= 0.05:
+        if level == 0 or now - self._last_audio_level_ts >= 0.05:
             self._last_audio_level_ts = now
             emit_ipc("audio_level", {"level": round(float(level), 3)})
 
     def push_visemes(self, frames, hop: float, at: float):
         """Mouth shape schedule for avatar visualization."""
-        if frames:
-            emit_ipc("visemes", {"frames": frames, "hop": hop, "at": at})
+        emit_ipc("visemes", {"frames": frames, "hop": hop, "at": at})
 
     def glance(self, dx: float, dy: float, hold: float = 1.1):
         pass
@@ -240,9 +239,12 @@ def stdin_reader_thread(ui: MochiHeadlessUI, jarvis: JarvisLive):
                 if ui.on_interrupt:
                     ui.on_interrupt()
 
+            elif cmd == "call_active":
+                jarvis.set_call_active(cmd_data.get("active") is True)
+
             elif cmd == "mute":
                 muted = cmd_data.get("muted", True)
-                ui.muted = muted
+                ui.muted = muted or jarvis._call_active
 
             elif cmd == "voice":
                 voice = cmd_data.get("voice")
@@ -259,6 +261,21 @@ def stdin_reader_thread(ui: MochiHeadlessUI, jarvis: JarvisLive):
                 enabled = cmd_data.get("enabled", False)
                 if ui.on_wake_toggle:
                     ui.on_wake_toggle(enabled)
+
+            elif cmd == "ptt_config":
+                jarvis.set_push_to_talk(bool(cmd_data.get("enabled", False)),
+                                        suspended=bool(cmd_data.get("suspended", False)))
+
+            elif cmd == "proactive_config":
+                jarvis.set_proactive_preferences(cmd_data.get('enabled') is True,
+                                                cmd_data.get('interests', ''))
+
+            elif cmd == 'background':
+                if jarvis._loop and jarvis.session:
+                    asyncio.run_coroutine_threadsafe(jarvis._send_background(str(cmd_data.get('text', ''))), jarvis._loop)
+
+            elif cmd == 'user_turn':
+                jarvis._begin_user_turn()
 
             elif cmd == "ptt":
                 held = cmd_data.get("held", False)

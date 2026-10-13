@@ -1,0 +1,6 @@
+{
+  "supabaseUrl": "https://ycmmygwjsljixdfuyaau.supabase.co",
+  "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InljbW15Z3dqc2xqaXhkZnV5YWF1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4OTc2NDQsImV4cCI6MjEwNzQ3MzY0NH0.EEkWdy3VXTEkwgrxIjoCnZp1XrbZtvO4HAVu53FtL2E",
+  "razorpayKeyId": "",
+  "planIds": { "pro_monthly": "", "pro_annual": "", "duo_monthly": "", "duo_annual": "" }
+}

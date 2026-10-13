@@ -8,6 +8,87 @@ const { createRequire } = require('node:module');
 const { RemoteSession } = require('../electron/remoteSession');
 const { canonicalId, isJunk } = require('../electron/productivity/catalog');
 const { resolveApplication } = require('../electron/appCommands');
+require('./engine-lifecycle.cjs');
+require('./music.cjs');
+require('./fourteen.cjs');
+test('Minimal companions lead the catalog, retain the originals, and default to plain Puff', () => {
+  const catalog = require('../public/companions/catalog.json');
+  assert.deepEqual(catalog.slice(0, 10).map(a => a.id), ['puff','pebble','mallow','drop','tama','neko','kuma','usagi','kumo','hoshi']);
+  assert.equal(new Set(catalog.map(a => a.id)).size, 20);
+  for (const avatar of catalog.slice(0, 10)) { assert.equal(avatar.minimal, true); assert.equal(avatar.face, ''); assert.deepEqual(avatar.details, []); }
+  const { normalizeCompanion } = require('../electron/companion');
+  assert.equal(normalizeCompanion({ styles: { puff: {} } }).styles.puff.markings, 'plain');
+});
+test('Global talk key validates chords, pauses safely, requires release after restart, and closes on helper failure', () => {
+  const { PushToTalkService, parseShortcut } = require('../electron/pushToTalk');
+  for (const value of ['Alt+F4', 'Meta+KeyA', 'Control+Control+F8', 'F99', '$(bad)', {}, 'Control']) assert.equal(parseShortcut(value), null);
+  assert.equal(parseShortcut('Shift+Control+F8').key, 'Control+Shift+F8');
+  const events = [], children = [];
+  const service = new PushToTalkService(s => events.push(s), { platform: 'win32', spawn: (_command, args, options) => {
+    assert.equal(options.windowsHide, true); assert.ok(args.includes('-EncodedCommand'));
+    const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => { child.killed = true; child.emit('exit'); }; children.push(child); return child;
+  } });
+  try {
+    service.configure({pushToTalkEnabled:true, pushToTalkKey:'F8'});
+    const first = children[0]; first.stdout.emit('data', '1\n'); assert.equal(service.snapshot().held, false);
+    first.stdout.emit('data','0\n1\n'); assert.equal(service.snapshot().held,true);
+    service.suspend('picker',true); assert.equal(service.snapshot().held,false);
+    first.stdout.emit('data','1\n'); assert.equal(service.snapshot().held,false);
+    service.suspend('picker',false); first.stdout.emit('data','1\n'); assert.equal(service.snapshot().held,false);
+    first.stdout.emit('data','0\n1\n0\n'); assert.equal(service.snapshot().held,false);
+    service.configure({pushToTalkEnabled:true,pushToTalkKey:'Control+Space'});
+    assert.equal(first.killed,true); first.stdout.emit('data','1\n'); assert.equal(service.snapshot().held,false);
+    children[1].stdout.emit('data','0\n1\n'); assert.equal(service.snapshot().held,true);
+    children[1].emit('exit'); assert.equal(service.snapshot().held,false); assert.ok(service.snapshot().error);
+    service.configure({pushToTalkEnabled:true,pushToTalkKey:'F8',micEnabled:false}); assert.equal(children.length,2);
+    assert.ok(events.some(e => e.ready && e.held));
+  } finally { service.stop(); }
+});
+test('Hold-to-talk audio contains only held samples, ignores taps and silence, and is bounded to 30 seconds', () => {
+  const module = { exports: {} };
+  const code = require('esbuild').transformSync(fs.readFileSync(path.join(__dirname,'../src/core/holdAudio.ts'),'utf8'), {loader:'ts',format:'cjs'}).code;
+  vm.runInNewContext(code, { module, exports:module.exports, Float32Array });
+  const { HoldAudio } = module.exports, capture = new HoldAudio();
+  const voice = new Float32Array(3200).fill(.1);
+  capture.push(voice); assert.equal(capture.release().length,0);
+  capture.reset(true); capture.push(new Float32Array(3200)); assert.equal(capture.release().length,0);
+  capture.reset(true); capture.push(voice.subarray(0,100)); assert.equal(capture.release().length,0);
+  capture.reset(true); capture.push(voice); voice.fill(.9); assert.ok(Math.abs(capture.release()[0][0]-.1)<.00001);
+  capture.reset(true); for(let i=0;i<200;i++) capture.push(voice);
+  assert.equal(capture.release().reduce((sum,c)=>sum+c.length,0),480000);
+  capture.reset(true); capture.push(voice); capture.reset(); assert.equal(capture.release().length,0);
+});
+test('Talk helper tolerates slow startup and buffered heartbeats, recovers after failure, and cancels retries when disabled', () => {
+  const {PushToTalkService}=require('../electron/pushToTalk');
+  let now=0,nextId=0; const timers=new Map(),intervals=new Map(),children=[];
+  const service=new PushToTalkService(()=>{}, {platform:'win32',now:()=>now,
+    setTimeout:(fn,delay)=>{timers.set(++nextId,{fn,delay});return nextId;},clearTimeout:id=>timers.delete(id),
+    setInterval:fn=>{intervals.set(++nextId,fn);return nextId;},clearInterval:id=>intervals.delete(id),
+    spawn:(_command,args)=>{const script=Buffer.from(args.at(-1),'base64').toString('utf16le');assert.ok(script.includes('held != previous'));assert.ok(script.includes('lastSent >= 1000'));
+      const p=new EventEmitter();p.stdout=new EventEmitter();p.stderr=new EventEmitter();p.kill=()=>{};children.push(p);return p;},
+  });
+  const tick=()=>[...intervals.values()].forEach(fn=>fn());
+  try {
+    service.configure({pushToTalkEnabled:true,pushToTalkKey:'F2'});
+    now=45000;tick();assert.equal(children.length,1);assert.equal(timers.size,0);
+    children[0].stdout.emit('data','0\n'.repeat(6000));assert.equal(service.snapshot().ready,true);
+    now+=5000;tick();assert.equal(timers.size,0);
+    children[0].emit('exit');assert.equal(service.snapshot().held,false);assert.equal(timers.size,1);
+    const [id,retry]=[...timers][0];timers.delete(id);retry.fn();assert.equal(children.length,2);
+    children[1].stdout.emit('data','1\n');assert.equal(service.snapshot().held,false);
+    children[1].stdout.emit('data','0\n1\n');assert.equal(service.snapshot().held,true);assert.equal(service.snapshot().error,'');
+    children[1].emit('exit');service.configure({pushToTalkEnabled:false,pushToTalkKey:'F2'});assert.equal(timers.size,0);assert.equal(service.snapshot().held,false);
+  } finally {service.stop();}
+});
+test('Wardrobe settings accept only built-in avatars, safe colours and supported details', () => {
+  const { normalizeCompanion } = require('../electron/companion');
+  assert.deepEqual(normalizeCompanion(null), { avatarId: 'puff', styles: {} });
+  const input = { avatarId: 'nori', styles: { nori: { color: '#f0a6ca', accent: '#765593', accessory: 'bow', markings: 'freckles' }, fenn: { color: '#000000', accent: '#ffffff', accessory: 'scarf', markings: 'plain' }, alien: { color: '#111111' } } };
+  const result = normalizeCompanion(input);
+  assert.equal(result.avatarId, 'nori'); assert.equal(result.styles.nori.color, '#F0A6CA'); assert.equal(result.styles.fenn.color, '#000000');
+  assert.equal(result.styles.alien, undefined); assert.equal(input.styles.nori.color, '#f0a6ca');
+  assert.deepEqual(normalizeCompanion({ avatarId: '__proto__', styles: { sprout: { color: 'url(https://invalid)', accessory: '<svg>', markings: {} } } }), { avatarId: 'puff', styles: { sprout: { color: '#A6D7A0', accent: '#487C64', accessory: 'none', markings: 'cheeks' } } });
+});
 class Store {
   constructor(data = {}) { this.data = structuredClone(data); }
   get(k, fallback) { return k.split('.').reduce((v,k) => v?.[k], this.data) ?? fallback; }
@@ -19,6 +100,18 @@ function load(file, mocks = {}, globals = {}) {
   vm.runInNewContext(fs.readFileSync(filename,'utf8'), { module, exports:module.exports, require:n=>mocks[n] || actual(n), __dirname:path.dirname(filename), process, Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval, ...globals }, {filename});
   return module.exports;
 }
+test('Productivity broadcasts reach the companion and standalone window without a stale window reference', () => {
+  const source = fs.readFileSync(path.join(__dirname,'../electron/main.js'),'utf8');
+  const start = source.indexOf('function broadcastToProductivity('), end = source.indexOf('\nlet lastDistractionAlertTime',start);
+  const sent = [];
+  const window = id => ({isDestroyed:()=>false,webContents:{send:(...args)=>sent.push([id,...args])}});
+  const scope = {productivityWin:window('productivity'),overlayWin:window('companion')};
+  vm.runInNewContext(source.slice(start,end),scope);
+  scope.broadcastToProductivity('tracking-update',{seconds:4});
+  assert.deepEqual(sent.map(event=>event[0]),['productivity','companion']);
+  scope.productivityWin=null; scope.overlayWin=null;
+  scope.broadcastToProductivity('tracking-update',{});
+});
 function harness(start = new Date(2026,9,8,10).getTime(), childProcess) {
   let wall=start, mono=0, idle=0;
   const runtime=childProcess ? load('electron/productivity/tracker-runtime.js', {'node:child_process':childProcess}) : require('../electron/productivity/tracker-runtime');
@@ -204,24 +297,26 @@ test('OAuth rejects wrong state and replacing a flow cannot close the new server
   await servers[1].handler({url:'/oauth2callback?state='+state+'&error=denied'},response);await cancelled;assert.equal(servers[1].closed,true);
 });
 
-test('stale Supabase authentication cannot replace the latest connection',async()=>{
+test('Open project sync uses role IDs without auth and ignores stale subscriptions',async()=>{
   const clients=[];
   const createClient=()=>{
-    const client={removed:false};
-    client.auth={signInWithPassword:()=>new Promise(resolve=>{client.authenticate=resolve;}),onAuthStateChange:()=>{}};
-    client.realtime={setAuth:async()=>{}};
-    client.from=()=>({select:()=>({eq:()=>({single:async()=>({data:{user_a:'a',user_b:'b'}})})})});
-    client.channel=()=>{const ch={owner:client,on:()=>ch,subscribe:()=>ch,untrack:()=>{},send:async()=>{client.sent=true;return 'ok';}};return ch;};
-    client.removeAllChannels=()=>{client.removed=true;};client.removeChannel=()=>{};clients.push(client);return client;
+    const client={};
+    client.channel=(name,options)=>{const ch={name,options,handlers:[],owner:client,on:(kind,filter,fn)=>{ch.handlers.push({kind,filter,fn});return ch;},subscribe:fn=>{ch.subscribed=fn;return ch;},track:async()=>{},untrack:()=>{},send:async packet=>{client.packet=packet;return 'ok';}};(client.channels||=[]).push(ch);return ch;};
+    client.from=()=>({select:()=>({limit:async()=>({})})});
+    client.removeChannel=()=>{};clients.push(client);return client;
   };
-  const sync=load('electron/supabase.js',{'@supabase/supabase-js':{createClient}});
-  const options={url:'https://example.invalid',key:'test-key',email:'test@example.invalid',password:'test-only',channelName:'pair'};
-  const old=sync.initSupabase(options),latest=sync.initSupabase(options);
-  clients[1].authenticate({data:{user:{id:'a'},session:{access_token:'fake-token'}}});await latest;
-  clients[0].authenticate({data:{user:{id:'a'},session:{access_token:'fake-token'}}});assert.equal(await old,null);
-  assert.equal(await sync.broadcastChatMessage({text:'test'}),true);assert.equal(clients[1].sent,true);assert.equal(clients[0].sent,undefined);assert.equal(clients[0].removed,true);sync.disconnectSupabase();
+  const sync=load('electron/supabase.js',{'@supabase/supabase-js':{createClient}}),statuses=[];
+  const options={url:'https://example.invalid',key:'test-key',channelName:'pair',onStatus:s=>statuses.push(s)};
+  await sync.initSupabase({...options,userRole:'me'});
+  await sync.initSupabase({...options,userRole:'her'});
+  assert.equal(clients[1].channels[0].options.config.private,undefined);
+  await clients[0].channels[0].subscribed('SUBSCRIBED');assert.equal(statuses.length,0);
+  await clients[1].channels[0].subscribed('SUBSCRIBED');assert.equal(statuses[0].connected,true);
+  assert.equal(await sync.broadcastMusicSignal({type:'probe'}),true);
+  assert.equal(clients[1].packet.payload.senderId,'her');assert.equal(clients[1].packet.payload.recipientId,'me');
+  assert.equal((await sync.checkCloudStorageReady(options)).ready,true);sync.disconnectSupabase();
 });
-test('Overlay hover has a stable wake region and coalesces native click-through changes', () => {
+  test('Overlay hover has a stable wake region and coalesces native click-through changes', () => {
   const { pointerInside, createMousePassthrough } = require('../electron/overlayInteraction');
   const hidden = { x: 428, y: 0, w: 184, h: 0 };
   assert.equal(pointerInside(410, 4, hidden), true);

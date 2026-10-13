@@ -2,13 +2,18 @@
   "checks": [
     "Required renderer, native icons, remote viewer and Productivity assets are packaged",
     "Known local credentials, saved memory and temporary smoke fixtures are absent from the package",
-    "Packaged engine imports successfully and discovers 21 actions with Python absent from PATH",
-    "Actual Baymax.exe boots with an isolated profile and opens all eight embedded settings categories",
+    "Packaged engine imports successfully and discovers 22 actions with Python absent from PATH",
+    "Actual Baymax.exe boots with an isolated profile and opens all nine embedded settings categories",
+    "Packaged check-ins default OFF, headphones default ON, and interests persist to settings, engine config and memory",
+    "Packaged music library persists locally and rejects arbitrary URL/file extraction",
+    "Packaged wardrobe persists the selected avatar, pink colour and scarf to disk and HUD config, updates native icons and rejects invalid icon payloads",
+    "Packaged global shortcut helper starts without Python on PATH, persists the chosen chord, suspends for key capture and stops when disabled",
+    "Reloading the packaged renderer restores the saved companion and its custom style",
     "Packaged notification audio is readable through the production asset protocol",
     "Packaged executable renders the compact 90px Home card"
   ],
   "errors": [],
-  "homeHeight": 89.984375,
+  "homeHeight": 90,
   "engine": {
     "success": true,
     "actions": [
@@ -17,6 +22,7 @@
       "code_helper",
       "computer_control",
       "computer_settings",
+      "control_app",
       "desktop_control",
       "dev_agent",
       "file_controller",
@@ -36,6 +42,8 @@
     ],
     "failures": [],
     "prompt_exists": true,
-    "data_separate": true
+    "data_separate": true,
+    "companions": 20,
+    "accessories": 3
   }
 }

@@ -2,7 +2,7 @@ import Icon from "../components/Icon";
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
-import brandIcon from '../assets/icon.png';
+import { useCompanionIcon } from '../companion';
 import { auth, isFirebaseConfigured } from '../utils/firebase';
 import { 
   signInWithEmailAndPassword, 
@@ -15,6 +15,7 @@ import {
 } from 'firebase/auth';
 
 export default function Auth() {
+  const brandIcon = useCompanionIcon();
   const [isLogin, setIsLogin] = useState(true);
   const [showForgot, setShowForgot] = useState(false);
   const [name, setName] = useState('');

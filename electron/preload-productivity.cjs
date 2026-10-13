@@ -5,6 +5,12 @@ const { contextBridge, ipcRenderer } = require('electron');
  * Matches 100% of distrack electronAPI.
  */
 if (process.isMainFrame) contextBridge.exposeInMainWorld('electronAPI', {
+  getCompanionIcon: () => ipcRenderer.invoke('get-companion-icon'),
+  onCompanionIconChanged: callback => {
+    const handler = (_, png) => callback(png);
+    ipcRenderer.on('companion-icon-changed', handler);
+    return () => ipcRenderer.removeListener('companion-icon-changed', handler);
+  },
   // -- Tracking --
   getTrackedApps: (timeframe) => ipcRenderer.invoke('get-tracked-apps', timeframe),
   getDailyTotals: () => ipcRenderer.invoke('get-daily-totals'),

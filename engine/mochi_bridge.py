@@ -26,6 +26,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from core.action_loader import discover_actions
+from core.entitlements import authorize, filter_tools
 from memory import config_manager
 from memory.memory_manager import (
     load_memory, all_entries_for_ui, remember, forget, update_memory
@@ -45,7 +46,7 @@ def get_registry():
 
 def cmd_list_actions():
     reg = get_registry()
-    decls = reg.get_tool_declarations()
+    decls = filter_tools(reg.get_tool_declarations())
     return {"success": True, "actions": decls, "count": len(decls)}
 
 
@@ -95,6 +96,7 @@ def cmd_execute_action(name: str, parameters: dict):
     if not reg.has(name):
         return {"success": False, "error": f"Action '{name}' is not registered."}
     try:
+        authorize(name, parameters)
         return reg.run_result(name, parameters or {})
     except Exception as e:
         return {"success": False, "error": f"Execution error: {e}", "traceback": traceback.format_exc()}
@@ -124,6 +126,8 @@ def cmd_sync_config(cfg: dict):
             existing["wake_word_enabled"] = bool(cfg["wakeWordEnabled"])
         if "pushToTalkEnabled" in cfg:
             existing["push_to_talk_enabled"] = bool(cfg["pushToTalkEnabled"])
+        if "pushToTalkKey" in cfg:
+            existing["push_to_talk_key"] = str(cfg["pushToTalkKey"])
         if "proactiveAudio" in cfg:
             existing["proactive_audio"] = bool(cfg["proactiveAudio"])
         if "thinkingEnabled" in cfg:

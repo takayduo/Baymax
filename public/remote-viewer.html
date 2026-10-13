@@ -37,93 +37,8 @@
       pointer-events: auto;
       outline: none;
     }
-    /* Single Cursor Mode (Default): Hides the local OS mouse pointer over the remote desktop,
-       completely eliminating the annoying double mouse cursor so only the partner's actual cursor is visible. */
-    body.mode-single #viewport,
-    body.mode-single #remoteVideo {
-      cursor: none !important;
-    }
-    /* Dual Cursor Mode: Keeps both local and remote pointers visible if explicitly toggled */
-    body.mode-dual #viewport,
-    body.mode-dual #remoteVideo {
-      cursor: default !important;
-    }
-    /* Toolbar and interactive overlays always show a standard pointer */
-    #toolbar, #toolbar *, #loadingOverlay, #loadingOverlay * {
-      cursor: default !important;
-    }
-    .btn {
-      cursor: pointer !important;
-    }
-    /* Floating top toolbar */
-    #toolbar {
-      position: absolute;
-      top: 14px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(18, 18, 24, 0.88);
-      backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 30px;
-      padding: 6px 16px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      z-index: 1000;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-      transition: opacity 0.3s ease, transform 0.3s ease;
-    }
-    #toolbar.hidden {
-      opacity: 0;
-      transform: translate(-50%, -20px);
-      pointer-events: none;
-    }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12.5px;
-      font-weight: 600;
-      color: #fff;
-    }
-    .badge-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #22c55e;
-      box-shadow: 0 0 8px #22c55e;
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.6; transform: scale(1.15); }
-    }
-    .btn {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      color: #f4f4f5;
-      font-size: 11.5px;
-      font-weight: 600;
-      padding: 5px 12px;
-      border-radius: 16px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      transition: all 0.15s ease;
-    }
-    .btn:hover {
-      background: rgba(255, 255, 255, 0.18);
-      border-color: rgba(255, 255, 255, 0.3);
-    }
-    .btn-danger {
-      background: rgba(239, 68, 68, 0.2);
-      border-color: rgba(239, 68, 68, 0.4);
-      color: #fca5a5;
-    }
-    .btn-danger:hover {
-      background: rgba(239, 68, 68, 0.35);
-      color: #fff;
+    html.controlling, html.controlling body, html.controlling #viewport, html.controlling #remoteVideo {
+      cursor: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQImWNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==") 0 0, none !important;
     }
     #loadingOverlay {
       position: absolute;
@@ -162,17 +77,6 @@
     </div>
   </div>
 
-  <div id="toolbar">
-    <div class="badge">
-      <span class="badge-dot"></span>
-      <span id="partnerTitle">Connecting to your partner’s PC</span>
-    </div>
-    <span class="badge" id="dataChannelBadge" style="font-size: 11px; opacity: 0.85; font-weight: 500;" title="P2P DataChannel state">⚡ Direct P2P</span>
-    <button class="btn" id="btnCursorMode" title="Toggle Cursor: Single (Remote Only) vs Dual (Local + Remote) [Ctrl+Shift+C]">🖱️ Cursor: Single</button>
-    <button class="btn" id="btnFullscreen" title="Toggle Fullscreen (F11)">⛶ Fullscreen</button>
-    <button class="btn btn-danger" id="btnDisconnect" title="End remote access">🛑 End Session</button>
-  </div>
-
   <div id="viewport" tabindex="0">
     <video id="remoteVideo" autoplay playsinline muted tabindex="0"></video>
   </div>
@@ -180,67 +84,23 @@
   <script>
     const video = document.getElementById("remoteVideo");
     const viewport = document.getElementById("viewport");
-    const toolbar = document.getElementById("toolbar");
     const loadingOverlay = document.getElementById("loadingOverlay");
     const loadingText = document.getElementById("loadingText");
-    const partnerTitle = document.getElementById("partnerTitle");
-    const dataChannelBadge = document.getElementById("dataChannelBadge");
-    const btnCursorMode = document.getElementById("btnCursorMode");
-    const btnFullscreen = document.getElementById("btnFullscreen");
-    const btnDisconnect = document.getElementById("btnDisconnect");
 
     let peer = null;
     let dataChannel = null;
     let partnerName = "Partner";
     let remoteResolution = { width: 1920, height: 1080 };
-    let hideToolbarTimer = null;
-
-    // ── Cursor Mode (Single = Remote cursor only, Dual = Both local + remote) ───
-    let cursorMode = localStorage.getItem("mochi_cursor_mode") || "single";
-
-    function applyCursorMode(mode) {
-      cursorMode = mode;
-      localStorage.setItem("mochi_cursor_mode", mode);
-      document.body.classList.remove("mode-single", "mode-dual");
-      document.body.classList.add(mode === "single" ? "mode-single" : "mode-dual");
-      if (btnCursorMode) {
-        btnCursorMode.textContent = mode === "single" ? "🖱️ Cursor: Single" : "🖱️ Cursor: Dual";
-        btnCursorMode.title = mode === "single"
-          ? "Single Cursor Mode (Remote only — clean, eliminates double mouse). Click or press Ctrl+Shift+C to toggle Dual."
-          : "Dual Cursor Mode (Both local and remote visible). Click or press Ctrl+Shift+C to toggle Single.";
-      }
+    let controlGranted = false;
+    function setControlGranted(value) {
+      controlGranted = value;
+      document.documentElement.classList.toggle('controlling', value);
     }
-    applyCursorMode(cursorMode);
-
-    btnCursorMode.addEventListener("click", () => {
-      applyCursorMode(cursorMode === "single" ? "dual" : "single");
-    });
-
-    // Auto-hide toolbar on mouse inactivity
-    function pingToolbar() {
-      toolbar.classList.remove("hidden");
-      if (hideToolbarTimer) clearTimeout(hideToolbarTimer);
-      hideToolbarTimer = setTimeout(() => {
-        toolbar.classList.add("hidden");
-      }, 3000);
-    }
-    window.addEventListener("mousemove", pingToolbar);
-    toolbar.addEventListener("mouseenter", () => {
-      if (hideToolbarTimer) clearTimeout(hideToolbarTimer);
-      toolbar.classList.remove("hidden");
-    });
-
-    btnFullscreen.addEventListener("click", () => {
-      window.viewerAPI.toggleFullscreen();
-    });
-
-    btnDisconnect.addEventListener("click", () => {
-      window.viewerAPI.endSession();
-    });
+    window.addEventListener('beforeunload', () => setControlGranted(false));
 
     // ── Input Event Capture & Forwarding ──────────────────────────────────────
     function sendCommand(cmd, isMove = false) {
-      if (!cmd) return;
+      if (!cmd || !controlGranted) return;
       if (dataChannel && dataChannel.readyState === "open") {
         try {
           // If network buffer is congested, drop stale mouse moves so input never lags behind
@@ -399,12 +259,6 @@
         window.viewerAPI.toggleFullscreen();
         return;
       }
-      if (e.ctrlKey && e.shiftKey && (e.key === "C" || e.key === "c")) {
-        e.preventDefault();
-        applyCursorMode(cursorMode === "single" ? "dual" : "single");
-        pingToolbar();
-        return;
-      }
       if (e.key === "F12" || (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "i"))) {
         return; // Allow DevTools
       }
@@ -435,28 +289,16 @@
       ch.onopen = () => {
         console.log("[RemoteViewer] P2P Ultra-Low Latency DataChannel OPEN:", ch.label);
         dataChannel = ch;
-        if (dataChannelBadge) {
-          dataChannelBadge.textContent = "⚡ P2P Direct (Fast)";
-          dataChannelBadge.style.color = "#4ade80";
-        }
       };
       ch.onclose = () => {
         console.log("[RemoteViewer] DataChannel closed:", ch.label);
         if (dataChannel === ch) dataChannel = null;
-        if (dataChannelBadge) {
-          dataChannelBadge.textContent = "⚠️ Reconnecting...";
-          dataChannelBadge.style.color = "#f87171";
-        }
       };
       ch.onerror = (err) => {
         console.warn("[RemoteViewer] DataChannel error:", err);
       };
       if (ch.readyState === "open") {
         dataChannel = ch;
-        if (dataChannelBadge) {
-          dataChannelBadge.textContent = "⚡ P2P Direct (Fast)";
-          dataChannelBadge.style.color = "#4ade80";
-        }
       }
     }
 
@@ -575,7 +417,7 @@
     function revealVideo() {
       console.log("[RemoteViewer] Video feed is active, revealing live stream!");
       loadingOverlay.classList.add("done");
-      pingToolbar();
+      setControlGranted(true);
       video.focus();
     }
 
@@ -589,8 +431,7 @@
         const info = await window.viewerAPI.getPartnerInfo();
         if (info && info.partnerName) {
           partnerName = info.partnerName;
-          partnerTitle.textContent = `${info.assistantName || 'Baymax'} — Controlling ${partnerName}'s PC`;
-          document.title = partnerTitle.textContent;
+          document.title = `${info.assistantName || 'Baymax'} — ${partnerName}'s PC`;
           loadingText.textContent = `Connecting to ${partnerName}'s desktop...`;
         }
         if (info && info.remoteResolution) {
@@ -680,6 +521,8 @@
 
         peer.onconnectionstatechange = () => {
           const st = peer.connectionState;
+          if (['failed', 'closed', 'disconnected'].includes(st)) setControlGranted(false);
+          if (st === 'connected' && !video.paused && video.readyState >= 2) setControlGranted(true);
           console.log("[RemoteViewer] Peer connection state:", st);
           if (st === "connected") {
             loadingText.textContent = "Connected! Rendering desktop...";

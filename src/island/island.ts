@@ -1,3 +1,6 @@
+import { setCompanionPreferences, getAppearance, setMusicHeadphones } from "../companion/appearance";
+import { syncCompanionIcon } from "../companion/nativeIcon";
+import { allowed, requireFeature } from '../core/account';
 // The island: DOM shell, sizing animation, Mochi placement, mouse handling.
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
@@ -86,6 +89,7 @@ export class Island {
   private prevViewBeforeConfused: IslandViewName = "overview";
   private lastSyncedView: IslandViewName | null = null;
   private remoteConsentExpanded = false;
+  private upgradeDialogOpen = false;
 
   /** Drop sequence bookkeeping: last tick played, and whether the ✓ has fired. */
   private uploadTens = 0;
@@ -98,6 +102,12 @@ export class Island {
     this.wireFsm();
     this.wireInput();
     this.engine.onDizzy = () => this.handleDizzy();
+    window.addEventListener('baymax-upgrade-dialog',event=>{
+      this.upgradeDialogOpen=(event as CustomEvent<boolean>).detail;
+      this.fsm.cancelTimers();if(this.homeCollapseTimer!=null)window.clearTimeout(this.homeCollapseTimer);this.homeCollapseTimer=null;this.homeCollapseAt=null;
+      if(this.upgradeDialogOpen){this.greeting.interrupt();void Bridge.focusWindow(true);}
+      this.animateGeometry(!this.upgradeDialogOpen);State.notify();
+    });
     this.greeting.onComplete = () => this.fsm.greetComplete();
     State.subscribe(() => {
       const remoteConsent = State.view === "remote-control" && State.remoteAccessStatus === "incoming_request";
@@ -254,17 +264,17 @@ export class Island {
           this.setMode("hidden");
           break;
         case "petit":
-          if (from === "coucou") this.greeting.interrupt();
+          if (from === "welcome") this.greeting.interrupt();
           else if (from === "hidden") Sound.play("peek");
           this.setMode("compact");
-          if (from === "coucou") State.view = State.defaultView();
+          if (from === "welcome") State.view = State.defaultView();
           if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
         case "home":
           this.expand(State.defaultView());
           if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
-        case "coucou":
+        case "welcome":
           this.expand("greeting");
           this.greeting.start();
           break;
@@ -276,6 +286,7 @@ export class Island {
   launch() {
     this.fsm.launch();
     VoiceManager.init(() => this.animateGeometry(false));
+    void onEvent('ai-speech-reset', () => this.engine.setMouthOpen(0));
   }
 
   // ── Mode / view ─────────────────────────────────────────────────────────────
@@ -317,6 +328,7 @@ export class Island {
   }
 
   expand(view: IslandViewName) {
+    if(view!=="greeting")this.greeting.interrupt();
     this.stopSequenceIfLeaving(view);
     State.view = view;
     this.fsm.state = "home";
@@ -328,21 +340,21 @@ export class Island {
       window.clearTimeout(this.homeCollapseTimer);
       this.homeCollapseTimer = null;
     }
-    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences") {
+    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences" && view !== "onboarding") {
       this.onMouseLeaveIsland();
     }
     State.notify();
   }
 
   setView(view: IslandViewName) {
-    if (view === "preferences") {
+    if (view === "preferences" || view === "onboarding") {
       this.fsm.cancelTimers();
       if (this.homeCollapseTimer != null) window.clearTimeout(this.homeCollapseTimer);
       this.homeCollapseTimer = null;
       this.homeCollapseAt = null;
     }
     this.stopSequenceIfLeaving(view);
-    if (this.fsm.state === "coucou" || State.view === "greeting") {
+    if (this.fsm.state === "welcome" || State.view === "greeting") {
       this.greeting.interrupt();
       this.fsm.forceHome();
     }
@@ -357,11 +369,12 @@ export class Island {
     State.view = view;
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
-    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences") {
+    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences" && view !== "onboarding") {
       this.onMouseLeaveIsland();
     }
     State.notify();
   }
+
 
   collapse() {
     State.isPinned = false;
@@ -530,7 +543,7 @@ export class Island {
   private targetSize(): { w: number; h: number; r: number } {
     const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.remoteAccessStatus === "incoming_request");
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
-    return { w, h, r };
+    return { w, h: this.upgradeDialogOpen ? Math.max(370,h) : h, r };
   }
 
   private animateGeometry(shrinking: boolean) {
@@ -595,10 +608,10 @@ export class Island {
         this.collapsed = true;
         void Bridge.setCollapsed(true);
       }, 420);
-    } else if (this.collapsed) {
-      // Mark active without recreating the native transparent surface.
-      this.collapsed = false;
-      void Bridge.setCollapsed(false);
+    } else {
+      const nextCollapsed = State.mode !== "expanded";
+      this.collapsed = nextCollapsed;
+      void Bridge.setCollapsed(nextCollapsed);
     }
   }
 
@@ -614,8 +627,14 @@ export class Island {
     this.islandEl.addEventListener("mousedown", (e) => {
       Sound.resume();
       State.lastActivity = performance.now();
+      const hitBot = this.isBotHit(e.clientX, e.clientY);
+      if (hitBot) {
+        // Native state events can lag behind audio: never rely on a stale busy flag.
+        VoiceManager.stopSpeech();
+        this.engine.setMouthOpen(0);
+      }
 
-      if (this.fsm.state === "coucou" || State.view === "greeting") {
+      if (this.fsm.state === "welcome" || State.view === "greeting") {
         this.greeting.interrupt();
         this.fsm.forceHome();
         this.setView(State.defaultView());
@@ -625,20 +644,17 @@ export class Island {
         this.fsm.forceHome();
         return;
       }
-      if (this.isBotHit(e.clientX, e.clientY)) {
+      if (hitBot) {
         this.cancelBotHover();
-        if (VoiceManager.isBusy() || VoiceManager.isSpeaking() || State.stateOverride === "finished" || State.stateOverride === "thinking") {
-          VoiceManager.stopSpeech();
-          State.stateOverride = null;
-          State.triggerEmote("surprised");
-          State.notify();
-        }
+        State.stateOverride = null;
+        State.triggerEmote("surprised");
+        State.notify();
         this.engine.slap();
       }
     });
 
     window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && State.mode === "expanded" && !State.isPinned) this.collapse();
+      if (e.key === "Escape" && State.mode === "expanded" && !State.isPinned && !this.upgradeDialogOpen) this.collapse();
       State.lastActivity = performance.now();
     });
 
@@ -683,8 +699,9 @@ export class Island {
     this.homeCollapseAt = null;
     this.countdown.style.width = "0px";
     void Bridge.setIgnoreMouseEvents(false);
-    if (this.fsm.state === "coucou") this.greeting.hover();
-    this.fsm.mouseEntered();
+    if (this.fsm.state === "welcome") this.greeting.hover();
+    if(State.voiceCallActive && State.mode!=="expanded")this.fsm.forceHome();
+    else this.fsm.mouseEntered();
     this.ensureRunning();
   }
 
@@ -693,7 +710,7 @@ export class Island {
     void Bridge.setIgnoreMouseEvents(true, { forward: true });
 
     // If waiting for partner file manual dismiss, or pinned, do not collapse
-    if (State.isPinned || (State.view === "partner-file" || State.view === "preferences")) {
+    if (this.upgradeDialogOpen || State.isPinned || (State.view === "partner-file" || ["preferences","onboarding"].includes(State.view))) {
       this.fsm.cancelTimers();
       return;
     }
@@ -707,9 +724,9 @@ export class Island {
       this.homeCollapseTimer = window.setTimeout(() => {
         this.homeCollapseTimer = null;
         const isInputFocused =
-          document.activeElement &&
+          document.hasFocus() && document.activeElement &&
           (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA");
-        if (!this.wasInIsland && !State.isPinned && !isInputFocused && State.view !== "partner-file" && State.view !== "preferences" && State.mode === "expanded") {
+        if (!this.wasInIsland && !State.isPinned && !isInputFocused && State.view !== "partner-file" && State.view !== "preferences" && State.view !== "onboarding" && State.mode === "expanded") {
           this.collapse();
         }
       }, delay * 1000);
@@ -761,6 +778,7 @@ export class Island {
   }
 
   private isBotHit(x: number, y: number): boolean {
+    if (this.botCanvas.style.display === "none" || this.botCanvas.style.opacity === "0") return false;
     const rect = this.islandRect();
     const cx = rect.x + this.botCx.value;
     const cy = rect.y + this.botCy.value;
@@ -796,7 +814,7 @@ export class Island {
   }
 
   /** Three slaps → dizzy + confused view for 3.3 s, then back. */
-  private handleDizzy() {
+  handleDizzy() {
     this.prevViewBeforeConfused = State.view;
     State.stateOverride = "dizzy";
     this.engine.setState("dizzy");
@@ -812,7 +830,7 @@ export class Island {
         this.setView(this.prevViewBeforeConfused === "confused" ? fallback : this.prevViewBeforeConfused);
       }
       this.engine.triggerEmote("happy");
-    }, 3300);
+    }, 3400);
   }
 
   // ── Frame loop ──────────────────────────────────────────────────────────────
@@ -893,14 +911,17 @@ export class Island {
     const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
     this.botCx.target = p.cx;
     this.botCy.target = p.cy;
-    this.botSize.target = p.diameter / 0.6;
+    if (p.diameter > 0) {
+      this.botSize.target = p.diameter / 0.6;
+    }
 
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
     // The drop canvas draws its own Mochi; two of them would overlap.
-    const visible = p.opacity > 0 && !greetingActive && !this.uploadActive;
+    const visible = p.opacity > 0 && p.diameter > 0 && !greetingActive && !this.uploadActive;
     this.botCanvas.style.opacity = visible ? "1" : "0";
+    this.botCanvas.style.display = visible ? "block" : "none";
 
-    if (State.mode === "expanded" && State.view !== "uploading" && !greetingActive && !this.uploadActive) {
+    if (visible && State.mode === "expanded" && State.view !== "uploading") {
       const d = p.diameter;
       const color = botGlowColor(State.effectiveState);
       this.botGlow.style.display = "block";
@@ -916,6 +937,7 @@ export class Island {
   }
 
   private drawBot(dt: number) {
+    if (this.botCanvas.style.display === "none") return;
     const size = this.botSize.value;
     const w = Math.max(1, Math.round(size));
     const hCss = w + BOT_OVERHANG;
@@ -933,8 +955,7 @@ export class Island {
     const ctx = this.botCanvas.getContext("2d");
     if (!ctx) return;
 
-    const focus = State.focusTask;
-    this.engine.bodyColor = focus?.isIntegration ? hexToRGB(focus.color) : null;
+    this.botCanvas.dataset.avatarId = getAppearance().avatar.id;
     this.engine.particleOverhang = BOT_OVERHANG;
     this.engine.lookX = this.lookX();
     this.engine.lookY = this.lookY();
@@ -976,7 +997,7 @@ export class Island {
       this.countdown.style.width = "0px";
       this.homeCollapseAt = null;
       const isInputFocused =
-        document.activeElement &&
+        document.hasFocus() && document.activeElement &&
         (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA");
       if (!this.wasInIsland && !State.isPinned && !isInputFocused && State.mode === "expanded") {
         this.collapse();
@@ -991,11 +1012,16 @@ export class Island {
 
   private syncDom() {
     const expanded = State.mode === "expanded";
+    if (State.mode !== "hidden" && this.collapsed !== !expanded) {
+      this.collapsed = !expanded;
+      void Bridge.setCollapsed(this.collapsed);
+    }
     const greetingActive = expanded && State.view === "greeting";
 
-    this.contentEl.style.opacity = expanded && !greetingActive ? "1" : "0";
+    this.contentEl.style.opacity = expanded ? "1" : "0";
     this.contentEl.style.pointerEvents = expanded ? "auto" : "none";
     this.greetingCanvas.style.display = greetingActive ? "block" : "none";
+    this.header.el.style.display = greetingActive ? "none" : "";
 
     this.header.sync();
     for (const [name, view] of this.views) {
@@ -1004,14 +1030,12 @@ export class Island {
       if (on) view.sync();
     }
 
-    // The chat is the only view with a text field, so it is the only time the
-    // island is allowed to take keyboard focus.
     if (this.lastSyncedView !== State.view) {
-      const wasChat = this.lastSyncedView === "prompt";
+      const wasChat = ["prompt","couple-chat","preferences","onboarding"].includes(this.lastSyncedView || "");
       this.lastSyncedView = State.view;
-      if (State.view === "prompt") {
+      if (State.view === "prompt" || ["couple-chat","onboarding","preferences"].includes(State.view)) {
         void Bridge.focusWindow(true);
-        window.setTimeout(() => this.views.get("prompt")?.focus?.(), 120);
+        window.setTimeout(() => this.views.get(State.view)?.focus?.(), 120);
       } else if (wasChat) {
         void Bridge.focusWindow(false);
       }
@@ -1043,6 +1067,10 @@ export class Island {
 
   /** Applies settings coming from Rust at boot. */
   applySettings() {
+    setMusicHeadphones(State.settings.musicHeadphonesEnabled !== false);
+    VoiceManager.syncEngineMode();
+    setCompanionPreferences(State.settings.companion);
+    syncCompanionIcon();
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;

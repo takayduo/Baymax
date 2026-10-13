@@ -35,6 +35,13 @@ app.whenReady().then(async()=>{
     assert.equal(api.shell,'undefined');assert.equal(api.secrets,'undefined');assert.equal(api.tracking,'function');
     assert.equal(await frame.executeJavaScript('(()=>{try{return !!window.parent.electronAPI;}catch{return false;}})()'),false);
     results.checks.push('Subframe has no Node or secret API; scoped RPC works with webSecurity enabled');
+    const portrait = await frame.executeJavaScript("document.querySelector('img[alt=\"Your companion\"]').src");
+    assert.ok(portrait.startsWith('data:image/png;base64,'));
+    const changedPortrait = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'public/icons/32x32.png')).toString('base64');
+    await win.webContents.executeJavaScript(`document.querySelector('iframe').contentWindow.postMessage(${JSON.stringify({type:'baymax:brand',assistantName:'Test Companion',companionIcon:changedPortrait})},'*')`);
+    await wait(120);
+    assert.equal(await frame.executeJavaScript("document.querySelector('img[alt=\"Your companion\"]').src"), changedPortrait);
+    results.checks.push('Productivity receives the selected companion portrait through its scoped parent bridge and updates without reloading');
     await frame.executeJavaScript("[...document.querySelectorAll('button')].find(b=>/Week/i.test(b.textContent))?.click()");
     for(let i=0;i<3;i++){win.webContents.send('tracking-update',{apps:daily,timeframe:'daily'});await wait(700);}
     text=await frame.executeJavaScript('document.body.innerText');assert.ok(text.includes('10m'));assert.ok(!text.includes('Antigravity'));

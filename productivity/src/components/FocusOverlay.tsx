@@ -4,7 +4,7 @@ import { getElectronAPI } from '../context/AppContext';
 
 export default function FocusOverlay() {
   const [activeWarningApp, setActiveWarningApp] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(10);
+  const [countdown, setCountdown] = useState(4);
   const [blockedAppName, setBlockedAppName] = useState<string | null>(null);
   const [privilegeFailedApp, setPrivilegeFailedApp] = useState<string | null>(null);
 
@@ -24,7 +24,7 @@ export default function FocusOverlay() {
           setBlockedAppName(null);
           setPrivilegeFailedApp(null);
           setActiveWarningApp(appName);
-          setCountdown(10);
+          setCountdown(4);
 
           countdownTimerRef.current = setInterval(() => {
             setCountdown((prev) => {
@@ -84,7 +84,12 @@ export default function FocusOverlay() {
         })
       : () => {};
 
+    const unsubFocus = api.onFocusStateChanged?.((state: {active?:boolean}) => {
+      if (!state.active) {setActiveWarningApp(null);setPrivilegeFailedApp(null);if(countdownTimerRef.current)clearInterval(countdownTimerRef.current);}
+    });
+
     return () => {
+      unsubFocus?.();
       if (unsubWarning) unsubWarning();
       if (unsubCancel) unsubCancel();
       if (unsubBlocked) unsubBlocked();
@@ -94,8 +99,15 @@ export default function FocusOverlay() {
     };
   }, []);
 
+  useEffect(() => {
+    if (activeWarningApp && countdown === 0) {
+      const timer = setTimeout(() => setActiveWarningApp(null), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [activeWarningApp, countdown]);
+
   // Format countdown progress bar width percentage
-  const progressPercent = (countdown / 10) * 100;
+  const progressPercent = (countdown / 4) * 100;
 
   if (activeWarningApp) {
     return (
@@ -137,7 +149,7 @@ export default function FocusOverlay() {
           </div>
 
           <div className="text-[9px] uppercase font-bold tracking-[0.25em] text-on-surface-variant opacity-60">
-            Digital Mindfulness Enforced
+            <button onClick={() => {setActiveWarningApp(null);if(countdownTimerRef.current)clearInterval(countdownTimerRef.current);}}>Dismiss</button>
           </div>
         </div>
       </div>
@@ -172,8 +184,8 @@ export default function FocusOverlay() {
           <p className="text-[10px] font-sans text-on-surface-variant uppercase tracking-widest mb-6">Block Action Failed</p>
 
           <p className="text-xs leading-relaxed mb-8">
-            Distrack lacks the necessary system permissions to force-close <span className="font-mono font-bold text-primary">{privilegeFailedApp}.exe</span>. 
-            Please relaunch Distrack as **Administrator** to enable blocking for this application.
+            Baymax lacks the necessary system permissions to force-close <span className="font-mono font-bold text-primary">{privilegeFailedApp}.exe</span>. 
+            Please relaunch Baymax as **Administrator** to enable blocking for this application.
           </p>
 
           <button 

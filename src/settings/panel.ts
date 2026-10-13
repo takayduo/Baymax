@@ -1,9 +1,17 @@
+import { voicePicker } from './voicePicker';
+import { accountSection } from './account';
+import { plansSection } from './plans';
+import { requireFeature } from '../core/account';
 // Settings window for Coucou Creator Companion
 import "./settings.css";
 import { Bridge } from "../core/bridge";
-import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { State, DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 import { assistantName, assistantText } from "../core/branding";
+import { wardrobe, musicHeadphonesToggle } from "./wardrobe";
+import { pushToTalkSetting } from "./pushToTalk";
+import { setCompanionPreferences } from "../companion/appearance";
+import { syncCompanionIcon } from "../companion/nativeIcon";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "1.0.0-creator";
@@ -62,7 +70,7 @@ async function save(): Promise<boolean> {
 // ── Reusable bits ─────────────────────────────────────────────────────────────
 
 function toggle(on: boolean, onChange: (v: boolean) => void): HTMLElement {
-  const el = h("button", { class: on ? "switch on" : "switch", "aria-pressed": on });
+  const el = h("button", { class: on ? "switch on" : "switch", "aria-pressed": String(on) });
   el.addEventListener("click", () => {
     const next = !el.classList.contains("on");
     el.classList.toggle("on", next);
@@ -112,6 +120,7 @@ function aiSection(): HTMLElement {
     });
 
     geminiTab.addEventListener("click", async () => {
+      if(!requireFeature('gemini'))return;
       settings.aiProvider = "gemini";
       await save();
       draw();
@@ -160,25 +169,8 @@ function aiSection(): HTMLElement {
         }
       });
 
-      // Gemini Voice Selector
-      const voiceSelect = h("select", {
-        style: "flex:1;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.12);",
-      }) as HTMLSelectElement;
-      const VOICES = [
-        { id: "Kore", label: "Kore (Warm & Natural Female)" },
-        { id: "Charon", label: "Charon (Calm Male Voice)" },
-        { id: "Puck", label: "Puck (Playful & Energetic)" },
-        { id: "Fenrir", label: "Fenrir (Deep & Authoritative)" },
-        { id: "Aoede", label: "Aoede (Soft & Expressive)" },
-      ];
-      for (const v of VOICES) {
-        const opt = h("option", { value: v.id, text: v.label }) as HTMLOptionElement;
-        if ((settings.voiceName || "Charon") === v.id) opt.selected = true;
-        voiceSelect.append(opt);
-      }
-      voiceSelect.addEventListener("change", async () => {
-        settings.voiceName = voiceSelect.value;
-        await save();
+      const voiceSelect = voicePicker(settings.voiceName || 'Charon', async id => {
+        settings.voiceName = id; return save();
       });
 
       body.append(
@@ -294,7 +286,7 @@ function markLvSection(): HTMLElement {
   const section = h(
     "section",
     {},
-    h("h2", {}, statusDot(true), h("span", { ...branded("{assistant} PC Control & AI Engine") })),
+    h("h2", {}, statusDot(true), h("span", { ...branded("{assistant} AI Engine") })),
     body
   );
 
@@ -319,6 +311,8 @@ function markLvSection(): HTMLElement {
     { key: "dev_agent", label: "Developer Agent", desc: "Autonomous multi-step developer agent for complex coding tasks", emoji: "" },
   ];
 
+  const retainedSkills = new Set(['web_search','weather_report','flight_finder','reminder']);
+  ACTIONS_METADATA.splice(0,ACTIONS_METADATA.length,...ACTIONS_METADATA.filter(action=>retainedSkills.has(action.key)));
   let audioInputs: string[] = [];
   let audioOutputs: string[] = [];
   let memoryEntries: Array<{ category?: string; key?: string; value?: string }> = [];
@@ -359,15 +353,28 @@ function markLvSection(): HTMLElement {
       void save();
     });
 
-    const pushToTalkToggle = toggle(!!settings.pushToTalkEnabled, (v) => {
-      settings.pushToTalkEnabled = v;
-      void save();
-    });
 
     const proactiveAudioToggle = toggle(settings.proactiveAudio !== false, (v) => {
       settings.proactiveAudio = v;
       void save();
     });
+
+    const talkingToggle = toggle(settings.proactiveTalkingEnabled === true, async (v) => {
+      const previous = settings.proactiveTalkingEnabled === true;
+      settings.proactiveTalkingEnabled = v;
+      if (!await save()) {
+        settings.proactiveTalkingEnabled = previous;
+        talkingToggle.classList.toggle('on', previous);
+        talkingToggle.setAttribute('aria-pressed', String(previous));
+      }
+    });
+    talkingToggle.setAttribute('aria-label', 'Unprompted AI Check-ins');
+    const interests = h('textarea', {class: 'user-interests', id: 'user-interests', rows: 3, maxlength: 2000,
+      placeholder: "For example: I'm a content creator. YouTube growth, tech, editing."}) as HTMLTextAreaElement;
+    interests.value = settings.userInterests || '';
+    interests.oninput = () => { settings.userInterests = interests.value; };
+    const saveInterests = h('button', {text: 'Save interests', class: 'save-interests'});
+    saveInterests.onclick = async () => { await save(); };
 
     const thinkingToggle = toggle(!!settings.thinkingEnabled, (v) => {
       settings.thinkingEnabled = v;
@@ -442,10 +449,15 @@ function markLvSection(): HTMLElement {
     body.append(
       h("div", { class: "group-title", text: "Voice Gating & Conversational Tuning" }),
       h("div", { class: "row" }, h("label", { text: "Wake-Word Gating" }), wakeWordToggle, h("span", { class: "hint", text: "Uses the installed wake-word model. Renaming the assistant does not retrain its wake phrase." })),
-      h("div", { class: "row" }, h("label", { text: "Push-To-Talk" }), pushToTalkToggle, h("span", { class: "hint", text: "Hold key combo to speak to assistant" })),
+      pushToTalkSetting(settings, save, draw),
+      h('div', {class: 'group-title', text: 'Unprompted AI Check-ins'}),
+      h('div', {class: 'row proactive-talking-row'}, h('label', {text: 'Random / Proactive AI Talking (Time check-ins, sleep reminders & news)'}), talkingToggle),
+      h('p', {class: 'hint', text: 'Off by default. When off, startup briefings, background alerts and check-ins stay silent. Your requests still work.'}),
+      h('label', {for: 'user-interests', text: 'My Interests & News Topics'}), interests,
+      h('div', {class: 'row'}, saveInterests, h('span', {class: 'hint', text: 'Saved for this user on this PC. Separate topics with commas. Blank means no unsolicited news.'})),
       h("div", { class: "row" }, h("label", { text: "Proactive Audio" }), proactiveAudioToggle, h("span", { class: "hint", text: "Intelligently ignores background conversation" })),
       h("div", { class: "row" }, h("label", { text: "Deep Thinking Mode" }), thinkingToggle, h("span", { class: "hint", text: "Allow model reasoning tokens before replying" })),
-      h("div", { class: "row" }, h("label", { text: "Morning Briefing" }), morningBriefToggle, h("span", { class: "hint", text: "Auto-briefs weather, news, and tasks on first startup" })),
+      h("div", { class: "row" }, h("label", { text: "Morning Briefing" }), morningBriefToggle, h("span", { class: "hint", text: "Startup partner updates; requires Unprompted AI Check-ins to be on" })),
       h("div", { class: "row" }, h("label", { text: "Vision Resolution" }), mediaResSelect),
       h("div", { class: "row" }, h("label", { text: "Turn Silence Delay" }), silenceSlider, silenceVal),
       h("div", { class: "row" }, h("label", { text: "Turn Prefix Buffer" }), prefixSlider, prefixVal),
@@ -549,7 +561,7 @@ function markLvSection(): HTMLElement {
       h(
         "div",
         { class: "group-title", style: "display:flex;align-items:center;justify-content:space-between;" },
-        h("span", { text: `Autonomous PC Action Skills (${ACTIONS_METADATA.length} Actions)` }),
+        h("span", { text: `Assistant skills (${ACTIONS_METADATA.length})` }),
         h("div", { style: "display:flex;gap:6px;" }, enableAllBtn, disableAllBtn)
       ),
       actionsContainer
@@ -691,6 +703,7 @@ function markLvSection(): HTMLElement {
   }
 
   body.textContent = "Loading devices and memory…";
+  draw(); // Controls are usable immediately while devices and memory load.
   void loadMarkLvData();
 
   return section;
@@ -808,6 +821,7 @@ function coupleSection(): HTMLElement {
 // ── Supabase Live Realtime PC-to-PC Sync ────────────────────────────────────
 
 function supabaseSection(): HTMLElement {
+  if(State.account?.configured)return accountSection('database');
   const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
   const hasConfig = !!(settings.syncUrl && settings.syncApiKey);
   const statusDotEl = statusDot(hasConfig);
@@ -832,12 +846,11 @@ function supabaseSection(): HTMLElement {
     style: "flex:1 1 auto;font-size:12px;",
   }) as HTMLInputElement;
 
-  const emailInput = h('input', { type: 'email', value: settings.syncEmail || '', placeholder: 'Your Supabase Auth email' }) as HTMLInputElement;
-  const passwordInput = h('input', { type: 'password', placeholder: settings.syncPassword ? 'Saved password (leave blank to keep)' : 'Your Supabase Auth password' }) as HTMLInputElement;
-  emailInput.addEventListener('input', () => { settings.syncEmail = emailInput.value.trim(); });
-  passwordInput.addEventListener('input', () => { if (passwordInput.value) settings.syncPassword = passwordInput.value; });
+  const pairChannelInput=h('input',{type:'text',value:settings.shareChannel || 'coucou-badsha-ayzil',maxlength:100,'aria-label':'Partner channel'}) as HTMLInputElement;
+  pairChannelInput.addEventListener('input',()=>{settings.shareChannel=pairChannelInput.value.trim();});
+
   (window as any).electronAPI?.on('sync-status', (status: any) => {
-    statusMsg.textContent = status.connected ? 'Signed in to your private pair channel' : (status.error || status.status || 'Disconnected');
+    statusMsg.textContent = status.connected ? 'Connected to live partner channel' : (status.error || status.status || 'Disconnected');
     statusMsg.style.color = status.connected ? '#22c55e' : '#f59e0b';
   });
   const testBtn = h("button", {
@@ -861,6 +874,7 @@ function supabaseSection(): HTMLElement {
   saveBtn.addEventListener("click", async () => {
     const url = urlInput.value.trim();
     const key = keyInput.value.trim();
+    if(!/^[\w-]{1,100}$/.test(pairChannelInput.value.trim())){statusMsg.textContent='Channel needs letters, numbers, hyphens or underscores.';return;}
     if (url) settings.syncUrl = url;
     if (key) {
       settings.syncApiKey = key;
@@ -891,9 +905,9 @@ function supabaseSection(): HTMLElement {
     try {
       const res = await Bridge.testSupabase({ url, key });
       if (res && res.success) {
-        statusMsg.textContent = "Project endpoint is reachable. Save your account details to sign in to the private pair channel.";
-        statusMsg.style.color = "#f59e0b";
-        statusDotEl.style.background = "#f59e0b";
+        statusMsg.textContent = "Connection successful. Save & Connect on both PCs to join your partner channel.";
+        statusMsg.style.color = "#22c55e";
+        statusDotEl.style.background = "#22c55e";
         void updateCloudStatus();
       } else {
         statusMsg.textContent = ` Connection failed: ${res?.error || "Unknown error"}`;
@@ -959,7 +973,7 @@ function supabaseSection(): HTMLElement {
         offlineStatusTitle.textContent = " 24/7 Cloud Mailbox Active (Never Miss a Message)";
         offlineStatusTitle.style.color = "#22c55e";
         offlineDesc.textContent =
-          " Connected! All messages and tasks are stored 24/7 in your private Supabase database. You and Ayzil will receive all messages and task updates even if one of your PCs was shut down or offline!";
+          "Messages and tasks are stored in your Supabase project so your partner can receive them after reconnecting. Our playlist syncs directly when both PCs are connected.";
         sqlSteps.style.display = "none";
         copySqlBtn.style.display = "none";
       } else {
@@ -982,7 +996,7 @@ function supabaseSection(): HTMLElement {
     try {
       const sql = await Bridge.getSupabaseSqlSetup();
       if (sql) {
-        await navigator.clipboard.writeText(sql);
+        await Bridge.writeClipboard(sql);
         copySqlBtn.textContent = " Copied to Clipboard!";
         setTimeout(() => {
           copySqlBtn.textContent = " Copy 1-Click SQL Setup";
@@ -1032,7 +1046,7 @@ function supabaseSection(): HTMLElement {
       h("div", { text: "4. Copy the Project URL and anon public Key, paste them above, and click 'Save & Connect'." }),
       h("div", {
         style: "color:#22c55e;margin-top:4px;font-weight:500;",
-        text: "After pair membership is configured and both accounts connect, tasks and incoming files can synchronize.",
+        text: "5. Run the 1-Click SQL Setup in the SQL Editor. Enable Realtime public access. Use the same channel on both PCs and opposite Me / Her roles.",
       })
     )
   );
@@ -1040,13 +1054,12 @@ function supabaseSection(): HTMLElement {
   body.append(
     h("div", {
       class: "hint",
-      text: "Connect your own Supabase project for partner messages, tasks and file notifications. Both people need an account and membership in the same private channel.",
+      text: "Connect your own Supabase project for partner messages, tasks and file notifications. Use the same project and channel on both PCs, with opposite Me / Her roles.",
     }),
     h("div", { class: "row" }, h("label", { text: "Project URL" }), urlInput),
     h("div", { class: "row" }, h("label", { text: "Anon Public Key" }), keyInput),
-    h("div", { class: "row" }, h("label", { text: "Account email" }), emailInput),
-    h("div", { class: "row" }, h("label", { text: "Account password" }), passwordInput),
-    h("p", { class: "hint", text: "Run the secure setup SQL, create one Supabase Auth account per person, and add both user UUIDs to baymax_pairs with this channel. Disable Realtime public access. Sign in with your own account on each PC." }),
+    h("div", { class: "row" }, h("label", { text: "Pair channel" }), pairChannelInput),
+    h("p", { class: "hint", text: "Open project mode for private testing: anyone with the URL and public key can access partner data. No account sign-in is required." }),
     h("div", { class: "row", style: "gap:10px;margin-top:4px;" }, saveBtn, testBtn),
     statusMsg,
     offlineCard,
@@ -1721,6 +1734,18 @@ function companionSection(): HTMLElement {
     void save();
   });
   return h("div", { class: "preferences-page-stack" },
+    musicHeadphonesToggle(settings.musicHeadphonesEnabled !== false, async enabled => {
+      const previous=settings.musicHeadphonesEnabled;settings.musicHeadphonesEnabled=enabled;
+      if(!await save()){settings.musicHeadphonesEnabled=previous;return false;}return true;
+    }),
+    wardrobe(settings.companion, async value => {
+      const previous = settings.companion;
+      settings.companion = value;
+      if (!await save()) { settings.companion = previous; return false; }
+      setCompanionPreferences(value);
+      syncCompanionIcon();
+      return true;
+    }),
     h("section", {}, h("h2", { text: "Make it yours" }),
       h("p", { class: "hint", text: "Your assistant’s name appears throughout the app. This is separate from your account username." }),
       h("div", { class: "row" }, h("label", { for: name.id, text: "Assistant name" }), name)),
@@ -1743,10 +1768,11 @@ export async function mountSettings(target: HTMLElement, close?: () => void): Pr
     const nav = h("nav", { class: "preferences-nav", "aria-label": "Settings categories" });
     const content = h("div", { class: "preferences-content", tabindex: "0" });
     const pages: Array<[string, string, string, () => HTMLElement]> = [
+      ["account", "Account", "Your identity & partner connection", accountSection],
+      ["plans", "Plans & Membership", "Choose what works for you", plansSection],
       ["companion", "Companion", "Appearance & everyday preferences", companionSection],
       ["ai", "AI & voice", "Your providers, keys & live voice", aiSection],
-      ["control", "PC control", "Actions, audio devices & memory", markLvSection],
-      ["partner", "Partner", "Names & partner notifications", coupleSection],
+      ["control", "AI engine", "Audio devices & memory", markLvSection],
       ["sync", "Database & sync", "Your Supabase project & connection", supabaseSection],
       ["files", "File sharing", "Connect Google Drive separately", cloudSection],
       ["apps", "Applications", "Custom paths for launching apps", appLauncherSection],
@@ -1755,7 +1781,7 @@ export async function mountSettings(target: HTMLElement, close?: () => void): Pr
     const cache = new Map<string, HTMLElement>();
     const buttons = new Map<string, HTMLElement>();
     function select(id: string) {
-      const page = pages.find(p => p[0] === id)!;
+            const page = pages.find(p => p[0] === id)!;
       if (!cache.has(id)) {
         const section = page[3]();
         // Attach labels to controls for keyboard and assistive technology users.
@@ -1787,7 +1813,23 @@ export async function mountSettings(target: HTMLElement, close?: () => void): Pr
     root.append(header, h("div", { class: "preferences-body" },
       h("aside", { class: "preferences-sidebar" }, nav,
         h("p", { class: "preferences-footnote", text: `Baymax · ${version}\nAPI usage is billed by your provider.` })), content));
-    select("companion");
+    select(pages.some(p=>p[0]===sessionStorage.getItem('baymax-settings-page'))?sessionStorage.getItem('baymax-settings-page')!:'companion');
+    sessionStorage.removeItem('baymax-settings-page');
+    window.addEventListener('baymax-settings-page',event=>{if(root.isConnected){const id=(event as CustomEvent<string>).detail;if(pages.some(p=>p[0]===id)){select(id);sessionStorage.removeItem('baymax-settings-page');}}});
+    Bridge.on("account-changed", (next: any) => {
+      State.account = next;
+      window.dispatchEvent(new Event("baymax-account-changed"));
+      if (root.dataset.page === "account") {
+        cache.delete("account");
+        select("account");
+      }
+    });
+    Bridge.on("partner-unpaired", () => {
+      if (root.dataset.page === "account") {
+        cache.delete("account");
+        select("account");
+      }
+    });
   } catch (error) {
     root.textContent = `Settings could not load: ${error instanceof Error ? error.message : error}`;
     root.append(h("button", { text: "Try again", onclick: () => void mountSettings(target, close) }));

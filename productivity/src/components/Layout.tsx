@@ -3,6 +3,7 @@ import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 import FocusOverlay from './FocusOverlay';
+import { useCompanionIcon } from '../companion';
 
 const navItems = [
   { path: '/', icon: 'space_dashboard', label: 'Overview' },
@@ -13,6 +14,7 @@ const navItems = [
 ];
 
 export default function Layout() {
+  const companionIcon = useCompanionIcon();
   const { isFocusModeActive, focusTimeRemaining, focusSelectedMode, stopFocusSession, apps, timeframe } = useAppContext();
   const totalSeconds = apps.reduce((acc, app) => acc + (app.totalSeconds != null ? app.totalSeconds : (app.timeSpentMinutes || 0) * 60), 0);
   const h = Math.floor(totalSeconds / 3600);
@@ -29,6 +31,7 @@ export default function Layout() {
       {/* Sleek Baymax Navigation Bar */}
       <header className="h-10 px-4 flex items-center justify-between border-b border-white/10 bg-[#0E0F12]/90 backdrop-blur-md flex-shrink-0 z-40">
         <div className="flex items-center gap-1.5">
+          <img src={companionIcon} alt="Your companion" className="w-7 h-7 object-contain mr-1 flex-shrink-0" />
           {navItems.map((item) => (
             <NavLink
               key={item.path}

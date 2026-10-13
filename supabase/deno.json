@@ -1,0 +1,1 @@
+{"nodeModulesDir":"none","compilerOptions":{"strict":true},"tasks":{"check":"deno check functions/account/index.ts functions/billing/index.ts functions/content/index.ts functions/razorpay-webhook/index.ts custom/functions/custom-adapter/index.ts"}}

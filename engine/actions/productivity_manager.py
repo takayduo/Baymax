@@ -20,6 +20,7 @@ TOOL = {
                 "type": "STRING",
                 "description": "'analyze_stats' to report screen time and focus score, 'start_focus' to begin a focus session, 'stop_focus' to end it, 'classify' to mark an app category.",
             },
+            "timer_mode": {"type":"STRING","enum":["classic","pomodoro"],"description":"Use pomodoro for alternating focus and break intervals"},
             "duration_minutes": {
                 "type": "INTEGER",
                 "description": "Duration of focus session in minutes (e.g. 60 for 1 hour, 45, 25). Default: 60",

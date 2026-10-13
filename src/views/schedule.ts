@@ -30,17 +30,12 @@ function getScheduleRoleInfo() {
 export function buildSchedule(actions: ViewActions): ViewHost {
   const info0 = getScheduleRoleInfo();
   // Active user's tab is ALWAYS first, partner's tab is ALWAYS second
-  const toggleUser = h("button", { class: "sched-toggle active", text: `${info0.currentUserName} ${info0.currentUserIcon}` });
-  const togglePartner = h("button", { class: "sched-toggle", text: `${info0.partnerUserName} ${info0.partnerIcon}` });
+  const toggleUser = h("button", { class: "sched-toggle active", text: `${info0.currentUserName}` });
+  const togglePartner = h("button", { class: "sched-toggle", text: `${info0.partnerUserName}` });
   const toggleBar = h("div", { class: "sched-toggles" }, toggleUser, togglePartner);
 
   const headerTitle = h("div", { class: "sched-title", text: "Tasks" });
-  const presenceBadge = h("span", {
-    class: "sched-presence-badge",
-    style: "font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:auto;margin-right:10px;background:rgba(34,197,94,0.15);color:#22c55e;display:none;align-items:center;gap:4px;",
-    text: "🟢 Online",
-  });
-  const topRow = h("div", { class: "sched-header-row" }, headerTitle, presenceBadge, toggleBar);
+  const topRow = h("div", { class: "sched-header-row" }, headerTitle, toggleBar);
 
   const listEl = h("div", { class: "sched-list" });
 
@@ -78,15 +73,15 @@ export function buildSchedule(actions: ViewActions): ViewHost {
     errorStatus.hidden = false;
   }
   const el = h("div", { class: "view schedule-view" }, h("div", { class: "card wash" }, cardBody));
-  (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(244, 80, 94, 0.28)");
+  (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(158, 186, 176, 0.06)");
 
   let lastUserRole = State.settings.userRole || "me";
   let currentFilter: "me" | "her" = State.scheduleFilter || info0.currentUserRole;
 
   function updateToggles() {
     const info = getScheduleRoleInfo();
-    toggleUser.textContent = `${info.currentUserName} ${info.currentUserIcon}`;
-    togglePartner.textContent = `${info.partnerUserName} ${info.partnerIcon}`;
+    toggleUser.textContent = `${info.currentUserName}`;
+    togglePartner.textContent = `${info.partnerUserName}`;
     toggleUser.classList.toggle("active", currentFilter === info.currentUserRole);
     togglePartner.classList.toggle("active", currentFilter === info.partnerRole);
 
@@ -157,7 +152,7 @@ export function buildSchedule(actions: ViewActions): ViewHost {
   function renderList() {
     clear(listEl);
     const info = getScheduleRoleInfo();
-    const items = State.schedule.filter((s) => s.assignee === currentFilter);
+    const items = State.schedule.filter((s) => (s.assignee === currentFilter || String(s.assignee) === "both") && !(s as any).deleted);
 
     if (items.length === 0) {
       const empty = h(
@@ -185,13 +180,13 @@ export function buildSchedule(actions: ViewActions): ViewHost {
       const titleEl = h("span", { class: "sched-item-title", text: item.title });
 
       // Task attribution badge:
-      // If task was added by the person currently looking at this PC, show "By You ✨"
+      // If task was added by the person currently looking at this PC, show "By you"
       // If task was added by the partner, show "By <PartnerName> <Icon>"
       const assignedLabel =
         item.assignedBy && item.assignedBy !== item.assignee
           ? h("span", {
               class: "sched-item-badge",
-              text: item.assignedBy === info.currentUserRole ? "By You ✨" : `By ${info.partnerUserName} ${info.partnerIcon}`,
+              text: item.assignedBy === info.currentUserRole ? "By you" : `By ${info.partnerUserName}`,
             })
           : null;
 
@@ -230,14 +225,6 @@ export function buildSchedule(actions: ViewActions): ViewHost {
 
       updateToggles();
 
-      if (State.partnerOnline) {
-        presenceBadge.style.display = "inline-flex";
-        presenceBadge.textContent = `🟢 ${info.partnerUserName} Online`;
-        togglePartner.title = `${info.partnerUserName} is currently online!`;
-      } else {
-        presenceBadge.style.display = "none";
-        togglePartner.title = `${info.partnerUserName} is offline`;
-      }
 
       renderList();
     },

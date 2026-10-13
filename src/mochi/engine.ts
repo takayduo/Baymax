@@ -1,3 +1,6 @@
+import { companionMouth } from "../companion/geometry";
+import { companionPath, drawCompanionBody } from "../companion/render";
+import { getAppearance, shade, companionInk, musicAppearance, type Appearance } from "../companion/appearance";
 // Mochi — direct port of NotchBuddy/Sources/App/BotEngine.swift to Canvas 2D.
 // Same constants, same tweens, same easings, same particles. The only intentional
 // difference is the `happy`/`wink` eye arc, which follows the prototype
@@ -64,8 +67,6 @@ const EYE_W = 0.25;
 const EYE_H = 0.27;
 const EYE_SP = 0.37;
 const EYE_P = -0.12;
-const BASE_TOP: RGB = [0.929, 0.929, 0.937]; // #EDEDEF
-const BASE_BOTTOM: RGB = [0.769, 0.773, 0.792]; // #C4C5CA
 const INK = "rgb(26,20,18)"; // #1A1412
 const MINI_INK = "rgb(16,19,26)"; // #10131A
 
@@ -89,7 +90,7 @@ const base = {
 };
 
 export const BOT_STATES: Record<BotStateName, BotStateCfg> = {
-  idle: { ...base, color: C.idle, tint: 0, eye: "pill", badge: null },
+  idle: { ...base, breathes: true, color: C.idle, tint: 0, eye: "pill", badge: null },
   working: { ...base, color: C.working, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.working } },
   thinking: { ...base, color: C.thinking, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.thinking }, look: [0.55, 0.55] },
   searching: { ...base, color: C.searching, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.searching }, scans: true },
@@ -167,7 +168,8 @@ const FONT = `system-ui, "Segoe UI Variable Text", "Segoe UI", sans-serif`;
 export class BotEngine {
   isMini = false;
   /** Solid body colour for mini bots / integration pills (null = Mochi gradient). */
-  bodyColor: RGB | null = null;
+  /** Optional preview override. Live companions always follow the wardrobe. */
+  appearance: Appearance | null = null;
 
   // Animated state (BotEngine `s`)
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
@@ -182,6 +184,12 @@ export class BotEngine {
 
   // Mouth spring (fraction of R)
   slotH = 0; slotHTarget = 0; slotHVel = 0; isChewing = false;
+
+  setMouthOpen(value: number) {
+    this.slotH = this.slotHTarget = Math.max(0, value);
+    this.slotHVel = 0;
+    if (!value) this.isChewing = false;
+  }
 
   col: RGB = C.idle;
   colT: RGB = C.idle;
@@ -247,7 +255,10 @@ export class BotEngine {
         this.anim("oy", [[-0.2, 150, Ease.out], [0, 300, Ease.back]]);
         break;
       case "dizzy":
-        this.doRoll(1300, 2);
+        this.tweens.delete("roll");this.locks.delete("roll");
+        this.roll = 0;
+        this.anim("tilt", [[-.18,180,Ease.inOut],[.18,300,Ease.inOut],[-.12,300,Ease.inOut],[0,300,Ease.inOut]]);
+        this.emit("star", 5);
         break;
       case "question":
         this.blink();
@@ -540,12 +551,12 @@ export class BotEngine {
       this.tgTilt = -0.06 + Math.sin(2 * Math.PI * 1.2 * wt) * 0.07;
     }
 
-    const bounce = this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : 0;
+    const bounce = this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : this.cfg.breathes ? Math.sin(t * 1.25) * .035 : 0;
     const kGen = 1 - Math.pow(0.0008, dt);
     if (!this.locks.has("oy")) this.oy += (bounce - this.oy) * kGen;
 
     if (this.cfg.breathes) {
-      const amp = this.isMini ? 0.07 : 0.035;
+      const amp = this.isMini ? .035 : this.state === "idle" ? .018 : .035;
       this.tgSy = 1 + Math.sin(t * 1.8) * amp;
       this.tgSx = 1 - Math.sin(t * 1.8) * amp * 0.57;
     } else if (this.isMini) {
@@ -644,28 +655,29 @@ export class BotEngine {
     const R = W * 0.3;
     const rx = R * 1.14;
     const ry = R * 0.88;
-    const cx = W / 2 + this.ox * R;
-    const cy = H / 2 + this.particleOverhang / 2 + this.oy * R + R * 0.06;
+    const cx = W / 2 + this.ox * R + Math.sin(this.yaw) * rx * .22;
+    const vibe = musicAppearance();
+    const cy = H / 2 + this.particleOverhang / 2 + this.oy * R + R * .06 - Math.sin(this.pitch) * ry * .18 + vibe.bob * R * .07;
 
     this.drawHandsBehind(x, R, rx, ry, cx, cy);
 
     x.save();
     x.translate(cx, cy);
-    if (this.tilt !== 0) x.rotate(this.tilt);
+    x.rotate(this.tilt + Math.sin(this.yaw) * .08 + vibe.tilt * .07);
     x.scale(this.sx, this.sy);
 
     const body = this.bodyPath(rx, ry, R);
     this.drawBody(x, body, R, rx, ry);
 
-    const blushVal = Math.max(this.blush, this.tint * 0.5) * (1 - this.morph);
+    const blushVal = Math.max(this.blush, (this.appearance ?? getAppearance()).avatar.minimal ? 0 : this.tint * .5) * (1 - this.morph);
     if (blushVal > 0.01) {
       x.save();
       x.clip(body);
-      const yOffset = Math.sin(this.yaw) * rx * 0.8;
+      const yOffset = Math.sin(this.yaw) * rx * .45;
       x.fillStyle = `rgba(255,120,150,${0.5 * blushVal})`;
       for (const sd of [-1, 1]) {
         x.beginPath();
-        x.ellipse(sd * rx * 0.55 + yOffset, ry * 0.2, R * 0.17, R * 0.1, 0, 0, Math.PI * 2);
+        x.ellipse(sd * rx * 0.55 + yOffset, ry * .2 - Math.sin(this.pitch) * ry * .45, R * .17, R * 0.1, 0, 0, Math.PI * 2);
         x.fill();
       }
       x.restore();
@@ -682,80 +694,30 @@ export class BotEngine {
     this.drawParticles(x, R, cx, cy);
   }
 
-  private bodyPath(rx: number, ry: number, R: number): Path2D {
-    const n = 72;
-    const expN = 2.0 / 2.7;
-    const tw = R * 1.0;
-    const th = R * 0.94;
-    const tr = R * 0.42;
-    const p = new Path2D();
-    const m = this.morph;
-    for (let i = 0; i <= n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      const ca = Math.cos(a);
-      const sa = Math.sin(a);
-      const px0 = rx * (ca >= 0 ? Math.pow(ca, expN) : -Math.pow(-ca, expN));
-      const py0 = ry * (sa >= 0 ? Math.pow(sa, expN) : -Math.pow(-sa, expN));
-      let px = px0;
-      let py = py0;
-      if (m >= 0.005) {
-        const rr = rrPoint(ca, sa, tw, th, tr);
-        px = lerp(px0, rr.x, m);
-        py = lerp(py0, rr.y, m);
-      }
-      if (i === 0) p.moveTo(px, py);
-      else p.lineTo(px, py);
-    }
-    p.closePath();
-    return p;
+  private bodyPath(rx: number, ry: number, _R: number): Path2D {
+    return companionPath(rx, ry, this.appearance ?? getAppearance());
   }
 
-  private drawBody(x: CanvasRenderingContext2D, body: Path2D, R: number, rx: number, ry: number) {
-    if (this.bodyColor) {
-      // Mini bots: flat solid fill — no gradient, no reflection, no highlight
-      x.fillStyle = rgba(this.bodyColor, 1);
-      x.fill(body);
-      return;
-    }
-    const g = x.createLinearGradient(rx * 0.7, -ry * 0.85, -rx * 0.8, ry * 0.9);
-    g.addColorStop(0, rgba(BASE_TOP));
-    g.addColorStop(1, rgba(BASE_BOTTOM));
-    x.fillStyle = g;
-    x.fill(body);
-
-    const effectiveTint = this.tint * (1 - this.morph);
-    if (effectiveTint > 0.01) {
-      const tg = x.createLinearGradient(0, ry, 0, -ry);
-      tg.addColorStop(0, rgba(this.col, 0.72 * effectiveTint));
-      tg.addColorStop(1, rgba(this.col, 0));
-      x.fillStyle = tg;
+  private drawBody(x: CanvasRenderingContext2D, body: Path2D, _R: number, rx: number, ry: number) {
+    drawCompanionBody(x, rx, ry, this.appearance ?? getAppearance(), { yaw: this.yaw, pitch: this.pitch });
+    // Activity adds a subtle tint; the user's chosen colour remains recognizable.
+    if (this.tint > 0.01) {
+      x.fillStyle = rgba(this.col, .13 * this.tint * (1 - this.morph));
       x.fill(body);
     }
-
-    const sh = x.createRadialGradient(0, 0, R * 0.15, 0, 0, R * 1.25);
-    sh.addColorStop(0, "rgba(0,0,0,0)");
-    sh.addColorStop(0.6, "rgba(0,0,0,0)");
-    sh.addColorStop(1, "rgba(0,0,0,0.2)");
-    x.fillStyle = sh;
-    x.fill(body);
-
-    const hl = x.createRadialGradient(rx * 0.34, -ry * 0.46, 0, rx * 0.34, -ry * 0.46, R * 0.42);
-    hl.addColorStop(0, "rgba(255,255,255,0.55)");
-    hl.addColorStop(1, "rgba(255,255,255,0)");
-    x.fillStyle = hl;
-    x.fill(body);
   }
 
   private drawEyes(x: CanvasRenderingContext2D, body: Path2D, R: number, rx: number, ry: number) {
-    let shape: EyeShape = this.eyeOverride ?? this.cfg.eye;
-    if (this.morph > 0.5) {
+    // Slap, hover and wardrobe eye overrides must never mask the dizzy state.
+    let shape: EyeShape = this.state === "dizzy" ? "spiral" : this.eyeOverride ?? this.cfg.eye;
+    if (this.state !== "dizzy" && this.morph > 0.5) {
       if (this.isChewing) shape = "happy";
       else if (this.slotHTarget > 0.05 || this.slotH > 0.1) shape = "cup";
     }
 
     x.save();
     x.clip(body);
-    const ink = this.isMini ? MINI_INK : INK;
+    const ink = companionInk(this.appearance ?? getAppearance());
     x.fillStyle = ink;
     x.strokeStyle = ink;
 
@@ -767,7 +729,7 @@ export class BotEngine {
       if (Math.cos(eyeYaw) * cp <= 0.04) continue;
 
       const ex = Math.sin(eyeYaw) * cp * rx;
-      const ey = -Math.sin(eyePitch) * ry + (this.morph > 0 ? ry * 0.14 * this.morph : 0);
+      const ey = -Math.sin(eyePitch) * ry + (this.morph > 0 ? -ry * 0.12 * this.morph : 0);
       const fx = lerp(Math.max(0.18, Math.cos(eyeYaw)), 1, this.morph * 0.7);
       const fy = lerp(Math.max(0.18, cp), 1, this.morph * 0.7);
       const eyeMult = this.isMini ? 1.9 : 1.0;
@@ -827,11 +789,11 @@ export class BotEngine {
         x.stroke();
         break;
       case "spiral": {
-        x.lineWidth = w * 0.22;
+        x.lineWidth = Math.max(1, w * 0.24);
         x.lineCap = "round";
         x.beginPath();
         for (let a = 0; a < 4.4 * Math.PI; a += 0.2) {
-          const r = w * 0.06 + a * w * 0.058;
+          const r = w * 0.08 + a * w * 0.078;
           const aa = a + t * 9 * sd;
           const px = Math.cos(aa) * r;
           const py = Math.sin(aa) * r;
@@ -891,26 +853,12 @@ export class BotEngine {
     }
   }
 
-  /** Mailbox slot: dark pill cut into the box face, with rim and lip highlights. */
+  /** Eating mouth stays inside every companion's facial anchor. */
   private drawMouth(x: CanvasRenderingContext2D, body: Path2D, R: number) {
     const m = this.morph;
-    const hW = R * 1.8 * m;
-    const hH = this.slotH * R * m;
-    const hX = -hW / 2;
-    const boxTop = -R * (0.88 + 0.06 * m);
-    const hY = boxTop + R * 0.08 * m;
-
+    const { x: hX, y: hY, w: hW, h: hH } = companionMouth(R, m, this.slotH);
     x.save();
     x.clip(body);
-
-    x.strokeStyle = `rgba(255,255,255,${0.55 * m})`;
-    x.lineWidth = 1;
-    x.lineCap = "round";
-    x.beginPath();
-    x.moveTo(-R * 0.9 * m, boxTop + 1);
-    x.lineTo(R * 0.9 * m, boxTop + 1);
-    x.stroke();
-
     if (hH > 0.8) {
       const hR = Math.min(hW / 2, hH / 2);
       const g = x.createLinearGradient(0, hY, 0, hY + hH);
@@ -974,8 +922,8 @@ export class BotEngine {
         localY = hhB * 0.7;
       }
 
-      const cosT = Math.cos(this.tilt);
-      const sinT = Math.sin(this.tilt);
+      const cosT = Math.cos(this.tilt + Math.sin(this.yaw) * .08);
+      const sinT = Math.sin(this.tilt + Math.sin(this.yaw) * .08);
       const worldX = cx + cosT * localX - sinT * localY;
       const worldY = cy + sinT * localX + cosT * localY;
 
@@ -983,13 +931,9 @@ export class BotEngine {
       x.translate(worldX, worldY);
       if (handRot !== 0) x.rotate(handRot);
       const g = x.createLinearGradient(hew * 0.7, -heh * 0.85, -hew * 0.8, heh * 0.9);
-      if (this.bodyColor) {
-        g.addColorStop(0, rgba(mix3(this.bodyColor, [1, 1, 1], 0.35)));
-        g.addColorStop(1, rgba(this.bodyColor));
-      } else {
-        g.addColorStop(0, rgba(BASE_TOP));
-        g.addColorStop(1, rgba(BASE_BOTTOM));
-      }
+      const handColor = (this.appearance ?? getAppearance()).style.color;
+      g.addColorStop(0, shade(handColor, .2));
+      g.addColorStop(1, shade(handColor, -.12));
       x.beginPath();
       x.ellipse(0, 0, hew, heh, 0, 0, Math.PI * 2);
       x.fillStyle = g;
@@ -1004,8 +948,8 @@ export class BotEngine {
   private drawBadge(x: CanvasRenderingContext2D, badge: Badge, R: number, cx: number, cy: number) {
     const bs = this.badgeS * (this.isMini ? 1.25 : 1);
     const bx = cx - R * 0.72 * this.sx;
-    const by = cy - R * 0.72 * this.sy;
     const t = now();
+    const by = cy - R * 0.9 * this.sy + Math.sin(t * 2) * R * .035;
 
     x.save();
     x.translate(bx, by);
@@ -1025,6 +969,10 @@ export class BotEngine {
         x.arc(0, 0, dotR, 0, Math.PI * 2);
         x.fill();
       } else {
+        x.fillStyle = col;
+        for (const [dx, dy, radius] of [[.22, .24, .035], [.16, .17, .055]]) {
+          x.beginPath(); x.arc(R * dx, R * dy, R * radius, 0, Math.PI * 2); x.fill();
+        }
         const pw = R * 0.72;
         const ph = R * 0.36;
         roundRectPath(x, -pw / 2, -ph / 2, pw, ph, ph / 2);
@@ -1121,36 +1069,3 @@ export class BotEngine {
 }
 
 /** Ray → rounded-rect boundary intersection, for the mailbox morph. */
-function rrPoint(ca: number, sa: number, W: number, H: number, cr: number): { x: number; y: number } {
-  const eps = 1e-6;
-  const kx = ca >= 0 ? 1 : -1;
-  const ky = sa >= 0 ? 1 : -1;
-  const cx = kx * (W - cr);
-  const cy = ky * (H - cr);
-
-  const dot = ca * cx + sa * cy;
-  const disc = dot * dot - (cx * cx + cy * cy - cr * cr);
-  if (disc >= 0) {
-    const t = dot + Math.sqrt(disc);
-    if (t > eps) {
-      const px = ca * t;
-      const py = sa * t;
-      if (Math.abs(px) >= W - cr - eps && Math.abs(py) >= H - cr - eps) return { x: px, y: py };
-    }
-  }
-  if (Math.abs(sa) > eps) {
-    const t = (ky * H) / sa;
-    if (t > eps) {
-      const px = ca * t;
-      if (Math.abs(px) <= W - cr + eps) return { x: px, y: ky * H };
-    }
-  }
-  if (Math.abs(ca) > eps) {
-    const t = (kx * W) / ca;
-    if (t > eps) {
-      const py = sa * t;
-      if (Math.abs(py) <= H - cr + eps) return { x: kx * W, y: py };
-    }
-  }
-  return { x: kx * W, y: ky * H };
-}

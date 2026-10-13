@@ -1,3 +1,5 @@
+> Baymax update: the optional HUD now uses the twenty original companions from `public/companions/catalog.json`, including saved colours and accessories. The old holographic human mesh and model have been removed. Historical instructions below describe the upstream engine.
+
 # ⚙️ MARK LV (55)
 ### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
 
@@ -338,8 +340,6 @@ Mark LV/
 │   ├── gemini.py             # One place for every one-shot Gemini call — model ladder, timeouts, cooldowns
 │   ├── prompt.txt            # All prompt wording — {tokens} are filled from the live system at startup
 │   ├── avatar.py             # Avatar renderer — lighting, pose, expression, mouth (QPainter)
-│   ├── avatar_mesh.py        # Head geometry — loads the face, generates skull/neck/rigs
-│   ├── face_model.obj        # The face itself (MediaPipe canonical model, Apache-2.0, 25 KB)
 │   ├── viseme.py             # Transcript → mouth shapes, fused with the audio's timing
 │   ├── echo.py               # Tells your voice from the assistant's own echo; self-calibrating
 │   ├── hotkey.py             # Push-to-talk chord — global on Windows, windowed fallback elsewhere
@@ -360,7 +360,6 @@ Mark LV/
 
 | Asset | Source | Licence |
 | --- | --- | --- |
-| `core/face_model.obj` | [MediaPipe](https://github.com/google-ai-edge/mediapipe) canonical face model — 468 vertices of measured human face geometry | Apache License 2.0 |
 
 ---
 
