@@ -101,14 +101,10 @@ async function testSupabaseConnection({ url, key }) {
  * Checks whether the cloud persistent tables (mochi_messages & mochi_tasks) exist in Supabase.
  */
 async function checkCloudStorageReady(creds) {
-  if (!currentConfig?.userId) return { ready:false, error:"Sign in with an authorized pair account first." };
   let client = supabaseClient;
   const url = (creds?.url || currentConfig?.url || "").trim().replace(/\/+$/, "");
   const key = (creds?.key || currentConfig?.key || "").trim();
-  if (!client && url && key) {
-    return { ready: false, error: "Sign in with an authorized pair account first." };
-  }
-  if (false) {
+  if (url && key && (!client || url !== currentConfig?.url || key !== currentConfig?.key)) {
     try {
       client = createClient(url, key, { auth: { persistSession: false } });
     } catch (e) {
@@ -144,7 +140,7 @@ async function checkCloudStorageReady(creds) {
  * Initializes Supabase client, presence tracking, real-time broadcast listeners, and DB catch-up.
  */
 async function initSupabase({
-  email, password, onStatus,
+  onStatus,
   url,
   key,
   channelName = "coucou-badsha-ayzil",
@@ -155,6 +151,8 @@ async function initSupabase({
   onScheduleUpdated,
   onPresenceSync,
   onRemoteAccess,
+  onMusicSignal,
+  onVoiceSignal,
   onSyncRequest,
   onSyncResponse,
   onPartnerJoin,
@@ -168,7 +166,6 @@ async function initSupabase({
   const cleanKey = key.trim();
 
   try {
-    if (!email || !password) throw new Error('Enter your Supabase account email/password and provision pair membership before connecting.');
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(channelName)) throw new Error('Channel must contain only letters, digits, underscores and hyphens.');
     client = createClient(cleanUrl, cleanKey, {
       auth: { persistSession: false },
@@ -179,25 +176,12 @@ async function initSupabase({
       },
     });
 
-    const { data: auth, error: authError } = await client.auth.signInWithPassword({ email, password });
-    if (generation !== connectionGeneration) {void client.removeAllChannels();return null;}
-    if (authError || !auth.user) throw new Error(authError?.message || 'Authentication failed');
-    const { data: pair, error: pairError } = await client.from('baymax_pairs').select('user_a,user_b').eq('channel', channelName).single();
-    if (generation !== connectionGeneration) {void client.removeAllChannels();return null;}
-    if (pairError || !pair || ![pair.user_a, pair.user_b].includes(auth.user.id)) throw new Error('No authorized pair membership. Apply the secure setup SQL and add both Auth user IDs.');
+    const myRole = userRole === 'her' ? 'her' : 'me';
     supabaseClient = client;
-    currentConfig = { url: cleanUrl, key: cleanKey, channelName, userName, userRole, userId: auth.user.id, peerId: pair.user_a === auth.user.id ? pair.user_b : pair.user_a };
-    await client.realtime.setAuth(auth.session.access_token);
-    if (generation !== connectionGeneration) {void client.removeAllChannels();return null;}
-    client.auth.onAuthStateChange((event, session) => {
-      if(generation !== connectionGeneration)return;
-      if (session?.access_token) void client?.realtime.setAuth(session.access_token);
-      else if (event === 'SIGNED_OUT') disconnectSupabase();
-    });
+    currentConfig = {url:cleanUrl,key:cleanKey,channelName,userName,userRole:myRole,userId:myRole,peerId:myRole === 'me' ? 'her' : 'me'};
 
     const channel = client.channel(channelName, {
       config: {
-        private: true,
         broadcast: { ack: true, self: false },
         presence: { key: userName },
       },
@@ -205,8 +189,23 @@ async function initSupabase({
 
     realtimeChannel = channel;
 
+    channel.on('broadcast', {event:'voice_signal'}, ({payload}) => {
+      if(generation !== connectionGeneration)return;
+      if(payload?.senderId === currentConfig?.peerId && payload?.recipientId === currentConfig?.userId) {
+        try {onVoiceSignal?.(payload);} catch(error) {console.warn('[Voice call] Invalid signal:',error.message);}
+      }
+    });
+
+    channel.on('broadcast', {event:'music_signal'}, ({payload}) => {
+      if(generation !== connectionGeneration)return;
+      if (payload?.senderId === currentConfig?.peerId && payload?.recipientId === currentConfig?.userId) {
+        try { onMusicSignal?.(payload); } catch (error) { console.warn('[Music] Invalid signal:',error.message); }
+      }
+    });
+
     // 1. Broadcast: File Sharing
     channel.on("broadcast", { event: "file_shared" }, ({ payload }) => {
+      if(generation !== connectionGeneration)return;
       console.log("[Supabase Realtime] Received file_shared event:", payload?.fileName);
       if (typeof onFileShared === "function" && payload) {
         try {
@@ -219,6 +218,7 @@ async function initSupabase({
 
     // 2. Broadcast: Schedule & Task Updates
     channel.on("broadcast", { event: "schedule_update" }, ({ payload }) => {
+      if(generation !== connectionGeneration)return;
       console.log("[Supabase Realtime] Received schedule_update event from:", payload?.senderName);
       if (typeof onScheduleUpdated === "function" && payload) {
         try {
@@ -231,6 +231,7 @@ async function initSupabase({
 
     // 3. Presence: Partner Online Status
     channel.on("presence", { event: "sync" }, () => {
+      if(generation !== connectionGeneration)return;
       const state = channel.presenceState();
       console.log("[Supabase Realtime] Presence sync:", Object.keys(state));
       if (typeof onPresenceSync === "function") {
@@ -244,6 +245,7 @@ async function initSupabase({
 
     // 4. Broadcast: Live Partner Chat
     channel.on("broadcast", { event: "partner_chat" }, ({ payload }) => {
+      if(generation !== connectionGeneration)return;
       console.log("[Supabase Realtime] Received partner_chat event from:", payload?.sender);
       if (typeof onChatMessage === "function" && payload) {
         try {
@@ -256,6 +258,7 @@ async function initSupabase({
 
     // 5. Broadcast: Remote Desktop Access (Mochi Eye)
     channel.on("broadcast", { event: "remote_access" }, ({ payload }) => {
+      if(generation !== connectionGeneration)return;
       console.log("[Supabase Realtime] Received remote_access event:", payload?.action, "from:", payload?.sender);
       if (typeof onRemoteAccess === "function" && payload && payload.senderId === currentConfig?.peerId && payload.recipientId === currentConfig?.userId) {
         try {
@@ -268,6 +271,7 @@ async function initSupabase({
 
     // 6. Broadcast: Peer Catch-Up Sync Request
     channel.on("broadcast", { event: "sync_request" }, ({ payload }) => {
+      if(generation !== connectionGeneration)return;
       console.log("[Supabase Realtime] Partner requested peer catch-up sync from:", payload?.senderName);
       if (typeof onSyncRequest === "function" && payload) {
         try {
@@ -280,6 +284,7 @@ async function initSupabase({
 
     // 7. Broadcast: Peer Catch-Up Sync Response
     channel.on("broadcast", { event: "sync_response" }, ({ payload }) => {
+      if(generation !== connectionGeneration)return;
       console.log("[Supabase Realtime] Received peer catch-up sync response from:", payload?.senderName);
       if (typeof onSyncResponse === "function" && payload) {
         try {
@@ -292,6 +297,7 @@ async function initSupabase({
 
     // 8. Broadcast: Partner Online Join Announcement
     channel.on("broadcast", { event: "partner_join" }, ({ payload }) => {
+      if(generation !== connectionGeneration)return;
       console.log("[Supabase Realtime] Received partner_join event from:", payload?.senderName);
       if (typeof onPartnerJoin === "function" && payload) {
         try {
@@ -353,6 +359,7 @@ async function initSupabase({
             filter: `channel=eq.${channelName}`,
           },
           (payload) => {
+            if(generation !== connectionGeneration)return;
             const newRow = payload?.new;
             if (newRow && typeof onChatMessage === "function") {
               // Ignore messages we sent ourselves
@@ -392,18 +399,19 @@ async function initSupabase({
  * Disconnects existing channels and client.
  */
 function disconnectSupabase() {
+  const cleanup = [];
   connectionGeneration++;
   if (realtimeChannel && supabaseClient) {
     try {
-      realtimeChannel.untrack();
-      supabaseClient.removeChannel(realtimeChannel);
+      const channel = realtimeChannel, client = supabaseClient;
+      cleanup.push(Promise.resolve(channel.untrack()).catch(()=>{}).then(()=>client.removeChannel(channel)));
     } catch (e) {
       console.warn("Channel cleanup error:", e);
     }
   }
   if (dbChangesChannel && supabaseClient) {
     try {
-      supabaseClient.removeChannel(dbChangesChannel);
+      cleanup.push(supabaseClient.removeChannel(dbChangesChannel));
     } catch (e) {}
   }
   realtimeChannel = null;
@@ -411,6 +419,7 @@ function disconnectSupabase() {
   supabaseClient = null;
   currentConfig = null;
   hasSentInitialPartnerJoin = false;
+  return Promise.allSettled(cleanup);
 }
 
 /**
@@ -498,6 +507,18 @@ async function broadcastRemoteAccess(payload) {
   }
 }
 
+async function broadcastVoiceSignal(payload) {
+  if (!realtimeChannel || !currentConfig?.peerId) return false;
+  try {return await realtimeChannel.send({type:'broadcast',event:'voice_signal',payload:{...payload,senderId:currentConfig.userId,recipientId:currentConfig.peerId}}) === 'ok';}catch{return false;}
+}
+
+async function broadcastMusicSignal(payload) {
+  if (!realtimeChannel || !currentConfig?.peerId) return false;
+  try {
+    return await realtimeChannel.send({type:'broadcast',event:'music_signal',payload:{...payload,senderId:currentConfig.userId,recipientId:currentConfig.peerId}}) === 'ok';
+  } catch { return false; }
+}
+
 /**
  * Broadcasts a peer-to-peer sync request (asking partner for any missed messages/tasks).
  */
@@ -573,7 +594,6 @@ async function saveChatMessageToCloud(msg, channelName = "coucou-badsha-ayzil") 
       id: msg.id,
       channel: channelName,
       sender: msg.sender,
-      sender_role: msg.senderRole,
       recipient: msg.recipient,
       text: msg.text,
       timestamp: msg.timestamp || Date.now(),
@@ -742,6 +762,8 @@ module.exports = {
   broadcastScheduleUpdate,
   broadcastChatMessage,
   broadcastRemoteAccess,
+  broadcastMusicSignal,
+  broadcastVoiceSignal,
   broadcastSyncRequest,
   broadcastSyncResponse,
   broadcastPartnerJoin,
@@ -752,3 +774,27 @@ module.exports = {
   deleteTaskFromCloud,
   fetchOfflineTasks,
 };
+
+// Configured launch accounts never fall back to the former open-project transport.
+const {CloudTransport}=require('./cloudTransport');
+const managed=new CloudTransport();let managedAccount=null;
+const legacyExports={...module.exports};
+module.exports.initSupabase=options=>{
+  managedAccount=options.account?.configured?options.account:null;
+  if(managedAccount){void disconnectSupabase();return managed.start(managedAccount,options);}
+  void managed.stop();return legacyExports.initSupabase(options);
+};
+module.exports.disconnectSupabase=()=>Promise.allSettled([managed.stop(),legacyExports.disconnectSupabase()]);
+const routes={
+ broadcastChatMessage:msg=>managed.signal('chat-live',{id:require('./cloudTransport').stableId(msg.id),text:msg.text}),
+ broadcastScheduleUpdate:payload=>managed.signal('schedule-live',payload),
+ broadcastMusicSignal:msg=>managed.signal('music',msg),
+ broadcastVoiceSignal:msg=>managed.signal('voice',msg),
+ broadcastFileShared:()=>false,broadcastRemoteAccess:msg=>managed.signal('remote',msg),
+ broadcastSyncRequest:()=>managed.sync(),broadcastSyncResponse:()=>false,broadcastPartnerJoin:()=>managed.signal('presence',{online:true}),
+ saveChatMessageToCloud:msg=>managed.saveMessage(msg),fetchOfflineChatMessages:()=>managed.messages().catch(()=>[]),
+ saveTaskToCloud:task=>managed.saveTask(task),saveAllTasksToCloud:async tasks=>(await Promise.all(tasks.map(t=>managed.saveTask(t)))).every(Boolean),
+ deleteTaskFromCloud:async id=>{const task=(await managed.tasks()).find(t=>t.id===id);return task?managed.saveTask({...task,deleted:true}):true;},
+ fetchOfflineTasks:()=>managed.tasks().catch(()=>[])
+};
+for(const [name,handler] of Object.entries(routes))module.exports[name]=(...args)=>managedAccount?handler(...args):legacyExports[name](...args);

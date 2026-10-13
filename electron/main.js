@@ -3,6 +3,14 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const secrets = require("./secretSettings");
+const { normalizeCompanion } = require("./companion");
+const { PushToTalkService, parseShortcut } = require("./pushToTalk");
+const { terminateProcessTree } = require('./processTree');
+const { syncInterestsMemory } = require('./interests');
+const { MusicStore, MusicExtractor, cleanMusicSignal } = require('./music');
+const { cleanVoiceSignal } = require('./voiceCall');
+let voiceCallActive = false, voiceCallSession = '', musicSession = '';
+const seenCallRings = new Set();
 const { safeStorage } = require("electron");
 const { spawn, exec } = require("node:child_process");
 const {
@@ -23,6 +31,8 @@ const {
   broadcastScheduleUpdate,
   broadcastChatMessage,
   broadcastRemoteAccess: transportRemoteAccess,
+  broadcastMusicSignal,
+  broadcastVoiceSignal,
   broadcastSyncRequest,
   broadcastSyncResponse,
   saveChatMessageToCloud,
@@ -78,12 +88,15 @@ function isTrustedRendererUrl(url) {
 const registerHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => registerHandle(channel, (event, ...args) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) throw new Error('Untrusted IPC sender');
+  account.guardIPC(channel,args);
   return handler(event, ...args);
 });
+const checkoutContents=new WeakSet();
+const navigationAllowed=(contents,url)=>checkoutContents.has(contents)?String(url).startsWith('https://'):isTrustedRendererUrl(url);
 app.on('web-contents-created', (_, contents) => {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  contents.on('will-navigate', (event, url) => { if (!isTrustedRendererUrl(url)) event.preventDefault(); });
-  contents.on('will-frame-navigate', event => { if (!isTrustedRendererUrl(event.url)) event.preventDefault(); });
+  contents.on('will-navigate', (event, url) => { if (!navigationAllowed(contents,url)) event.preventDefault(); });
+  contents.on('will-frame-navigate', event => { if (!navigationAllowed(contents,event.url)) event.preventDefault(); });
 });
 
 const { protocol, net } = require('electron');
@@ -126,8 +139,58 @@ if (!fs.existsSync(userDataDir)) {
   fs.mkdirSync(userDataDir, { recursive: true });
 }
 const settingsPath = path.join(userDataDir, "settings.json");
+const {AccountService}=require('./account');
+let checkoutWindow=null;
+async function openMembershipCheckout(url){
+  if(checkoutWindow&&!checkoutWindow.isDestroyed())checkoutWindow.close();
+  const popup=new BrowserWindow({width:510,height:720,minWidth:420,minHeight:550,show:false,title:'Baymax · Secure checkout',backgroundColor:'#17201f',autoHideMenuBar:true,webPreferences:{sandbox:true,nodeIntegration:false,contextIsolation:true,partition:'baymax-checkout-'+require('node:crypto').randomUUID()}});
+  checkoutWindow=popup;
+  checkoutContents.add(popup.webContents);
+  popup.webContents.on('will-navigate',(event,target)=>{if(!target.startsWith('https://'))event.preventDefault();});
+  popup.webContents.setWindowOpenHandler(({url:target})=>{if(target.startsWith('https://'))void shell.openExternal(target);return {action:'deny'};});
+  popup.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
+  popup.on('closed',()=>{if(checkoutWindow===popup)checkoutWindow=null;void account.refresh();});
+  popup.once('ready-to-show',()=>popup.show());
+  try{await popup.loadURL(url);}catch(error){if(!popup.isDestroyed())popup.close();throw error;}
+}
+const account=new AccountService({folder:userDataDir,safeStorage,openExternal:url=>shell.openExternal(url),openCheckout:openMembershipCheckout});
+ipcMain.handle('account-snapshot',()=>account.snapshot());
+ipcMain.handle('account-files',(_e,op,args)=>require('./cloudFiles').cloudFiles(account,dialog,op,args));
+ipcMain.handle('account-config',(_event,value)=>account.saveConfig(value));
+ipcMain.handle('account-login',()=>account.startLogin());
+ipcMain.handle('account-cancel-login',()=>{account.cancelLogin();return true;});
+ipcMain.handle('account-logout',()=>account.logout());
+ipcMain.handle('account-refresh',()=>account.refresh());
+ipcMain.handle('account-action',(_event,op,args)=>account.action(op,args));
+ipcMain.handle('account-billing',(_event,op,args)=>account.billing(op,args));
 const schedulePath = path.join(userDataDir, "schedule.json");
 const serviceAccountPath = path.join(userDataDir, "service-account.json");
+const companionIconPath = path.join(userDataDir, "companion-icon.png");
+let companionIcon = null;
+function currentCompanionIcon() {
+  if (!companionIcon) {
+    companionIcon = nativeImage.createFromPath(fs.existsSync(companionIconPath) ? companionIconPath : path.join(__dirname, '../public/icons/icon.png'));
+    if (companionIcon.isEmpty()) companionIcon = nativeImage.createFromPath(path.join(__dirname, '../public/icons/icon.png'));
+  }
+  return companionIcon;
+}
+app.on('browser-window-created', (_, window) => window.setIcon(currentCompanionIcon()));
+ipcMain.handle('get-companion-icon', () => currentCompanionIcon().toDataURL());
+ipcMain.handle('set-companion-icon', (_event, png) => {
+  if (typeof png !== 'string' || png.length > 180000 || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(png)) throw new Error('Invalid companion portrait');
+  const bytes = Buffer.from(png.slice(22), 'base64');
+  if (bytes.length < 24 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' || bytes.readUInt32BE(16) !== 128 || bytes.readUInt32BE(20) !== 128) throw new Error('Invalid portrait dimensions');
+  const icon = nativeImage.createFromBuffer(bytes);
+  if (icon.isEmpty()) throw new Error('Could not read companion portrait');
+  fs.writeFileSync(companionIconPath, icon.toPNG());
+  companionIcon = icon;
+  tray?.setImage(icon.resize({ width: 32, height: 32 }));
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.setIcon(icon);
+    window.webContents.send('companion-icon-changed', icon.toDataURL());
+  }
+  return true;
+});
 
 function loadServiceAccount() {
   try {
@@ -172,7 +235,11 @@ const DEFAULT_SETTINGS = {
   voiceName: "Charon",
   wakeWordEnabled: false,
   pushToTalkEnabled: false,
+  pushToTalkKey: "Control+Space",
   proactiveAudio: true,
+  proactiveTalkingEnabled: false,
+  musicHeadphonesEnabled: true,
+  userInterests: '',
   thinkingEnabled: false,
   mediaResolution: "medium",
   morningBriefEnabled: true,
@@ -323,11 +390,26 @@ function applyStartupMode(enabled) {
 }
 
 const {readArray, writeJson} = require('./jsonFiles');
-function loadSchedule() { return readArray(schedulePath); }
+function accountFile(base,pairScoped=false){
+  if(!account.configured)return base;
+  const state=account.snapshot(),scope=state.user?.id||'signed-out';
+  const folder=path.join(userDataDir,'accounts',scope,pairScoped?(state.pair?.id||'unpaired'):'local');fs.mkdirSync(folder,{recursive:true});
+  return path.join(folder,path.basename(base));
+}
+function loadSchedule() {
+  if(!account.configured)return readArray(schedulePath);
+  const local=readArray(accountFile(schedulePath)).map(t=>({...t,syncPairId:null}));
+  const pair=account.snapshot().pair?.id;
+  return pair?[...local,...readArray(accountFile(schedulePath,true)).map(t=>({...t,syncPairId:pair}))]:local;
+}
 const { mergeTasks, stampTasks } = require('./taskSync');
 function saveSchedule(items) {
   stampTasks(items, loadSchedule());
-  writeJson(schedulePath, items);
+  if(!account.configured){writeJson(schedulePath,items);return;}
+  const pair=account.snapshot().pair?.id;
+  for(const item of items)if(item.syncPairId===undefined)item.syncPairId=pair||null;
+  writeJson(accountFile(schedulePath),items.filter(t=>!t.syncPairId));
+  if(pair)writeJson(accountFile(schedulePath,true),items.filter(t=>t.syncPairId===pair));
 }
 
 let activeSettings = loadSettings();
@@ -335,12 +417,80 @@ let activeSchedule = loadSchedule();
 
 const chatHistoryPath = path.join(userDataDir, "chat_history.json");
 
-function loadChatHistory() { return readArray(chatHistoryPath); }
-function saveChatHistory(history) { writeJson(chatHistoryPath, history); }
+function loadChatHistory() { return readArray(accountFile(chatHistoryPath,true)); }
+function saveChatHistory(history) { writeJson(accountFile(chatHistoryPath,true), history); }
 
 const engineDir = app.isPackaged ? path.join(process.resourcesPath, "engine") : path.join(__dirname, "..", "engine");
 const engineDataDir = app.isPackaged ? path.join(userDataDir, "engine") : engineDir;
 process.env.BAYMAX_ENGINE_DATA = engineDataDir;
+const musicStore = new MusicStore(userDataDir);
+const musicExtractor = new MusicExtractor(() => ({file:resolvePythonPath(), prefix:app.isPackaged ? ['python','-m','yt_dlp'] : ['-m','yt_dlp'],runtime:process.execPath,pythonPath:app.isPackaged ? undefined : path.join(__dirname,'..','.build-cache','music-core')}));
+const { SharedMusicStore } = require('./sharedMusic');
+function sharedMusicStore() { return new SharedMusicStore(userDataDir,account.configured?(account.snapshot().user?.id||'signed-out')+'|'+(account.snapshot().pair?.id||'unpaired'):(activeSettings.syncUrl || '')+'|'+(activeSettings.shareChannel || 'coucou-badsha-ayzil')); }
+function loadMusicLibrary() {
+  const library=musicStore.load(), tracks=sharedMusicStore().tracks();
+  library.playlists=library.playlists.filter(p=>p.id!=='shared');
+  library.playlists.unshift({id:'shared',name:'Our playlist',tracks});
+  return library;
+}
+async function sendPlaylistEntries(entries) {
+  const scope=sharedMusicStore().file;
+  for(let i=0;i<entries.length;i+=40){
+    if(sharedMusicStore().file!==scope)break;
+    if(!await broadcastMusicSignal({type:'playlist',entries:entries.slice(i,i+40)}))break;
+    if(i+40<entries.length)await new Promise(resolve=>setTimeout(resolve,150));
+  }
+}
+function saveMusicLibrary(library) {
+  const shared=library?.playlists?.find(p=>p.id==='shared');
+  // Validate the entire library before either persistent file is changed.
+  require('./music').cleanLibrary(library);
+  if(shared && Array.isArray(library.sharedBase)){
+    const changes=sharedMusicStore().edit(library.sharedBase,shared.tracks,activeSettings.userRole==='her'?'her':'me');
+    void sendPlaylistEntries(changes);
+    shared.tracks=sharedMusicStore().tracks();
+  }
+  musicStore.save(library);return loadMusicLibrary();
+}
+ipcMain.handle('music-load', () => loadMusicLibrary());
+ipcMain.handle('music-save', (_event, library) => saveMusicLibrary(library));
+ipcMain.handle('music-search', (_event, query) => musicExtractor.search(query));
+ipcMain.handle('music-resolve', (_event, id, refresh) => musicExtractor.resolve(id, refresh === true));
+ipcMain.handle('clipboard:writeText', (_event, text) => {
+  if (typeof text !== 'string' || text.length > 1024 * 1024) throw new Error('Invalid clipboard text');
+  require('electron').clipboard.writeText(text); return true;
+});
+ipcMain.handle('music-signal', (_event, value) => {
+  const message=cleanMusicSignal(value);
+  if(['join','offer','answer'].includes(message.type))musicSession=message.sessionId;
+  if(message.type==='leave' && musicSession===message.sessionId)musicSession='';
+  return broadcastMusicSignal(message);
+});
+ipcMain.handle('voice-signal', (event, value) => {
+  if(event.sender!==overlayWin?.webContents)return false;
+  const message=cleanVoiceSignal(value);
+  if(['ring','accept','offer','answer'].includes(message.type))voiceCallSession=message.sessionId;
+  if(['hangup','decline'].includes(message.type) && voiceCallSession===message.sessionId)voiceCallSession='';
+  return broadcastVoiceSignal(message);
+});
+ipcMain.handle('voice-call-active', (event, value) => {
+  if(event.sender!==overlayWin?.webContents)return false;
+  voiceCallActive=value===true;
+  if(!voiceCallActive)voiceCallSession='';
+  if(voiceCallActive){cancelTextRequests();resetLiveSpeechOutput('call');}
+  sendToLiveEngine({cmd:'call_active',active:voiceCallActive});
+  sendToLiveEngine({cmd:'mute',muted:voiceCallActive || activeSettings.micEnabled===false || activeSettings.aiProvider==='groq'});
+  return true;
+});
+async function endPartnerSessions() {
+  const signals=[broadcastMusicSignal({type:'status',playing:false,title:''})];
+  if(musicSession)signals.push(broadcastMusicSignal({type:'leave',sessionId:musicSession}));
+  if(voiceCallSession)signals.push(broadcastVoiceSignal({type:'hangup',sessionId:voiceCallSession}));
+  await Promise.race([Promise.allSettled(signals),new Promise(resolve=>setTimeout(resolve,1200))]);
+  await Promise.race([disconnectSupabase(),new Promise(resolve=>setTimeout(resolve,800))]);
+  musicSession='';voiceCallSession='';voiceCallActive=false;
+}
+
 const engineArgs = (mode, args = []) => app.isPackaged ? [mode, ...args] : [path.join(engineDir, { bridge: "mochi_bridge.py", live: "mochi_runner.py", hud: "main.py" }[mode]), ...args];
 const bridgeScript = path.join(engineDir, "mochi_bridge.py");
 const markLvMainScript = path.join(engineDir, "main.py");
@@ -499,12 +649,12 @@ function triggerPartnerOnlineNotification(partnerName) {
   }
 
   // 2. Windows Native Action Center notification
-  if (activeSettings.notifyPartnerOnline !== false && Notification.isSupported()) {
+  if (isCollapsed && activeSettings.notifyPartnerOnline !== false && Notification.isSupported()) {
     try {
       const notif = new Notification({
         title: `✨ ${displayName} is online! 💖`,
         body: `${displayName} just opened ${displayAssistantName()} and joined.`,
-        icon: path.join(__dirname, "../public/icons/icon.png"),
+        icon: currentCompanionIcon(),
         silent: false,
       });
       notif.on("click", () => {
@@ -523,7 +673,7 @@ function triggerPartnerOnlineNotification(partnerName) {
 }
 
 function startSupabaseSync() {
-  if (!activeSettings.syncUrl || !activeSettings.syncApiKey) {
+  if (!account.configured && (!activeSettings.syncUrl || !activeSettings.syncApiKey)) {
     console.log("[Supabase Sync] syncUrl or syncApiKey not configured yet.");
     disconnectSupabase();
     return;
@@ -538,14 +688,36 @@ function startSupabaseSync() {
 
   console.log(`[Supabase Sync] Initializing live Realtime connection for ${currentUserName}...`);
   initSupabase({
+    account,
     url: activeSettings.syncUrl,
     key: activeSettings.syncApiKey,
-    email: activeSettings.syncEmail,
-    password: activeSettings.syncPassword,
     onStatus: status => { for (const win of [overlayWin, settingsWin]) if (win && !win.isDestroyed()) win.webContents.send('sync-status', status); },
     channelName: activeSettings.shareChannel || "coucou-badsha-ayzil",
     userName: currentUserName,
     userRole: activeSettings.userRole || "me",
+    onVoiceSignal: payload => {
+      const message=cleanVoiceSignal(payload);
+      if(message.type==='ring' && !seenCallRings.has(message.sessionId)) {
+        if(!voiceCallActive)voiceCallSession=message.sessionId;
+        seenCallRings.add(message.sessionId);
+        if(seenCallRings.size>64)seenCallRings.delete(seenCallRings.values().next().value);
+        if(!voiceCallActive && isCollapsed && Notification.isSupported()) {
+          const notification=new Notification({title:`${partnerUserName} is calling`,body:'Open Baymax to accept or decline.',icon:currentCompanionIcon(),silent:true});
+          notification.on('click',()=>{overlayWin?.show();overlayWin?.focus();overlayWin?.webContents.send('open-couple-chat');});notification.show();
+        }
+      }
+      if(['hangup','decline'].includes(message.type) && voiceCallSession===message.sessionId)voiceCallSession='';
+      if(overlayWin && !overlayWin.isDestroyed())overlayWin.webContents.send('voice-signal',message);
+    },
+    onMusicSignal: payload => {
+      const message = cleanMusicSignal(payload);
+      if(message.type==='playlist'){
+        if(sharedMusicStore().merge(message.entries))overlayWin?.webContents.send('music-library',loadMusicLibrary());
+        return;
+      }
+      if(message.type==='probe')void sendPlaylistEntries(sharedMusicStore().load());
+      if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send('music-signal', message);
+    },
     onChatMessage: (payload) => {
       console.log("[Supabase Sync] Incoming chat message:", payload?.text);
       if (!payload || !payload.text) return;
@@ -566,6 +738,7 @@ function startSupabaseSync() {
 
       const history = loadChatHistory();
       const exists = history.some((m) => m.id === payload.id);
+      if (exists) return;
       if (!exists) {
         history.push({
           ...payload,
@@ -578,15 +751,14 @@ function startSupabaseSync() {
         overlayWin.webContents.send("partner-chat-received", payload);
       }
 
-      // Windows Action Center native notification if collapsed or app unfocused
-      const isUnfocused = !overlayWin || overlayWin.isDestroyed() || !overlayWin.isFocused();
-      if ((isCollapsed || isUnfocused) && Notification.isSupported()) {
+      // Windows Action Center native notification only when island is collapsed
+      if (isCollapsed && Notification.isSupported()) {
         try {
           const sender = payload.sender || partnerUserName;
           const notif = new Notification({
             title: `💬 ${sender}`,
             body: payload.text,
-            icon: path.join(__dirname, "../public/icons/icon.png"),
+            icon: currentCompanionIcon(),
             silent: false,
           });
           notif.on("click", () => {
@@ -620,7 +792,7 @@ function startSupabaseSync() {
           const notif = new Notification({
             title: `💌 New file from ${sender}!`,
             body: `${payload.name} (${sizeMb} MB)\nClick to open in ${displayAssistantName()}`,
-            icon: path.join(__dirname, "../public/icons/icon.png"),
+            icon: currentCompanionIcon(),
             silent: false,
           });
           notif.on("click", () => {
@@ -637,6 +809,7 @@ function startSupabaseSync() {
     },
     onScheduleUpdated: (payload) => {
       if (payload && Array.isArray(payload.items)) {
+        if(account.configured)payload.items=payload.items.map(t=>({...t,syncPairId:account.snapshot().pair?.id}));
         console.log("[Supabase Sync] Real-time task update from:", payload.senderName);
         activeSchedule = mergeTasks(activeSchedule, payload.items);
         saveSchedule(activeSchedule);
@@ -709,6 +882,7 @@ function startSupabaseSync() {
     },
     onSyncResponse: (payload) => {
       if (!payload) return;
+      if(account.configured&&Array.isArray(payload.schedule))payload.schedule=payload.schedule.map(t=>({...t,syncPairId:account.snapshot().pair?.id}));
       console.log("[Supabase Sync] Received catch-up response from partner:", payload?.senderName);
       if (Array.isArray(payload.messages) && payload.messages.length > 0) {
         const history = loadChatHistory();
@@ -731,12 +905,12 @@ function startSupabaseSync() {
           if (overlayWin && !overlayWin.isDestroyed() && lastMsg) {
             overlayWin.webContents.send("partner-chat-history", history);
           }
-          if (Notification.isSupported() && lastMsg) {
+          if (isCollapsed && Notification.isSupported() && lastMsg) {
             try {
               const notif = new Notification({
                 title: `💬 ${lastMsg.sender} (${added} missed message${added > 1 ? "s" : ""})`,
                 body: lastMsg.text,
-                icon: path.join(__dirname, "../public/icons/icon.png"),
+                icon: currentCompanionIcon(),
                 silent: false,
               });
               notif.show();
@@ -765,6 +939,7 @@ function startSupabaseSync() {
       }
     },
     onRemoteAccess: (payload) => {
+      if(!account.caps.pcControl)return;
       console.log("[Supabase Sync] Incoming remote_access:", payload?.action, "from:", payload?.sender);
       if (!remoteSession.receive(payload)) return;
 
@@ -878,12 +1053,12 @@ function startSupabaseSync() {
             if (overlayWin && !overlayWin.isDestroyed()) {
               overlayWin.webContents.send("partner-chat-history", history);
             }
-            if (Notification.isSupported() && latestNewMsg) {
+            if (isCollapsed && Notification.isSupported() && latestNewMsg) {
               try {
                 const notif = new Notification({
                   title: `💬 ${latestNewMsg.sender} (${newCount} new message${newCount > 1 ? "s" : ""})`,
                   body: latestNewMsg.text,
-                  icon: path.join(__dirname, "../public/icons/icon.png"),
+                  icon: currentCompanionIcon(),
                   silent: false,
                 });
                 notif.on("click", () => {
@@ -988,6 +1163,11 @@ function createOverlayWindow() {
       allowRunningInsecureContent: false,
     },
   });
+  overlayWin.webContents.on('render-process-gone',()=>{
+    if(voiceCallSession)void broadcastVoiceSignal({type:'hangup',sessionId:voiceCallSession});
+    voiceCallSession='';voiceCallActive=false;sendToLiveEngine({cmd:'call_active',active:false});
+    sendToLiveEngine({cmd:'mute',muted:activeSettings.micEnabled===false || activeSettings.aiProvider==='groq'});
+  });
 
   setMousePassthrough = createMousePassthrough((ignore, options) => {
     if (overlayWin && !overlayWin.isDestroyed()) overlayWin.setIgnoreMouseEvents(ignore, options);
@@ -1043,11 +1223,6 @@ function broadcastToProductivity(channel, ...args) {
       productivityWin.webContents.send(channel, ...args);
     } catch (e) {}
   }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    try {
-      mainWindow.webContents.send(channel, ...args);
-    } catch (e) {}
-  }
   if (overlayWin && !overlayWin.isDestroyed()) {
     try {
       overlayWin.webContents.send(channel, ...args);
@@ -1096,10 +1271,10 @@ function handleFocusDistractionAlert(procName) {
   }
 
   // 3. Spoken voice intervention via Live Assistant (at most once every 60 seconds)
-  if (now - lastVoiceAlertTime > 60000) {
+  if (activeSettings.proactiveTalkingEnabled === true && !liveOutputSuppressed && now - lastVoiceAlertTime > 60000) {
     lastVoiceAlertTime = now;
     sendToLiveEngine({
-      cmd: "text",
+      cmd: "background",
       text: `[FOCUS REMINDER]: The user ${userName} opened ${displayName} during an active focus session. Say once gently and concisely: "Hey ${userName}, ${displayName} is blocked during your focus session. Let's stay focused on work."`
     });
   }
@@ -1162,13 +1337,7 @@ function createProductivityWindow() {
 }
 
 function setupTray() {
-  const iconPath = path.join(__dirname, "..", "public", "icons", "icon.ico");
-  let trayIcon = nativeImage.createEmpty();
-  if (fs.existsSync(iconPath)) {
-    trayIcon = nativeImage.createFromPath(iconPath);
-  }
-
-  tray = new Tray(trayIcon);
+  tray = new Tray(currentCompanionIcon().resize({ width: 32, height: 32 }));
   tray.setToolTip(`${displayAssistantName()} — AI Desktop Companion`);
 
   const contextMenu = Menu.buildFromTemplate([
@@ -1376,9 +1545,11 @@ function getProcessCandidates(appNameOrPath) {
 }
 
 function launchApplication(query) {
+  account.guardAction('open_app');
   return appCommands.launchApplication(query, activeSettings.appPaths, productivityTracker?.getKnownApps() || [], shell);
 }
 function closeApplication(query) {
+  account.guardAction('close_app');
   const getRunning = () => new Promise((resolve, reject) => {
     require('node:child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOW_SCANNER_SCRIPT],
       { windowsHide: true, timeout: 15000 }, (err, out) => {
@@ -1391,7 +1562,39 @@ function closeApplication(query) {
 
 // ── Mark-LV Live Assistant Process Manager ──────────────────────────────────
 let mochiLiveProc = null;
+let liveOutputSuppressed = false;
+let liveUserStopped = false;
+function resetLiveSpeechOutput(reason = 'user') {
+  if (reason === 'user') liveUserStopped = true;
+  liveOutputSuppressed = true;
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.webContents.send('ai-speech-reset');
+    overlayWin.webContents.send('ai-state', 'idle');
+    overlayWin.webContents.send('ai-audio-level', 0);
+  }
+}
+const talkShortcut = new PushToTalkService(state => {
+  if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send('push-to-talk-state', state);
+  sendToLiveEngine({ cmd: 'ptt_config', enabled: state.enabled, suspended: state.suspended });
+  sendToLiveEngine({ cmd: 'ptt', held: state.held });
+});
+ipcMain.handle('get-push-to-talk-state', () => talkShortcut.snapshot());
+const talkShortcutOwners = new WeakSet();
+ipcMain.handle('suspend-push-to-talk', (event, paused) => {
+  const owner = event.sender.id;
+  talkShortcut.suspend(owner, !!paused);
+  if (!talkShortcutOwners.has(event.sender)) {
+    talkShortcutOwners.add(event.sender);
+    event.sender.once('destroyed', () => talkShortcut.suspend(owner, false));
+    event.sender.on('render-process-gone', () => talkShortcut.suspend(owner, false));
+    event.sender.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) talkShortcut.suspend(owner, false); });
+  }
+  return true;
+});
 let mochiLiveRestartTimer = null;
+let mochiLiveStopPromise = null;
+let mochiLiveStartRequested = false;
+const intentionallyStoppedLiveProcesses = new WeakSet();
 let pendingTextResolvers = [];
 
 function syncEngineConfig(settings) {
@@ -1413,13 +1616,17 @@ function syncEngineConfig(settings) {
       ...currentConfig,
       gemini_api_key: '',
       assistant_name: settings.assistantName || 'Baymax',
+      companion: normalizeCompanion(settings.companion),
       user_name: activeUserName,
       partner_name: activePartnerName,
       user_role: settings.userRole || 'me',
       voice_name: settings.voiceName || 'Charon',
       wake_word_enabled: !!settings.wakeWordEnabled,
       push_to_talk_enabled: !!settings.pushToTalkEnabled,
+      push_to_talk_key: settings.pushToTalkKey || 'Control+Space',
       proactive_audio: settings.proactiveAudio !== false,
+      proactive_talking_enabled: settings.proactiveTalkingEnabled === true,
+      user_interests: String(settings.userInterests || '').trim().slice(0, 2000),
       thinking_enabled: !!settings.thinkingEnabled,
       morning_brief_enabled: settings.morningBriefEnabled !== false,
       media_resolution: settings.mediaResolution || 'medium',
@@ -1441,13 +1648,16 @@ function syncEngineConfig(settings) {
     process.env.GEMINI_API_KEY = settings.geminiApiKey || '';
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 4), 'utf-8');
+    if (!mochiLiveProc) syncInterestsMemory(engineDataDir, updatedConfig.user_interests);
   } catch (err) {
     console.warn('[Mark-LV Engine] Failed to write api_keys.json:', err);
   }
 }
 
 function startMochiLiveEngine() {
-  if (mochiLiveProc) return;
+  clearTimeout(mochiLiveRestartTimer); mochiLiveRestartTimer = null;
+  if (isQuitting || mochiLiveProc || !account.caps.gemini) return;
+  if (mochiLiveStopPromise) { mochiLiveStartRequested = true; return; }
   const provider = activeSettings.aiProvider || "gemini";
   if (provider !== "gemini") {
     console.log(`[Mark-LV Engine] Current AI provider is '${provider}'. Gemini Live process will not be spawned.`);
@@ -1471,16 +1681,19 @@ function startMochiLiveEngine() {
 
     console.log(`[Mark-LV Engine] Spawning with Python: ${pyExe}`);
 
-    mochiLiveProc = spawn(pyExe, engineArgs('live'), {
+    const proc = spawn(pyExe, engineArgs('live'), {
       cwd: engineDir,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: pathEnv, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      env: { ...process.env, PATH: pathEnv, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', BAYMAX_EXTERNAL_PTT: '1', BAYMAX_SPEECH_STOPPED: liveUserStopped ? '1' : '0' },
     });
+    mochiLiveProc = proc;
+    proc.stdin?.on('error', error => { if (mochiLiveProc === proc) console.warn('[Mark-LV Engine] Input pipe:', error.message); });
 
     let buffer = '';
 
-    mochiLiveProc.stdout.on('data', (data) => {
+    proc.stdout.on('data', (data) => {
+      if (mochiLiveProc !== proc) return;
       buffer += data.toString('utf-8');
       const lines = buffer.split('\n');
       buffer = lines.pop();
@@ -1503,19 +1716,21 @@ function startMochiLiveEngine() {
       }
     });
 
-    mochiLiveProc.stderr.on('data', (data) => {
+    proc.stderr.on('data', (data) => {
+      if (mochiLiveProc !== proc) return;
       const errStr = data.toString('utf-8').trim();
       if (errStr) console.warn(`[Mark-LV Stderr]: ${errStr}`);
     });
 
-    mochiLiveProc.on('close', (code) => {
+    proc.on('close', (code) => {
+      if (mochiLiveProc !== proc) return;
       console.log(`[Mark-LV Engine] Process closed with code ${code}`);
       mochiLiveProc = null;
       while (pendingTextResolvers.length > 0) {
         const resolve = pendingTextResolvers.shift();
         resolve({ text: `${displayAssistantName()} is restarting. Please try again.` });
       }
-      if (!isQuitting && (activeSettings.aiProvider || 'gemini') === 'gemini' && activeSettings.geminiApiKey) {
+      if (!intentionallyStoppedLiveProcesses.has(proc) && !isQuitting && (activeSettings.aiProvider || 'gemini') === 'gemini' && activeSettings.geminiApiKey) {
         clearTimeout(mochiLiveRestartTimer);
         mochiLiveRestartTimer = setTimeout(() => {
           startMochiLiveEngine();
@@ -1523,9 +1738,17 @@ function startMochiLiveEngine() {
       }
     });
 
-    mochiLiveProc.on('error', (err) => {
+    proc.on('error', (err) => {
+      if (mochiLiveProc !== proc) return;
       console.error('[Mark-LV Engine] Process error:', err);
-      mochiLiveProc = null;
+      // A failed spawn has no PID. Other errors do not prove the process exited.
+      if (!proc.pid) {
+        mochiLiveProc = null;
+        if (!isQuitting && !intentionallyStoppedLiveProcesses.has(proc)) {
+          clearTimeout(mochiLiveRestartTimer);
+          mochiLiveRestartTimer = setTimeout(startMochiLiveEngine, 3000);
+        }
+      }
       while (pendingTextResolvers.length > 0) {
         const resolve = pendingTextResolvers.shift();
         resolve({ text: `${displayAssistantName()} engine process error: ${err.message}` });
@@ -1538,20 +1761,31 @@ function startMochiLiveEngine() {
 }
 
 function stopMochiLiveEngine() {
-  if (mochiLiveProc) {
-    try {
-      sendToLiveEngine({ cmd: 'interrupt' });
-      mochiLiveProc.kill();
-    } catch {}
-    mochiLiveProc = null;
-  }
+  clearTimeout(mochiLiveRestartTimer); mochiLiveRestartTimer = null;
+  mochiLiveStartRequested = false;
+  const proc = mochiLiveProc;
+  if (!proc) return mochiLiveStopPromise || Promise.resolve();
+  intentionallyStoppedLiveProcesses.add(proc);
+  mochiLiveProc = null; // Old callbacks cannot own or restart the next engine.
+  try { proc.stdin?.write(JSON.stringify({cmd:'mute',muted:true}) + '\n' + JSON.stringify({cmd:'interrupt'}) + '\n'); } catch {}
+  while (pendingTextResolvers.length) pendingTextResolvers.shift()({text: `${displayAssistantName()} voice was restarted. Please try again.`});
+  mochiLiveStopPromise = terminateProcessTree(proc).catch(error => {
+    // Keep ownership if termination failed: starting another mic would recreate the bug.
+    if (proc.exitCode === null && proc.signalCode == null) mochiLiveProc = proc;
+    mochiLiveStartRequested = false;
+    console.error('[Mark-LV Engine] Stop failed:', error.message);
+  }).finally(() => {
+    mochiLiveStopPromise = null;
+    const restart = mochiLiveStartRequested; mochiLiveStartRequested = false;
+    if (restart && !isQuitting) startMochiLiveEngine();
+  });
+  return mochiLiveStopPromise;
 }
 
 function sendToLiveEngine(cmdObj) {
+  if(voiceCallActive && cmdObj.cmd==='mute')cmdObj={...cmdObj,muted:true};
+  if(voiceCallActive && ['background','user_turn'].includes(cmdObj.cmd))return false;
   if (!mochiLiveProc || !mochiLiveProc.stdin || mochiLiveProc.stdin.destroyed) {
-    if (activeSettings.geminiApiKey) {
-      startMochiLiveEngine();
-    }
     return false;
   }
   try {
@@ -1567,14 +1801,36 @@ function handleLiveEngineEvent(msg) {
   if (!msg || !msg.event) return;
 
   switch (msg.event) {
+    case 'user_turn':
+      if(voiceCallActive)break;
+      liveUserStopped = false;
+      liveOutputSuppressed = false;
+      break;
+    case 'speech_allowed':
+      if (!voiceCallActive && !liveUserStopped) liveOutputSuppressed = false;
+      break;
+    case 'speech_reset':
+      resetLiveSpeechOutput(msg.reason);
+      break;
+    case 'visemes':
+      if (!msg.frames?.length && overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send('ai-audio-level', 0);
+      break;
+    case 'ready':
+      sendToLiveEngine({cmd:'call_active',active:voiceCallActive});
+      sendToLiveEngine({ cmd: 'mute', muted: activeSettings.micEnabled === false || activeSettings.aiProvider === 'groq' });
+      sendToLiveEngine({ cmd: 'ptt_config', enabled: !!activeSettings.pushToTalkEnabled, suspended: talkShortcut.snapshot().suspended });
+      sendToLiveEngine({ cmd: 'ptt', held: talkShortcut.snapshot().held });
+      break;
     case 'state': {
       const st = String(msg.state || 'listening').toLowerCase();
+      if (liveOutputSuppressed && (st === 'speaking' || st === 'thinking')) break;
       if (overlayWin && !overlayWin.isDestroyed()) {
         overlayWin.webContents.send('ai-state', st);
       }
       break;
     }
     case 'transcript': {
+      if (liveOutputSuppressed && msg.role !== 'user') break;
       if (overlayWin && !overlayWin.isDestroyed()) {
         overlayWin.webContents.send('ai-transcript', {
           role: msg.role || 'assistant',
@@ -1590,7 +1846,7 @@ function handleLiveEngineEvent(msg) {
     }
     case 'audio_level': {
       if (overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.webContents.send('ai-audio-level', msg.level || 0);
+        overlayWin.webContents.send('ai-audio-level', liveOutputSuppressed ? 0 : msg.level || 0);
       }
       break;
     }
@@ -1712,8 +1968,9 @@ function handleLiveEngineEvent(msg) {
 }
 
 async function deliverMessage(msg) {
+  const live = msg.liveSent || msg.delivery === 'sent' || await broadcastChatMessage(msg);
   const cloud = await saveChatMessageToCloud(msg, activeSettings.shareChannel || 'coucou-badsha-ayzil');
-  const live = await broadcastChatMessage(msg);
+  msg.liveSent = !!live;
   msg.delivery = cloud ? 'stored' : (live ? 'sent' : 'pending');
   // Until persisted in cloud, retain a durable retry even if the broadcast succeeded.
   msg.cloudPending = !cloud;
@@ -1730,7 +1987,29 @@ async function flushOutbox() {
   try { for (const msg of loadChatHistory().filter(m => m.cloudPending || m.delivery === 'pending')) await deliverMessage(msg); }
   finally { flushingOutbox = false; }
 }
+const pendingAppActions=new Map();
+ipcMain.on('app-action-result',(event,value)=>{
+  if(event.sender!==overlayWin?.webContents)return;
+  const pending=pendingAppActions.get(value?.id);if(!pending)return;
+  pendingAppActions.delete(value.id);clearTimeout(pending.timer);
+  value.error?pending.reject(new Error(String(value.error).slice(0,500))):pending.resolve(value.result);
+});
+function requestAppAction(params) {
+  const action=require('./appActions').cleanAppAction(params);
+  if(!overlayWin || overlayWin.isDestroyed())throw new Error('Open the companion before using this action');
+  return new Promise((resolve,reject)=>{
+    const id=require('node:crypto').randomUUID();
+    const timer=setTimeout(()=>{pendingAppActions.delete(id);reject(new Error('The app did not confirm this action. Check the Music view before retrying.'));},75000);
+    pendingAppActions.set(id,{resolve,reject,timer});overlayWin.webContents.send('app-action',{id,...action});
+  });
+}
 async function handleEngineAction(action, params) {
+  if(action==='entitlements')return account.caps;
+  account.guardAction(action==='manage_productivity'?'productivity_manager':action,params);
+  if(action==='control_app'){
+    if(params.action==='read_partner_messages')return loadChatHistory().slice(-20).map(m=>({sender:m.sender,text:m.text,timestamp:m.timestamp}));
+    return requestAppAction(params);
+  }
   if (action === 'open_app' || action === 'close_app') {
     const result = await (action === 'open_app' ? launchApplication(params.app_name) : closeApplication(params.app_name));
     if (!result.success) throw new Error(result.error);
@@ -1744,7 +2023,7 @@ async function handleEngineAction(action, params) {
   if (action === 'manage_productivity') {
     if (!productivityTracker || !productivityBlocker) throw new Error('Productivity is not ready');
     const act = String(params.action || 'analyze_stats').toLowerCase();
-    if (['start_focus','start_session','focus','start'].includes(act)) { productivityBlocker.start({durationMinutes:Number(params.duration_minutes || params.minutes || 25),mode:params.mode || 'Deep Silence'}); return productivityBlocker.getStatus(); }
+    if (['start_focus','start_session','focus','start'].includes(act)) { productivityBlocker.start({durationMinutes:Number(params.duration_minutes || params.minutes || 25),mode:params.mode || 'Deep Silence',timerMode:params.timer_mode || params.timerMode}); return productivityBlocker.getStatus(); }
     if (['stop_focus','stop_session','stop','end_focus','cancel_focus'].includes(act)) { productivityBlocker.stop(); return productivityBlocker.getStatus(); }
     if (['classify','set_category','mark_app'].includes(act)) {
       const query = String(params.app_name || params.app || '').toLowerCase();
@@ -1763,13 +2042,19 @@ async function handleEngineAction(action, params) {
       await executeActionTags('[ADD_TASK: '+JSON.stringify({title:params.title,time:params.time_str || params.time,for:params.for_who || params.for || activeSettings.userRole})+']');
       return 'Task saved.';
     }
-    if (['complete','done','finish','toggle'].includes(act)) {
+    if (['complete','done','finish','toggle','delete','remove'].includes(act)) {
       const query=String(params.title || '').trim().toLowerCase();
-      const matches=activeSchedule.filter(t=>!t.deleted && (t.id.toLowerCase()===query || t.title.toLowerCase()===query));
+      const role=resolveRole(params.for_who || params.for,activeSettings.userRole);
+      const matches=activeSchedule.filter(t=>!t.deleted && (t.assignee===role || t.assignee==='both') && (t.id.toLowerCase()===query || t.title.toLowerCase()===query));
       if(matches.length!==1) throw new Error('Choose one exact task title or ID.');
+      if(['delete','remove'].includes(act)){
+        matches[0].deleted=true;saveSchedule(activeSchedule);void syncScheduleToPartner();
+        overlayWin?.webContents.send('schedule-updated',activeSchedule.filter(t=>!t.deleted));return 'Task deleted.';
+      }
       await executeActionTags('[MARK_DONE: '+matches[0].id+']');return 'Task completed.';
     }
-    return activeSchedule.filter(t=>!t.deleted);
+    const role=resolveRole(params.for_who || params.for,activeSettings.userRole);
+    return activeSchedule.filter(t=>!t.deleted && (t.assignee===role || t.assignee==='both'));
   }
   throw new Error('Unknown engine command');
 }
@@ -1780,6 +2065,7 @@ ipcMain.handle("boot", () => {
   const primaryDisplay = screen.getPrimaryDisplay();
   return {
     settings: secrets.publicSettings(activeSettings),
+    account:account.snapshot(),
     schedule: activeSchedule.filter(t => !t.deleted),
     screen: {
       x: primaryDisplay.bounds.x,
@@ -1788,7 +2074,7 @@ ipcMain.handle("boot", () => {
       height: primaryDisplay.bounds.height,
       scale: primaryDisplay.scaleFactor,
     },
-    version: (() => { try { const b=JSON.parse(fs.readFileSync(path.join(__dirname,"../dist/build-info.json"),"utf8")); return `1.0.0 • ${b.revision.slice(0,8)}${b.dirty ? ' + local changes' : ''} • ${b.builtAt}`; } catch { return "1.0.0 • build unknown"; } })(),
+    version: (() => { try { const b=JSON.parse(fs.readFileSync(path.join(__dirname,"../dist/build-info.json"),"utf8")); return `${app.getVersion()} • ${b.revision.slice(0,8)}${b.dirty ? ' + local changes' : ''} • ${b.builtAt}`; } catch { return `${app.getVersion()} • build unknown`; } })(),
     hookPath: "",
   };
 });
@@ -1815,6 +2101,7 @@ ipcMain.handle("marklv-delete-memory", async (_event, { category, key }) => {
 });
 
 ipcMain.handle("marklv-execute-action", async (_event, { name, parameters }) => {
+  account.guardAction(name,parameters);
   return await runMochiBridgeCmd("execute", name, JSON.stringify(parameters || {}));
 });
 
@@ -1843,30 +2130,50 @@ ipcMain.handle("save-settings", (_event, newSettings) => {
   const oldVoice = activeSettings.voiceName || "Charon";
   const previous = activeSettings;
   const next = secrets.mergeSettings(previous, newSettings);
+  if(account.configured){
+    if(newSettings.aiProvider && newSettings.aiProvider!=='groq')account.require('gemini');
+    for(const key of ['syncUrl','syncApiKey','shareChannel','userRole'])next[key]=previous[key];
+  }
+  next.proactiveTalkingEnabled = next.proactiveTalkingEnabled === true;
+  next.userInterests = String(next.userInterests || '').trim().slice(0, 2000);
+  const shortcut = parseShortcut(next.pushToTalkKey || 'Control+Space');
+  if (!shortcut) throw new Error('Choose a supported push-to-talk key.');
+  next.pushToTalkKey = shortcut.key;
+  next.companion = normalizeCompanion(next.companion);
   next.assistantName = String(next.assistantName || "Baymax").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 40) || "Baymax";
   saveSettings(next);
   activeSettings = next;
+  talkShortcut.configure(activeSettings);
   cachedMarkLvTools = null;
   tray?.setToolTip(`${displayAssistantName()} — AI Desktop Companion`);
   if (oldAutostart !== activeSettings.autostart) {
     applyStartupMode(activeSettings.autostart);
   }
-  if (["syncUrl", "syncApiKey", "syncEmail", "syncPassword", "shareChannel", "userRole", "userName", "partnerName"].some(key => previous[key] !== activeSettings[key])) startSupabaseSync();
+  if (["syncUrl", "syncApiKey", "shareChannel", "userRole", "userName", "partnerName"].some(key => previous[key] !== activeSettings[key])) startSupabaseSync();
   syncEngineConfig(activeSettings);
 
+
   const identityChanged =
-    ["pushToTalkEnabled", "proactiveAudio", "thinkingEnabled", "mediaResolution", "morningBriefEnabled", "turnSilenceMs", "turnPrefixMs", "turnEndSensitivity", "audioInputDevice", "audioOutputDevice"].some(key => previous[key] !== activeSettings[key]) ||
+    // Proactive preferences are sent live below; they do not restart the process.
+    ["proactiveAudio", "thinkingEnabled", "mediaResolution", "morningBriefEnabled", "turnSilenceMs", "turnPrefixMs", "turnEndSensitivity", "audioInputDevice", "audioOutputDevice"].some(key => previous[key] !== activeSettings[key]) ||
     oldAssistantName !== activeSettings.assistantName ||
     oldUserRole !== (activeSettings.userRole || "me") ||
     oldUserName !== (activeSettings.userName || "You") ||
     oldPartnerName !== (activeSettings.partnerName || "Partner");
 
   const currentProvider = activeSettings.aiProvider || "gemini";
+  if (previous.proactiveTalkingEnabled !== activeSettings.proactiveTalkingEnabled || previous.userInterests !== activeSettings.userInterests) {
+    sendToLiveEngine({cmd: 'proactive_config', enabled: activeSettings.proactiveTalkingEnabled, interests: activeSettings.userInterests});
+  }
   if (currentProvider === "gemini") {
     if (oldProvider !== "gemini" || !mochiLiveProc || oldGeminiKey !== activeSettings.geminiApiKey || identityChanged) {
       if (mochiLiveProc) stopMochiLiveEngine();
       startMochiLiveEngine();
     } else {
+      if (previous.pushToTalkEnabled !== activeSettings.pushToTalkEnabled || previous.pushToTalkKey !== activeSettings.pushToTalkKey) {
+        sendToLiveEngine({ cmd: 'ptt_config', enabled: !!activeSettings.pushToTalkEnabled, suspended: talkShortcut.snapshot().suspended });
+        sendToLiveEngine({ cmd: 'ptt', held: talkShortcut.snapshot().held });
+      }
       if (previous.wakeWordEnabled !== activeSettings.wakeWordEnabled) sendToLiveEngine({
         cmd: "wake_toggle",
         enabled: !!activeSettings.wakeWordEnabled,
@@ -1923,6 +2230,7 @@ ipcMain.handle("get-chat-messages", () => {
 });
 
 async function sendPartnerMessage(arg) {
+  account.require('partner');
   const history = loadChatHistory();
   const isMe = (activeSettings.userRole || "me") === "me";
   const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
@@ -1951,7 +2259,7 @@ async function sendPartnerMessage(arg) {
   }
 
   const msg = {
-    id: "msg_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    id: require('node:crypto').randomUUID(),
     sender: myName,
     recipient: partnerName,
     senderRole: activeSettings.userRole || "me",
@@ -2244,8 +2552,8 @@ function buildCompanionSystemPrompt() {
   const partnerUserName = userRole === "me" ? (activeSettings.partnerName || "Partner") : (activeSettings.userName || "You");
 
   // Load latest schedule items
-  const myTasks = activeSchedule.filter((s) => s.assignee === userRole || s.assignee === "both");
-  const partnerTasks = activeSchedule.filter((s) => s.assignee === partnerRole || s.assignee === "both");
+  const myTasks = activeSchedule.filter((s) => !s.deleted && (s.assignee === userRole || s.assignee === "both"));
+  const partnerTasks = activeSchedule.filter((s) => !s.deleted && (s.assignee === partnerRole || s.assignee === "both"));
 
   const myTasksText = myTasks.length > 0
     ? myTasks.map((s) => `  [${s.completed ? "DONE" : "PENDING"}] ${s.time ? s.time + " - " : ""}${s.title}${s.assignedBy === partnerRole ? ` (set by ${partnerUserName})` : ""}`).join("\n")
@@ -2273,18 +2581,23 @@ CRITICAL IDENTITY & TASK OWNERSHIP RULES:
 3. Only if ${currentUserName} specifically asks about ${partnerUserName}: tell them about ${partnerUserName}'s tasks.
 4. Keep answers short, sweet, and assistant-friendly (maximum 1-2 short sentences!).
 5. Do NOT use markdown symbols (no **, ##, *, backticks) or bullet spam so spoken voice sounds natural.
-6. If asked to open/launch an app: Say e.g. "Opening Discord right now!" and append [LAUNCH: app_name].
-7. If asked to close/exit an app: Say e.g. "Closing Discord for you!" and append [CLOSE: app_name].
+6. PC control, external app launching and operating-system automation are not available in this release.
+7. Respect these verified capabilities: ${JSON.stringify(account.caps)}. Never promise a locked feature.
 8. If asked to add a task for ${currentUserName}: Confirm and append [ADD_TASK: {"title":"...","time":"...","for":"${userRole}"}].
 9. If asked to add a task for ${partnerUserName}: Confirm and append [ADD_TASK: {"title":"...","time":"...","for":"${partnerRole}"}].
 10. If asked to add a task for both: Confirm and append [ADD_TASK: {"title":"...","time":"...","for":"both"}].
 11. If asked to mark done: Confirm in one line and append [MARK_DONE: task_id_or_title].
 12. If asked to send/text a message to ${partnerUserName}: Confirm in a sweet sentence and append [SEND_CHAT: {"text":"..."}].
-13. If asked to play a YouTube video, music, song, or artist (e.g. "play MrBeast", "play trending songs", "gaana chalao", "video play karo", "koi badhiya song play karo"): Say e.g. "Playing that for you right now!" and append [PLAY_YOUTUBE: search_or_song_query]. NEVER say you played it without appending [PLAY_YOUTUBE: query]!
+13. Use the built-in music player for songs: [APP: {"action":"music","command":"play","query":"song or artist"}]. Omit query to resume. Other music commands: pause, resume, next, previous, volume (volume:0–100), add_shared (query or current song), join (Listen Together with partner), leave. Do not open a browser for music.
+Use [APP: {"action":"open_view","view":"music"}] to navigate. Views: music, chat (AI), partner_chat, tasks, share, productivity, settings.
+Use [APP: {"action":"emote","emote":"love"}] for love, celebrate, vibe, dizzy, sleepy.
+Use [APP: {"action":"read_partner_messages"}] for recent partner messages.
+Use [TASK: {"action":"list|add|complete|delete","title":"exact task title or ID","for_who":"me|her|both","time":"optional"}] for schedule actions; choose the correct literal role from the current user identity. Never claim an action succeeded before executing its tag.
 14. If asked to search Google or the web (e.g. "search...", "who is...", "what is the score of...", "google..."): Say e.g. "Searching that for you!" and append [WEB_SEARCH: search_query].
 15. If asked to open a website or URL: Say e.g. "Opening that website right now!" and append [BROWSER_OPEN: website_url].
-16. If asked to adjust volume, mute, or media controls: Say e.g. "Got it!" and append [MEDIA_CONTROL: command_or_volume].
+16. Use the built-in music volume command for music volume. Operating-system controls are unavailable.
 17. If asked to start a focus or flow session (e.g. "start focus session for 1 hour", "focus session start karo", "focus mode on"): Say e.g. "Starting your focus session now. Time to lock in!" and append [START_FOCUS: {"durationMinutes": <minutes>, "mode": "Strict Lock"}].
+For Pomodoro, include "timerMode":"pomodoro" in START_FOCUS.
 18. If asked to stop or end focus mode: Say e.g. "Ending your focus session!" and append [STOP_FOCUS].
 Be sweet, playful, and helpful!`;
 }
@@ -2296,10 +2609,14 @@ async function executeActionTags(rawReply, signal) {
     signal?.throwIfAborted();
     let result;
     switch(name) {
+      case 'APP': result={data:await handleEngineAction('control_app',value)};break;
+      case 'TASK': result={data:await handleEngineAction('manage_schedule',value)};break;
       case 'START_FOCUS':
+        account.require('productivity');
         if(!productivityBlocker) throw new Error('Focus backend is unavailable');
-        productivityBlocker.start({mode:value.mode || 'Strict Lock',durationMinutes:Number(value.durationMinutes || 25)}); break;
+        productivityBlocker.start({mode:value.mode || 'Strict Lock',durationMinutes:Number(value.durationMinutes || 25),timerMode:value.timerMode}); break;
       case 'STOP_FOCUS':
+        account.require('productivity');
         if(!productivityBlocker) throw new Error('Focus backend is unavailable');
         productivityBlocker.stop(); break;
       case 'SEND_CHAT':
@@ -2319,7 +2636,7 @@ async function executeActionTags(rawReply, signal) {
       }
       case 'LAUNCH': result=await launchApplication(value);break;
       case 'CLOSE': result=await closeApplication(value);break;
-      case 'PLAY_YOUTUBE': result=await runMochiBridgeCmd('execute','youtube_video',JSON.stringify({action:'play',query:value}));break;
+      case 'PLAY_YOUTUBE': result={data:await requestAppAction({action:'music',command:'play',query:value})};break;
       case 'WEB_SEARCH': result=await runMochiBridgeCmd('execute','web_search',JSON.stringify({query:value,mode:'search'}));break;
       case 'MEDIA_CONTROL': result=await runMochiBridgeCmd('execute','computer_settings',JSON.stringify({description:value}));break;
       case 'BROWSER_OPEN': {
@@ -2329,9 +2646,10 @@ async function executeActionTags(rawReply, signal) {
       }
       default: throw new Error('Unsupported action: '+name);
     }
+    if(Array.isArray(result?.data))result.data=result.data.map(item=>item.title?`${item.completed?'Done':'Pending'}: ${item.title}${item.time?' at '+item.time:''}`:`${item.sender}: ${item.text}`).join('\n') || 'Nothing to show yet.';
     if(result && result.success===false) throw new Error(result.error || 'Action failed');
     const labels = {START_FOCUS:'Focus session started.',STOP_FOCUS:'Focus session stopped.',ADD_TASK:'Task saved.',MARK_DONE:'Task marked complete.',LAUNCH:'Application launch requested successfully.',CLOSE:'Application close request succeeded.',BROWSER_OPEN:'URL opened in your browser.'};
-    outcomes.push(name==='SEND_CHAT' ? ({stored:'Message saved for partner delivery.',sent:'Message sent to the live channel.',pending:'Message saved locally and queued; delivery is pending.'}[result.delivery] || 'Delivery status is unavailable.') : labels[name] || String(result?.result || result?.data || 'Action returned no completion details.'));
+    outcomes.push(name==='SEND_CHAT' ? ({stored:'Message saved for partner delivery.',sent:'Message sent to the live channel.',pending:'Message saved locally and queued; delivery is pending.'}[result.delivery] || 'Delivery status is unavailable.') : labels[name] || (typeof result?.data==='object'?JSON.stringify(result.data):String(result?.result || result?.data || 'Action returned no completion details.')));
   }
   return outcomes.length ? outcomes.join("\n") : parsed.text;
 }
@@ -2439,7 +2757,9 @@ async function callGroqAI(query, context, signal) {
 let textHistory = [], textQueue = Promise.resolve(), activeTextAbort = null, textGeneration = 0;
 function cancelTextRequests() { textGeneration++; activeTextAbort?.abort(); }
 ipcMain.handle('chat-send', (_event, {query,context}) => {
+  if(activeSettings.aiProvider!=='groq')account.require('gemini');
   if(typeof query!=='string' || !query.trim())return {text:''};
+  sendToLiveEngine({cmd:'user_turn'});
   const generation = textGeneration;
   const task=textQueue.catch(()=>{}).then(async()=>{
     if(generation!==textGeneration)return {text:'Request cancelled.'};
@@ -2514,6 +2834,7 @@ ipcMain.handle("transcribe-audio", async (_event, audioBase64) => {
 
 ipcMain.handle("ai-interrupt", () => {
   cancelTextRequests();
+  resetLiveSpeechOutput();
   sendToLiveEngine({ cmd: "interrupt" });
   return true;
 });
@@ -3094,13 +3415,15 @@ setTimeout(checkDriveFolderForNewFiles, 3000);
 let lastLocalScheduleUpdate = Date.now();
 
 async function syncScheduleToPartner() {
+  if(account.configured&&!account.caps.partner)return;
+  const shared=account.configured?activeSchedule.filter(t=>t.syncPairId===account.snapshot().pair?.id):activeSchedule;
   // 1. Live WebSocket Broadcast via Supabase Realtime (<50ms latency)
   try {
     const isMe = (activeSettings.userRole || "me") === "me";
     const rawMe = isMe ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
     const currentUserName = rawMe.charAt(0).toUpperCase() + rawMe.slice(1);
     await broadcastScheduleUpdate({
-      items: activeSchedule,
+      items: shared,
       senderName: currentUserName,
       senderRole: activeSettings.userRole || "me",
     });
@@ -3110,7 +3433,8 @@ async function syncScheduleToPartner() {
 
   // 3. 24/7 Persistent Cloud Database save (so offline partner gets it on boot)
   try {
-    await saveAllTasksToCloud(activeSchedule, activeSettings.shareChannel || "coucou-badsha-ayzil");
+    await saveAllTasksToCloud(shared, activeSettings.shareChannel || "coucou-badsha-ayzil");
+    if(account.configured)await broadcastScheduleUpdate({items:shared});
   } catch (dbErr) {}
 }
 
@@ -3126,6 +3450,11 @@ setInterval(checkRemoteScheduleUpdates, 30000).unref();
 ipcMain.handle("get-schedule", () => activeSchedule.filter(t => !t.deleted));
 
 ipcMain.handle("save-schedule-item", (_event, item) => {
+  if(account.configured){
+    item.id=require('./cloudTransport').stableId(item.id);
+    if(item.assignee!==activeSettings.userRole && item.assignee!=='both')account.require('partner');
+    if(account.snapshot().pair?.id) item.syncPairId = account.snapshot().pair.id;
+  }
   const existingIndex = activeSchedule.findIndex((s) => s.id === item.id);
   if (existingIndex >= 0) {
     activeSchedule[existingIndex] = item;
@@ -3134,6 +3463,9 @@ ipcMain.handle("save-schedule-item", (_event, item) => {
   }
   saveSchedule(activeSchedule);
   syncScheduleToPartner();
+  try {
+    saveTaskToCloud(item, activeSettings.shareChannel || "coucou-badsha-ayzil");
+  } catch (e) {}
   if (overlayWin && !overlayWin.isDestroyed()) {
     overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
   }
@@ -3161,6 +3493,9 @@ ipcMain.handle("toggle-schedule-item", (_event, id) => {
     if (item.completed) item.completedAt = Date.now();
     saveSchedule(activeSchedule);
     syncScheduleToPartner();
+    try {
+      saveTaskToCloud(item, activeSettings.shareChannel || "coucou-badsha-ayzil");
+    } catch (e) {}
     if (overlayWin && !overlayWin.isDestroyed()) {
       overlayWin.webContents.send("schedule-updated", activeSchedule.filter(t => !t.deleted));
     }
@@ -3383,17 +3718,108 @@ ipcMain.handle("open-productivity-window", () => {
   return true;
 });
 
+let cloudConnectionKey='',lastCapabilities='';
+account.on('changed',state=>{
+  const key=JSON.stringify([state.config.supabaseUrl,state.user?.id,state.pair?.id,state.pair?.backend,state.pair?.cloudEligible,state.capabilities.cloud]);
+  const capabilitiesKey=JSON.stringify(state.capabilities);
+  if(!state.capabilities.pcControl||key!==cloudConnectionKey){
+    remoteSession.end();activeRemoteRole=null;pendingViewerSignals=[];
+    closeRemoteViewerWindow();stopInputInjector();setHostDisplayBounds(null);
+    if(overlayWin&&!overlayWin.isDestroyed())overlayWin.webContents.send('remote-access-ended');
+  }
+  if(state.configured){
+    const me=state.pair?.members?.find(m=>m.userId===state.user?.id),other=state.pair?.members?.find(m=>m.userId!==state.user?.id);
+    activeSettings.userRole=me?.slot===2?'her':'me';
+    const first=state.pair?.members?.find(m=>m.slot===1),second=state.pair?.members?.find(m=>m.slot===2);
+    activeSettings.userName=first?.displayName||state.profile?.display_name||'You';activeSettings.partnerName=second?.displayName||other?.displayName||'Partner';
+    if(!state.capabilities.gemini)activeSettings.aiProvider='groq';
+  }
+  if(capabilitiesKey!==lastCapabilities){
+    lastCapabilities=capabilitiesKey;cachedMarkLvTools=null;
+    if(!state.capabilities.gemini)void stopMochiLiveEngine();else if(app.isReady())startMochiLiveEngine();
+    if(!state.capabilities.productivity){productivityTracker?.stop();productivityBlocker?.stop();}else if(app.isReady())productivityTracker?.start();
+  }
+  if(key!==cloudConnectionKey){
+    cloudConnectionKey=key;activeSchedule=loadSchedule();lastPartnerOnline=false;
+    overlayWin?.webContents.send('partner-chat-history',loadChatHistory());overlayWin?.webContents.send('schedule-updated',activeSchedule.filter(t=>!t.deleted));
+    if(app.isReady())startSupabaseSync();
+  }
+  for(const win of [overlayWin,settingsWin])if(win&&!win.isDestroyed()){
+    win.webContents.send('account-changed',state);win.webContents.send('settings-changed',secrets.publicSettings(activeSettings));
+  }
+});
+
+account.on('partner-invite-received', payload => {
+  const sender = payload.senderUsername || 'Someone';
+  if (Notification.isSupported()) {
+    try {
+      new Notification({
+        title: 'Baymax — Partner Invitation',
+        body: `@${sender} sent you a partner invitation. Open Account to accept!`,
+        icon: currentCompanionIcon()
+      }).show();
+    } catch {}
+  }
+  for (const win of [overlayWin, settingsWin]) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('partner-invite-received', payload);
+      win.webContents.send('account-notice', { type: 'invite', message: `@${sender} sent you an invitation!` });
+    }
+  }
+});
+
+account.on('partner-invite-accepted', payload => {
+  const partner = payload.partnerUsername || 'Your partner';
+  if (Notification.isSupported()) {
+    try {
+      new Notification({
+        title: 'Baymax — Connected!',
+        body: `@${partner} accepted your invitation! You are now paired.`,
+        icon: currentCompanionIcon()
+      }).show();
+    } catch {}
+  }
+  for (const win of [overlayWin, settingsWin]) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('partner-invite-accepted', payload);
+      win.webContents.send('account-notice', { type: 'connected', message: `Connected with @${partner}!` });
+    }
+  }
+});
+
+account.on('partner-unpaired', payload => {
+  const who = payload.endedByUsername || 'Your partner';
+  if (Notification.isSupported()) {
+    try {
+      new Notification({
+        title: 'Baymax — Relationship Ended',
+        body: `@${who} has ended the relationship.`,
+        icon: currentCompanionIcon()
+      }).show();
+    } catch {}
+  }
+  for (const win of [overlayWin, settingsWin]) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('partner-unpaired', payload);
+      win.webContents.send('account-notice', { type: 'unpaired', message: `@${who} ended the relationship.` });
+    }
+  }
+});
+
 // App Lifecycle
 app.whenReady().then(async () => {
   installAppProtocol(protocol, net, path.join(__dirname, ".."));
   activeSettings = loadSettings();
+  await require("./engineRpc").startEngineRpc(handleEngineAction);
+  await account.init();
+  activeSchedule=loadSchedule();
+  if(account.configured&&!account.caps.gemini)activeSettings.aiProvider='groq';
   let legacyEngineKey = '';
   try { legacyEngineKey = JSON.parse(fs.readFileSync(path.join(engineDataDir,'config','api_keys.json'),'utf8')).gemini_api_key || ''; } catch {}
   activeSettings.geminiApiKey ||= process.env.GEMINI_API_KEY || legacyEngineKey;
   saveSettings(activeSettings);
   const migratedServiceAccount = loadServiceAccount();
   if (migratedServiceAccount) fs.writeFileSync(serviceAccountPath, JSON.stringify(secrets.protect(migratedServiceAccount, safeStorage)));
-  await require("./engineRpc").startEngineRpc(handleEngineAction);
   setInterval(flushOutbox, 30000).unref();
   setInterval(() => {
     if (!remoteSession.current()) {
@@ -3453,8 +3879,8 @@ app.whenReady().then(async () => {
       handleFocusDistractionAlert
     );
 
-    productivityTracker.start();
-    void productivityTracker.scanAllInstalledApps().catch(error => {
+    if(account.caps.productivity)productivityTracker.start();
+    if(account.caps.productivity)void productivityTracker.scanAllInstalledApps().catch(error => {
       console.warn('[Productivity] Installed-app scan failed:', error.message);
     });
     console.log("[Productivity Engine] Tracker and Blocker initialized successfully.");
@@ -3464,6 +3890,12 @@ app.whenReady().then(async () => {
 
   setupTray();
   createOverlayWindow();
+  talkShortcut.configure(activeSettings);
+  const { powerMonitor } = require('electron');
+  powerMonitor.on('suspend', () => talkShortcut.suspend('sleep', true));
+  powerMonitor.on('resume', () => talkShortcut.suspend('sleep', false));
+  powerMonitor.on('lock-screen', () => talkShortcut.suspend('lock', true));
+  powerMonitor.on('unlock-screen', () => talkShortcut.suspend('lock', false));
   startMochiLiveEngine();
   startSupabaseSync();
   applyStartupMode(activeSettings.autostart);
@@ -3491,8 +3923,12 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", event => {
+  musicExtractor.close();
+  if (isQuitting) return;
+  event.preventDefault();
   isQuitting = true;
+  talkShortcut.stop();
   if (productivityTracker) {
     try { productivityTracker.stop(); } catch (e) {}
   }
@@ -3502,7 +3938,7 @@ app.on("before-quit", () => {
   if (productivityStore) {
     try { productivityStore.saveSync(); } catch (e) {}
   }
-  stopMochiLiveEngine();
+  void Promise.allSettled([endPartnerSessions(),stopMochiLiveEngine()]).finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {
