@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {EventEmitter}=require('node:events');
 const {createClient}=require('@supabase/supabase-js');
 const OFFLINE_GRACE_MS=72*60*60*1000,LOGIN_MS=5*60*1000;
-const EMPTY_CONFIG={supabaseUrl:'',supabaseAnonKey:'',razorpayKeyId:'',planIds:{pro_monthly:'',pro_annual:'',duo_monthly:'',duo_annual:''}};
+const EMPTY_CONFIG={supabaseUrl:'',supabaseAnonKey:'',razorpayKeyId:'',billingUrl:'',planIds:{pro_monthly:'',pro_annual:'',duo_monthly:'',duo_annual:''}};
 function cleanConfig(value){
  const config={...EMPTY_CONFIG,...value,planIds:{...EMPTY_CONFIG.planIds,...value?.planIds}};
  config.supabaseUrl=String(config.supabaseUrl||'').trim().replace(/\/$/,'');
@@ -13,6 +13,8 @@ function cleanConfig(value){
   try{publicKey ||= JSON.parse(Buffer.from(config.supabaseAnonKey.split('.')[1],'base64url')).role==='anon';}catch{}
   if(!publicKey || config.supabaseAnonKey.length>4096)throw new Error('Use the public publishable/anon key, never a secret or service-role key');
  }
+ config.billingUrl=String(config.billingUrl||'').trim().replace(/\/$/,'');
+ if(config.billingUrl){const url=new URL(config.billingUrl);if(url.protocol!=='https:'||url.username||url.password||url.pathname!=='/'||url.search||url.hash)throw new Error('Use the HTTPS origin of your billing service');}
  config.razorpayKeyId=String(config.razorpayKeyId||'').trim();
  if(config.razorpayKeyId&&!/^rzp_(test|live)_[A-Za-z0-9]+$/.test(config.razorpayKeyId))throw new Error('Enter only the public Razorpay Key ID');
  for(const key of Object.keys(EMPTY_CONFIG.planIds)){config.planIds[key]=String(config.planIds[key]||'').trim();if(config.planIds[key]&&!/^plan_[A-Za-z0-9]+$/.test(config.planIds[key]))throw new Error('Invalid public plan ID');}
@@ -22,10 +24,10 @@ function capabilities(config,saved,now=Date.now()){
  if(!config.supabaseUrl)return {configured:false,signedIn:false,local:true,groq:true,tasks:true,musicSolo:true,gemini:true,productivity:true,listenTogether:true,partner:true,cloud:false,pcControl:true,grace:false};
  const known=!!saved?.user?.id,verification=Number(saved?.verifiedAt)||0;
  const within=now>=verification-300000 && now-verification<=OFFLINE_GRACE_MS;
- const ent=saved?.snapshot?.entitlement,paid=known&&within&&['pro','duo'].includes(ent?.plan)&&Date.parse(ent.periodEnd)>now;
- const pair=saved?.snapshot?.pair;
+ const ent=saved?.snapshot?.entitlement,paid=known&&within&&['pro','duo'].includes(ent?.plan)&&(ent.periodEnd==='infinity'||Date.parse(ent.periodEnd)>now);
+ const pair=saved?.snapshot?.pair,emergency=saved?.snapshot?.system?.emergency===true;
  const local=known&&!!saved?.snapshot?.profile;
- return {configured:true,signedIn:known,local,groq:local,tasks:local,musicSolo:local,gemini:paid,productivity:paid,listenTogether:paid&&!!pair?.cloudEligible&&!!pair,partner:local&&!!pair,cloud:paid&&pair?.backend_kind==='cloud'&&pair?.cloudEligible===true,pcControl:paid,grace:paid&&now-verification>5*60000};
+ return {configured:true,signedIn:known,local,groq:local,tasks:local,musicSolo:local,gemini:paid,productivity:paid,listenTogether:!emergency&&paid&&!!pair?.cloudEligible&&!!pair,partner:local&&!!pair,cloud:!emergency&&paid&&pair?.backend_kind==='cloud'&&pair?.cloudEligible===true,pcControl:!emergency&&paid,grace:paid&&now-verification>5*60000};
 }
 const PRODUCTIVITY_IPC=new Set(['get-tracked-apps','get-daily-totals','get-app-categories','update-app-category','scan-running-apps','get-focus-sessions','add-focus-session','set-focus-sessions','start-focus-session','stop-focus-session','get-focus-active','scan-all-installed-apps','get-tracking-health','set-app-hidden','get-known-apps','add-custom-app','get-blocklist','toggle-block-app','set-blocklist','get-settings','update-settings','clear-data','is-onboarded','set-onboarded','get-user-profile','set-user-profile','kill-process','open-productivity-window']);
 const PC_IPC=new Set(['request-remote-access','prepare-remote-host','respond-remote-access','send-remote-signal','get-available-screens','get-primary-screen-source','inject-remote-input','viewer-get-partner-info','viewer-send-signal','viewer-send-input','launch-app','close-app']);
@@ -65,92 +67,20 @@ class AccountService extends EventEmitter {
  }
  ensureRealtimeClient(){
   if(!this.configured||!this.saved?.user?.id)return null;
-  if(this.realtimeClient)return this.realtimeClient;
-  try{
-   this.realtimeClient=createClient(this.config.supabaseUrl,this.config.supabaseAnonKey,{
-    accessToken:()=>this.token().catch(()=>this.config.supabaseAnonKey),
-    auth:{persistSession:false}
-   });
-   return this.realtimeClient;
-  }catch{
-   return null;
-  }
+  return this.realtimeClient ||= createClient(this.config.supabaseUrl,this.config.supabaseAnonKey,{accessToken:()=>this.token(),auth:{persistSession:false}});
  }
  startUserChannel(){
   if(!this.configured||!this.saved?.user?.id)return;
-  const client=this.ensureRealtimeClient();
-  if(!client)return;
-  const chName=`baymax_user_${this.saved.user.id}`;
-  if(this.userChannel&&this.userChannel.topic===`realtime:${chName}`)return;
+  const client=this.ensureRealtimeClient(),name='baymax:user:'+this.saved.user.id;
+  if(this.userChannel?.topic==='realtime:'+name)return;
   this.stopUserChannel();
-  try{
-   const ch=client.channel(chName);
-   this.userChannel=ch;
-   ch.on('broadcast',{event:'invite'},({payload})=>{
-    void this.refresh();
-    this.emit('partner-invite-received',payload||{});
-   });
-   ch.on('broadcast',{event:'invite-accepted'},({payload})=>{
-    void this.refresh();
-    this.emit('partner-invite-accepted',payload||{});
-   });
-   ch.on('broadcast',{event:'invite-declined'},({payload})=>{
-    void this.refresh();
-    this.emit('partner-invite-declined',payload||{});
-   });
-   ch.on('broadcast',{event:'unpaired'},async({payload})=>{
-    if(this.saved?.snapshot)this.saved.snapshot.pair=null;
-    this.persist();
-    this.changed();
-    void this.refresh();
-    this.emit('partner-unpaired',payload||{});
-   });
-   ch.subscribe();
-  }catch(err){
-   console.warn('[AccountService] Failed to start userChannel:',err);
-  }
+  const channel=client.channel(name,{config:{private:true}});this.userChannel=channel;
+  channel.on('broadcast',{event:'account-changed'},()=>{void this.refresh();});
+  channel.subscribe(status=>{if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'){this.error='Live account updates unavailable; reconnecting';}});
  }
  stopUserChannel(){
-  if(this.userChannel&&this.realtimeClient){
-   try{this.realtimeClient.removeChannel(this.userChannel);}catch{}
-   this.userChannel=null;
-  }
- }
- async broadcastToUser(targetUserId,payload){
-  if(!targetUserId)return false;
-  try{
-   const client=this.ensureRealtimeClient();
-   if(!client)return false;
-   const chName=`baymax_user_${targetUserId}`;
-   const ch=client.channel(chName);
-   await new Promise(resolve=>{
-    ch.subscribe(status=>{if(status==='SUBSCRIBED'||status==='TIMED_OUT'||status==='CHANNEL_ERROR')resolve();});
-    setTimeout(resolve,1000);
-   });
-   await ch.send({type:'broadcast',event:payload.event||'account-event',payload});
-   setTimeout(()=>client.removeChannel(ch),2000);
-   return true;
-  }catch{
-   return false;
-  }
- }
- async broadcastToPair(pairId,payload){
-  if(!pairId)return false;
-  try{
-   const client=this.ensureRealtimeClient();
-   if(!client)return false;
-   const chName=`baymax_pair_${pairId}`;
-   const ch=client.channel(chName);
-   await new Promise(resolve=>{
-    ch.subscribe(status=>{if(status==='SUBSCRIBED'||status==='TIMED_OUT'||status==='CHANNEL_ERROR')resolve();});
-    setTimeout(resolve,1000);
-   });
-   await ch.send({type:'broadcast',event:payload.event||'partner',payload});
-   setTimeout(()=>client.removeChannel(ch),2000);
-   return true;
-  }catch{
-   return false;
-  }
+  const channel=this.userChannel;this.userChannel=null;
+  if(channel&&this.realtimeClient)void this.realtimeClient.removeChannel(channel).catch(()=>{});
  }
  persist(){
   if(!this.saved){if(fs.existsSync(this.sessionFile))fs.unlinkSync(this.sessionFile);return;}
@@ -176,8 +106,10 @@ class AccountService extends EventEmitter {
  }
  async fetchJSON(url,options={}){
   const response=await this.request(url,{...options,headers:{apikey:this.config.supabaseAnonKey,'content-type':'application/json',...options.headers},signal:AbortSignal.timeout(15000),redirect:'error'});
-  if(response.status===204)return null;
-  const result=await response.json();if(!response.ok){const err=new Error(result.code==='23505'?'That username is already taken. Try another.':result.error_description||result.error?.message||result.error||result.message||result.msg||'Service unavailable');err.status=response.status;err.code=result.code;throw err;}return result;
+  const raw=response.status===204?'':await response.text();let result=null;
+  try{result=raw?JSON.parse(raw):null;}catch{const error=new Error('Service returned an invalid response ('+response.status+'). Please retry.');error.status=response.status;throw error;}
+  if(!response.ok){const error=new Error(result?.code==='23505'?'This record already exists. Refresh and try again.':result?.error_description||result?.error?.message||(typeof result?.error==='string'?result.error:null)||result?.message||result?.msg||'Service unavailable');error.status=response.status;error.code=result?.code;throw error;}
+  return result;
  }
  async token(){
   if(!this.saved?.session)throw new Error('Sign in required');
@@ -194,123 +126,42 @@ class AccountService extends EventEmitter {
   }
   return this.saved.session.access_token;
  }
- async api(service,payload){return this.fetchJSON(this.config.supabaseUrl+'/functions/v1/'+service,{method:'POST',headers:{authorization:'Bearer '+await this.token()},body:JSON.stringify(payload)});}
+ async api(service,payload){
+  if(service==='content')return this.content(payload);
+  if(service!=='billing')throw new Error('Unsupported service. Install the current database migrations.');
+  if(!this.config.billingUrl)throw new Error('Payment service setup is required. Add the owner billing service URL in account configuration.');
+  return this.fetchJSON(this.config.billingUrl+'/api/billing',{method:'POST',headers:{authorization:'Bearer '+await this.token()},body:JSON.stringify(payload)});
+ }
  async rest(resource,options={}){return this.fetchJSON(this.config.supabaseUrl+'/rest/v1/'+resource,{...options,headers:{authorization:'Bearer '+await this.token(),...options.headers}});}
+ async rpc(name,args={}){return this.rest('rpc/'+name,{method:'POST',body:JSON.stringify(args)});}
+ async content(payload){
+  this.require('cloud');const pair=this.snapshot().pair;
+  if(payload.pairId!==pair?.id)throw new Error('Partner changed');
+  const storage=(resource,body)=>this.fetchJSON(this.config.supabaseUrl+'/storage/v1/'+resource,{method:'POST',headers:{authorization:'Bearer '+this.saved.session.access_token},body:JSON.stringify(body)});
+  await this.token();
+  if(payload.op==='files'){
+   const cursor=payload.cursor;if(cursor&&!/^[0-9a-f-]{36}$/i.test(cursor))throw new Error('Invalid cursor');
+   const rows=await this.rest('attachments?pair_id=eq.'+pair.id+'&order=id.asc&limit=100'+(cursor?'&id=gt.'+cursor:''));
+   if(!Array.isArray(rows))throw new Error('Invalid file response');return {items:rows,cursor:rows.length===100?rows.at(-1).id:null};
+  }
+  if(payload.op==='file-upload'){
+   const id=crypto.randomUUID();await this.rpc('reserve_my_file',{p_pair:pair.id,p_id:id,p_name:payload.name,p_bytes:payload.bytes});
+   try{const result=await storage('object/upload/sign/baymax-files/'+pair.id+'/'+id,{});if(!result?.url)throw new Error('Upload authorization failed');return {id,url:this.config.supabaseUrl+'/storage/v1'+result.url};}
+   catch(error){await this.rpc('remove_my_file',{p_pair:pair.id,p_id:id}).catch(()=>{});throw error;}
+  }
+  if(!/^[0-9a-f-]{36}$/i.test(payload.id||''))throw new Error('Invalid file');
+  const file=(await this.rest('attachments?pair_id=eq.'+pair.id+'&id=eq.'+payload.id))?.[0];if(!file)throw new Error('File unavailable');
+  if(payload.op==='file-download'){const result=await storage('object/sign/baymax-files/'+file.object_path,{expiresIn:60});if(!result?.signedURL)throw new Error('Download authorization failed');return {file,url:this.config.supabaseUrl+'/storage/v1'+result.signedURL};}
+  if(payload.op==='file-delete'){
+   await this.fetchJSON(this.config.supabaseUrl+'/storage/v1/object/baymax-files',{method:'DELETE',headers:{authorization:'Bearer '+await this.token()},body:JSON.stringify({prefixes:[file.object_path]})});
+   await this.rpc('remove_my_file',{p_pair:pair.id,p_id:file.id});return {deleted:true};
+  }
+  throw new Error('Unknown file operation');
+ }
  async accountSnapshot(){
-  try{
-   const snap=await this.rest('rpc/get_my_account',{method:'POST',body:'{}'});
-   if(snap && typeof snap==='object')return snap;
-  }catch{}
-  try{
-   const snap=await this.rest('rpc/account_snapshot',{method:'POST',body:JSON.stringify({p_actor:this.saved.user.id})});
-   if(snap && typeof snap==='object')return snap;
-  }catch{}
-  const profiles=await this.rest('profiles?select=*&user_id=eq.'+encodeURIComponent(this.saved.user.id)).catch(()=>[]);
-  let invites=[];
-  try{
-   const inc=await this.rest('partner_invites?select=id,sender_id,recipient_id,status,created_at&recipient_id=eq.'+encodeURIComponent(this.saved.user.id)+'&status=eq.pending').catch(()=>[]);
-   const out=await this.rest('partner_invites?select=id,sender_id,recipient_id,status,created_at&sender_id=eq.'+encodeURIComponent(this.saved.user.id)+'&status=eq.pending').catch(()=>[]);
-   invites=[...(inc||[]),...(out||[])].map(i=>({id:i.id,senderId:i.sender_id,recipientId:i.recipient_id,status:i.status}));
-   for(const inv of invites){
-    const other=inv.senderId===this.saved.user.id?inv.recipientId:inv.senderId;
-    if(other){
-     const p=await this.rest('profiles?select=username,display_name&user_id=eq.'+encodeURIComponent(other)).catch(()=>[]);
-     if(p?.[0]){inv.sender=p[0].username;inv.displayName=p[0].display_name;}
-    }
-   }
-  }catch{}
-  let activePair=null;
-  try{
-   const memberRows=await this.rest(`pair_members?select=pair_id,slot,user_id&user_id=eq.${encodeURIComponent(this.saved.user.id)}&ended_at=is.null`).catch(()=>[]);
-   if(Array.isArray(memberRows)&&memberRows.length>0){
-    const pairId=memberRows[0].pair_id;
-    const pairRows=await this.rest(`pairs?select=*&id=eq.${encodeURIComponent(pairId)}&status=eq.active`).catch(()=>[]);
-    if(Array.isArray(pairRows)&&pairRows.length>0){
-     const allMembers=await this.rest(`pair_members?select=pair_id,slot,user_id&pair_id=eq.${encodeURIComponent(pairId)}&ended_at=is.null`).catch(()=>[]);
-     const members=[];
-     for(const m of (allMembers||[])){
-      const p=await this.rest(`profiles?select=username,display_name,avatar_url&user_id=eq.${encodeURIComponent(m.user_id)}`).catch(()=>[]);
-      members.push({
-       userId:m.user_id,
-       slot:m.slot,
-       username:p?.[0]?.username||'partner',
-       displayName:p?.[0]?.display_name||p?.[0]?.username||'Partner'
-      });
-     }
-     activePair={
-      id:pairRows[0].id,
-      backend_kind:pairRows[0].backend_kind||'cloud',
-      backend_id:pairRows[0].backend_id||null,
-      status:pairRows[0].status,
-      cloudEligible:true,
-      members
-     };
-    }
-   }
-  }catch(err){
-   console.warn('[Account] Active pair query failed:', err);
-  }
-  let activeEntitlement = {plan:'free'};
-  try{
-   const seatRows=await this.rest(`seats?select=subscription_id,state&user_id=eq.${encodeURIComponent(this.saved.user.id)}&state=eq.active`).catch(()=>[]);
-   if(Array.isArray(seatRows)&&seatRows.length>0){
-    const subId=seatRows[0].subscription_id;
-    const subRows=await this.rest(`subscriptions?select=id,plan_code,provider,purchaser_id,period_end,cancelled_at_period_end,state&id=eq.${encodeURIComponent(subId)}&state=eq.active`).catch(()=>[]);
-    if(Array.isArray(subRows)&&subRows.length>0&&Date.parse(subRows[0].period_end)>this.now()){
-     activeEntitlement={
-      plan:subRows[0].plan_code,
-      provider:subRows[0].provider,
-      subscriptionId:subRows[0].id,
-      purchaserId:subRows[0].purchaser_id,
-      periodEnd:subRows[0].period_end,
-      cancelAtPeriodEnd:subRows[0].cancelled_at_period_end
-     };
-    }
-   }else{
-    const directSubs=await this.rest(`subscriptions?select=id,plan_code,provider,purchaser_id,period_end,cancelled_at_period_end,state&purchaser_id=eq.${encodeURIComponent(this.saved.user.id)}&state=eq.active&order=period_end.desc&limit=1`).catch(()=>[]);
-    if(Array.isArray(directSubs)&&directSubs.length>0&&Date.parse(directSubs[0].period_end)>this.now()){
-     activeEntitlement={
-      plan:directSubs[0].plan_code,
-      provider:directSubs[0].provider,
-      subscriptionId:directSubs[0].id,
-      purchaserId:directSubs[0].purchaser_id,
-      periodEnd:directSubs[0].period_end,
-      cancelAtPeriodEnd:directSubs[0].cancelled_at_period_end
-     };
-    }
-   }
-   if(activeEntitlement.plan==='duo'&&activeEntitlement.purchaserId===this.saved?.user?.id&&activeEntitlement.subscriptionId){
-    try{
-     const seatsOnSub=await this.rest(`seats?select=user_id,state&subscription_id=eq.${encodeURIComponent(activeEntitlement.subscriptionId)}&state=eq.active`).catch(()=>[]);
-     const partnerSeatRow=Array.isArray(seatsOnSub)?seatsOnSub.find(s=>s.user_id!==this.saved.user.id):null;
-     if(partnerSeatRow){
-      const partnerProfile=await this.rest(`profiles?select=username,display_name&user_id=eq.${encodeURIComponent(partnerSeatRow.user_id)}`).catch(()=>[]);
-      activeEntitlement.partnerSeat={
-       userId:partnerSeatRow.user_id,
-       username:partnerProfile?.[0]?.username||'partner',
-       displayName:partnerProfile?.[0]?.display_name||partnerProfile?.[0]?.username||'Partner',
-       state:'active'
-      };
-     }else{
-      activeEntitlement.partnerSeat=null;
-     }
-    }catch(e){
-     console.warn('[Account] Failed to query partner seat:', e);
-     activeEntitlement.partnerSeat=null;
-    }
-   }
-  }catch(err){
-   console.warn('[Account] Entitlement query fallback failed:', err);
-   activeEntitlement=this.saved?.snapshot?.entitlement||{plan:'free'};
-  }
-  return {
-   profile:profiles?.[0]||this.saved?.snapshot?.profile||null,
-   entitlement:activeEntitlement,
-   pair:activePair,
-   invites,
-   backends:this.saved?.snapshot?.backends||[],
-   migrations:this.saved?.snapshot?.migrations||[]
-  };
+  const snapshot=await this.rpc('get_my_account');
+  if(!snapshot||typeof snapshot!=='object'||!snapshot.entitlement||!Array.isArray(snapshot.invites))throw new Error('Account service returned an incomplete response. Apply the latest database migrations.');
+  return snapshot;
  }
  async refresh(){
   if(!this.configured||!this.saved)return this.snapshot();if(this.refreshing)return this.refreshing;
@@ -318,7 +169,13 @@ class AccountService extends EventEmitter {
   return this.refreshing=(async()=>{
    try{
     const snapshot=await this.accountSnapshot();if(generation!==this.generation)return this.snapshot();
-    this.saved.snapshot=snapshot;this.saved.verifiedAt=this.now();this.error='';this.persist();
+    const previous=this.saved.snapshot;
+    this.saved.snapshot=snapshot;this.saved.verifiedAt=this.now();this.error='';
+    this.saved.deviceId ||= crypto.randomUUID();this.persist();
+    if(!this.lastHeartbeat||this.now()-this.lastHeartbeat>60000){this.lastHeartbeat=this.now();void this.rpc('device_heartbeat',{p_id:this.saved.deviceId,p_name:require('node:os').hostname(),p_version:require('../package.json').version}).catch(()=>{});}
+    if(previous?.pair&&!snapshot.pair)this.emit('partner-unpaired',{pairId:previous.pair.id});
+    for(const invite of snapshot.invites)if(invite.recipientId===this.saved.user.id&&!previous?.invites?.some(i=>i.id===invite.id))this.emit('partner-invite-received',{senderUsername:invite.sender});
+    if(previous&&!previous.pair&&snapshot.pair){const partner=snapshot.pair.members?.find(m=>m.userId!==this.saved.user.id);this.emit('partner-invite-accepted',{partnerUsername:partner?.username});}
    }catch(error){
     if(generation!==this.generation)return this.snapshot();
     if(error.status===401||error.authRejected){this.saved=null;this.persist();}
@@ -363,161 +220,26 @@ class AccountService extends EventEmitter {
   }catch(error){this.cancelLogin();throw error;}
  }
  async action(op,args={}){
+  if(!this.saved?.user?.id)throw new Error('Sign in with Google first');
   if(op==='reserve'){
-   if(!this.saved?.user?.id)throw new Error('Sign in with Google first');
    const username=String(args.username||'').trim().replace(/^@/,'');
    if(!/^[a-z0-9_]{3,24}$/.test(username))throw new Error('Use 3–24 lowercase letters, numbers or underscores.');
-   const display=String(args.displayName||this.saved.user.displayName||username).trim().slice(0,80)||username;
-   const generation=this.generation;
-   let row=null;
-   try{
-    const rows=await this.rest('profiles?on_conflict=user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({user_id:this.saved.user.id,username,display_name:display})});
-    row=rows?.[0];
-   }catch{
-    row={user_id:this.saved.user.id,username,display_name:display};
-   }
-   if(!row?.username)row={user_id:this.saved.user.id,username,display_name:display};
+   const display=String(args.displayName||this.saved.user.displayName||username).trim().slice(0,80)||username,generation=this.generation;
+   const rows=await this.rest('profiles?on_conflict=user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({user_id:this.saved.user.id,username,display_name:display})});
+   const row=rows?.[0];if(row?.username!==username)throw new Error('Username was not saved. Please retry.');
    if(generation!==this.generation)throw new Error('Account changed');
-   this.saved.snapshot={...(this.saved.snapshot||{entitlement:{plan:'free'}}),profile:row};this.persist();this.changed();
-   await this.refresh().catch(()=>{});return {profile:row};
+   this.saved.snapshot={...(this.saved.snapshot||{entitlement:{plan:'free'}}),profile:row};this.persist();this.changed();await this.refresh();return {profile:row};
   }
-  if(op==='continue-free'){if(!this.saved?.snapshot?.profile)throw new Error('Choose a username first');this.saved.planChosen=true;this.persist();this.changed();return this.snapshot();}
-  if(op==='lookup'){
-   const target=String(args.username||'').trim().toLowerCase().replace(/^@/,'');
-   if(!target)return {profile:null};
-   try{
-    const rows=await this.rest('profiles?select=user_id,username,display_name,avatar_url&username=ilike.'+encodeURIComponent(target));
-    if(rows?.[0] && rows[0].user_id!==this.saved?.user?.id)return {profile:rows[0]};
-    return {profile:null};
-   }catch{
-    return {profile:null};
-   }
-  }
-  if(op==='invite'){
-   const target=String(args.username||'').trim().toLowerCase().replace(/^@/,'');
-   let recipientId=args.recipientId||null;
-   if(target && !recipientId){
-    const profs=await this.rest('profiles?select=user_id&username=ilike.'+encodeURIComponent(target)).catch(()=>[]);
-    recipientId=profs?.[0]?.user_id||null;
-   }
-   if(!recipientId)throw new Error('Partner @'+target+' was not found. Please check spelling.');
-   if(recipientId===this.saved.user.id)throw new Error('You cannot invite yourself');
-   let res=null;
-   try{
-    res=await this.rest('rpc/create_partner_invite',{method:'POST',body:JSON.stringify({p_actor:this.saved.user.id,p_recipient:recipientId,p_token_hash:null,p_backend:args.backendId||null})});
-   }catch(err){
-    const ins=await this.rest('partner_invites',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({sender_id:this.saved.user.id,recipient_id:recipientId,backend_id:args.backendId||null})});
-    res=ins?.[0]||{success:true};
-   }
-   void this.broadcastToUser(recipientId,{
-    event:'invite',
-    senderId:this.saved.user.id,
-    senderUsername:this.saved.snapshot?.profile?.username||'Someone'
-   });
-   await this.refresh().catch(()=>{});
-   return res||{success:true};
-  }
-  if(op==='accept'){
-   let senderId=args.senderId||null;
-   if(!senderId&&args.id){
-    const invRows=await this.rest('partner_invites?select=sender_id&id=eq.'+encodeURIComponent(args.id)).catch(()=>[]);
-    senderId=invRows?.[0]?.sender_id||null;
-   }
-   try{
-    await this.rest('rpc/accept_partner_invite',{method:'POST',body:JSON.stringify({p_actor:this.saved.user.id,p_invite:args.id,p_token_hash:null,p_custom_consent:args.customConsent===true})});
-   }catch{
-    await this.rest('partner_invites?id=eq.'+encodeURIComponent(args.id),{method:'PATCH',body:JSON.stringify({status:'accepted'})}).catch(()=>{});
-   }
-   if(senderId){
-    void this.broadcastToUser(senderId,{
-     event:'invite-accepted',
-     partnerId:this.saved.user.id,
-     partnerUsername:this.saved.snapshot?.profile?.username||'Partner'
-    });
-   }
-   await this.refresh().catch(()=>{});
-   return {accepted:true};
-  }
-  if(op==='decline'||op==='revoke'){
-   let targetUserId=args.senderId||null;
-   if(!targetUserId&&args.id){
-    const invRows=await this.rest('partner_invites?select=sender_id,recipient_id&id=eq.'+encodeURIComponent(args.id)).catch(()=>[]);
-    targetUserId=invRows?.[0]?.sender_id===this.saved?.user?.id?invRows?.[0]?.recipient_id:invRows?.[0]?.sender_id;
-   }
-   await this.rest('partner_invites?id=eq.'+encodeURIComponent(args.id),{method:'PATCH',body:JSON.stringify({status:op==='decline'?'declined':'revoked'})}).catch(()=>{});
-   if(targetUserId){
-    void this.broadcastToUser(targetUserId,{
-     event:'invite-declined',
-     partnerUsername:this.saved.snapshot?.profile?.username||'Partner'
-    });
-   }
-   await this.refresh().catch(()=>{});
-   return {success:true};
-  }
-  if(op==='end-pair'){
-   const currentPair=this.saved?.snapshot?.pair;
-   const otherMember=currentPair?.members?.find(m=>m.userId!==this.saved?.user?.id);
-   const unpairPayload={
-    event:'unpaired',
-    endedById:this.saved.user.id,
-    endedByUsername:this.saved.snapshot?.profile?.username||'Partner',
-    pairId:currentPair?.id,
-    at:Date.now()
-   };
-   if(currentPair?.id){
-    void this.broadcastToPair(currentPair.id,unpairPayload);
-   }
-   if(otherMember?.userId){
-    void this.broadcastToUser(otherMember.userId,unpairPayload);
-   }
-   const ent=this.saved?.snapshot?.entitlement;
-   if(ent?.plan==='duo'&&ent.purchaserId===this.saved?.user?.id&&otherMember?.userId&&ent.subscriptionId){
-    await this.rest(`seats?subscription_id=eq.${encodeURIComponent(ent.subscriptionId)}&user_id=eq.${encodeURIComponent(otherMember.userId)}`,{
-     method:'PATCH',
-     body:JSON.stringify({state:'revoked'})
-    }).catch(()=>{});
-   }
-   try{
-    await this.rest('rpc/end_pair',{method:'POST',body:JSON.stringify({p_actor:this.saved.user.id})});
-   }catch{
-    if(currentPair?.id){
-     await this.rest('pairs?id=eq.'+encodeURIComponent(currentPair.id),{method:'PATCH',body:JSON.stringify({status:'ended',ended_at:new Date().toISOString()})}).catch(()=>{});
-     await this.rest('pair_members?pair_id=eq.'+encodeURIComponent(currentPair.id),{method:'PATCH',body:JSON.stringify({ended_at:new Date().toISOString()})}).catch(()=>{});
-    }
-   }
-   if(this.saved?.snapshot){
-    this.saved.snapshot.pair=null;
-    this.persist();
-   }
-   this.changed();
-   await this.refresh().catch(()=>{});
-   return {ended:true};
-  }
-  if(op==='revoke-seat'||op==='revoke-partner-seat'){
-   const ent=this.saved?.snapshot?.entitlement;
-   if(!ent||ent.plan!=='duo'||ent.purchaserId!==this.saved?.user?.id) throw new Error('Only the Duo purchaser can revoke partner seats.');
-   let revoked = false;
-   try{
-    const r=await this.rest('rpc/revoke_partner_seat',{method:'POST',body:'{}'});
-    if(r?.success) revoked = true;
-   }catch{}
-   if(!revoked&&ent.subscriptionId){
-    const seatsOnSub=await this.rest(`seats?select=user_id,state&subscription_id=eq.${encodeURIComponent(ent.subscriptionId)}&state=eq.active`).catch(()=>[]);
-    const partnerSeatRow=Array.isArray(seatsOnSub)?seatsOnSub.find(s=>s.user_id!==this.saved.user.id):null;
-    if(partnerSeatRow){
-     await this.rest(`seats?subscription_id=eq.${encodeURIComponent(ent.subscriptionId)}&user_id=eq.${encodeURIComponent(partnerSeatRow.user_id)}`,{
-      method:'PATCH',
-      body:JSON.stringify({state:'revoked'})
-     }).catch(()=>{});
-    }
-   }
-   await this.refresh().catch(()=>{});
-   return {revoked:true};
-  }
-  let result={};
-  try{result=await this.api('account',{...args,op});}catch{}
-  await this.refresh().catch(()=>{});
-  return result;
+  if(op==='continue-free'){if(!this.saved.snapshot?.profile)throw new Error('Choose a username first');this.saved.planChosen=true;this.persist();this.changed();return this.snapshot();}
+  if(op==='revoke-seat'||op==='revoke-partner-seat'){const result=await this.rpc('revoke_partner_seat');await this.refresh();return result;}
+  if(op==='assign-seat'){const result=await this.rpc('assign_partner_seat',{p_username:String(args.username||'').trim().replace(/^@/,'').toLowerCase()});await this.refresh();return result;}
+  const values={...args};
+  if(values.username)values.username=String(values.username).trim().replace(/^@/,'').toLowerCase();
+  if(op==='lookup'&&!/^[a-z0-9_]{3,24}$/.test(values.username||''))throw new Error('Enter the exact partner username');
+  if(values.token){values.tokenHash=crypto.createHash('sha256').update(String(values.token)).digest('hex');delete values.token;}
+  const aliases={'migration-propose':'propose-backend','migration-accept':'accept-backend','migration-cancel':'cancel-backend','migration-commit':'commit-backend'};
+  const result=await this.rpc('account_action',{p_op:aliases[op]||op,p_args:values});
+  if(op!=='lookup')await this.refresh();return result;
  }
  async billing(op,args={}){
   if(op==='createCheckout'&&!this.config.razorpayKeyId){
@@ -527,15 +249,6 @@ class AccountService extends EventEmitter {
    const generation=this.generation;
    const result=await this.rest('rpc/claim_beta_membership',{method:'POST',body:JSON.stringify({p_plan:plan,p_partner_username:String(args.partnerUsername||'').trim().replace(/^@/,'')||null})});
    if(generation!==this.generation)throw new Error('Account changed');
-   if(result?.plan){
-    const ent={
-     plan:result.plan,
-     provider:'beta_test',
-     periodEnd:result.periodEnd,
-     cancelAtPeriodEnd:false
-    };
-    this.saved.snapshot={...(this.saved.snapshot||{}),entitlement:ent};
-   }
    this.saved.planChosen=true;this.persist();this.changed();await this.refresh();return {testing:true,...result};
   }
   const result=await this.api('billing',{...args,op});
@@ -548,7 +261,7 @@ class AccountService extends EventEmitter {
  async logout(revoke=true){
   this.cancelLogin();++this.generation;
   this.stopUserChannel();
-  if(this.realtimeClient){try{this.realtimeClient.removeAllChannels();}catch{}this.realtimeClient=null;}
+  if(this.realtimeClient){void this.realtimeClient.removeAllChannels().catch(()=>{});this.realtimeClient=null;}
   const access=this.saved?.session?.access_token;this.saved=null;this.error='';
   if(fs.existsSync(this.sessionFile))fs.unlinkSync(this.sessionFile);this.changed();
   if(revoke&&access)await this.fetchJSON(this.config.supabaseUrl+'/auth/v1/logout?scope=local',{method:'POST',headers:{authorization:'Bearer '+access}}).catch(()=>{});
@@ -558,7 +271,7 @@ class AccountService extends EventEmitter {
   clearInterval(this.timer);
   this.cancelLogin();
   this.stopUserChannel();
-  if(this.realtimeClient){try{this.realtimeClient.removeAllChannels();}catch{}this.realtimeClient=null;}
+  if(this.realtimeClient){void this.realtimeClient.removeAllChannels().catch(()=>{});this.realtimeClient=null;}
  }
 }
 module.exports={AccountService,cleanConfig,capabilities,OFFLINE_GRACE_MS,PC_ACTIONS,PRODUCTIVITY_IPC};

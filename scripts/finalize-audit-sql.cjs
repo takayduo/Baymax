@@ -1,0 +1,11 @@
+const fs=require('node:fs');
+let s=fs.readFileSync('supabase/migrations/202610140007_direct_authenticated_transport.sql','utf8');
+s=s.replace('s.user_id=auth.uid()))','s.user_id=auth.uid() and s.state=\'active\'))');
+fs.writeFileSync('supabase/migrations/202610140007_direct_authenticated_transport.sql',s);
+const path='supabase/migrations/202610140008_owner_admin.sql';s=fs.readFileSync(path,'utf8');
+let get=fs.readFileSync('supabase/migrations/202610140007_direct_authenticated_transport.sql','utf8');get=get.slice(get.indexOf('create or replace function public.get_my_account()'),get.indexOf('create or replace function public.account_action'));
+get=get.replace(' return result;'," return result||jsonb_build_object('system',(select jsonb_build_object('emergency',emergency,'announcement',announcement,'updatedAt',updated_at,'betaEnabled',(select enabled from baymax_private.beta_settings where singleton)) from baymax_private.system_settings where singleton));");
+s=s.replace(/create or replace function public.get_my_account\(\)[\s\S]*?(?=\ncommit;)/,'');
+s=s.replace('\ncommit;',()=> '\n'+get+'\ncommit;');fs.writeFileSync(path,s);
+const files=fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('.sql')).sort();
+fs.writeFileSync('electron/supabase-cloud.sql','-- Baymax central database: ordered migration bundle. Dedicated project only.\n-- For an existing installation apply ONLY migrations newer than its current version.\n\n'+files.map(f=>'-- '+f+'\n'+fs.readFileSync('supabase/migrations/'+f,'utf8')).join('\n\n'));

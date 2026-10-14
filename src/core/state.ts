@@ -107,6 +107,7 @@ export interface Settings {
   micEnabled: boolean;
   userName: string;
   partnerName: string;
+  userGender?: 'he' | 'she';
   userRole: "me" | "her";
   gdriveApiKey: string;
   gdriveFolderId: string;

@@ -42,13 +42,13 @@ export function accountSection(mode:'account'|'database'='account'){
   }else{
    const entitlement=state.entitlement;
    const plan=entitlement?.provider==='manual_grant'?`Comped ${entitlement.plan==='duo'?'Duo':'Pro'}`:entitlement?.plan==='duo'?'Duo':entitlement?.plan==='pro'?'Pro':'Free';
-   const isPaid=['pro','duo'].includes(entitlement?.plan||'free')&&(entitlement?.provider==='manual_grant'||entitlement?.provider==='beta_test'||(entitlement?.periodEnd&&Date.parse(entitlement.periodEnd)>Date.now()));
+   const isPaid=state.capabilities.gemini;
 
    // 1. Account Summary
    const summary=h('div',{class:'account-summary'},h('div',{},h('h2',{text:'@'+state.profile.username}),h('p',{text:state.user.email})),h('span',{class:'account-plan-badge',text:plan}));
    content.append(summary,h('p',{text:'Bring your own AI keys on every plan. API usage is billed separately by your provider.'}));
 
-   if(entitlement?.periodEnd)content.append(h('p',{text:`${entitlement.cancelAtPeriodEnd?'Access ends':'Current period ends'} ${new Date(entitlement.periodEnd).toLocaleDateString()}.`}));
+   if(entitlement?.periodEnd)content.append(h('p',{text:entitlement.periodEnd==='infinity'?'Lifetime membership.':`${entitlement.cancelAtPeriodEnd?'Access ends':'Current period ends'} ${new Date(entitlement.periodEnd).toLocaleDateString()}.`}));
    if(state.capabilities.grace)content.append(h('p',{text:'Offline access is using the last verified subscription, for up to 72 hours or the end of your paid period.'}));
 
    content.append(btn('Plans & Membership',()=>openPlans()));
@@ -112,7 +112,7 @@ export function accountSection(mode:'account'|'database'='account'){
        )
       );
       content.append(seatCard);
-     }else if(!state.pair){
+     }else{
       const seatUser=input('Partner’s registered @username');
       const seatCard=h('div',{class:'plan-duo-seat'},
        h('h4',{style:'margin:0;font-size:12px;color:#cbe7dc',text:'Duo Partner Seat · Available'}),
@@ -122,10 +122,10 @@ export function accountSection(mode:'account'|'database'='account'){
         btn('Gift seat',async()=>{
          const target=seatUser.value.trim().replace(/^@/,'');
          if(!target){status.textContent='Enter your partner’s @username.';return;}
-         if(!confirm(`Assign Duo seat to @${target}? They will receive full Duo access and connect with you.`))return;
+         if(!confirm(`Assign Duo seat to @${target}? They receive Duo access and an invitation to connect.`))return;
          status.textContent='Assigning Duo seat…';
          try{
-          await Account.billing('createCheckout',{priceCode:'duo_annual',partnerUsername:target});
+          await Account.action('assign-seat',{username:target});
           status.textContent=`Duo seat assigned to @${target}!`;
           const next=await Account.snapshot();if(next){State.account=next;State.notify();}
           render();
@@ -146,15 +146,15 @@ export function accountSection(mode:'account'|'database'='account'){
      const otherUsername=other?.username||'partner';
 
      // Your gender toggle: He / She
-     const myGender=(State.settings.userRole||'me')==='her'?'she':'he';
+     const myGender=State.settings.userGender||'he';
      const btnHe=h('button',{
       type:'button',
       class:myGender==='he'?'btn primary':'btn secondary',
       style:'padding:5px 16px;font-size:12px;',
       text:'He',
       onclick:()=>{
-       State.settings.userRole='me';
-       void Bridge.saveSettings({userRole:'me'});
+       State.settings.userGender='he';
+       void Bridge.saveSettings({userGender:'he'});
        render();
       }
      });
@@ -164,8 +164,8 @@ export function accountSection(mode:'account'|'database'='account'){
       style:'padding:5px 16px;font-size:12px;',
       text:'She',
       onclick:()=>{
-       State.settings.userRole='her';
-       void Bridge.saveSettings({userRole:'her'});
+       State.settings.userGender='she';
+       void Bridge.saveSettings({userGender:'she'});
        render();
       }
      });
@@ -273,6 +273,8 @@ export function accountSection(mode:'account'|'database'='account'){
    }
   }
   if(state?.error)content.append(h('p',{class:'account-error',text:state.error}));
+  if(state?.system?.announcement)content.append(h('p',{class:'account-status',text:state.system.announcement}));
+  if(state?.system?.emergency)content.append(h('p',{class:'account-error',text:'Partner Cloud services are temporarily paused by the owner. Local features remain available.'}));
  }
 
  function customDatabase(){

@@ -3720,7 +3720,7 @@ ipcMain.handle("open-productivity-window", () => {
 
 let cloudConnectionKey='',lastCapabilities='';
 account.on('changed',state=>{
-  const key=JSON.stringify([state.config.supabaseUrl,state.user?.id,state.pair?.id,state.pair?.backend,state.pair?.cloudEligible,state.capabilities.cloud]);
+  const key=JSON.stringify([state.config.supabaseUrl,state.user?.id,state.pair?.id,state.pair?.channel_token,state.pair?.backend,state.pair?.cloudEligible,state.capabilities.cloud]);
   const capabilitiesKey=JSON.stringify(state.capabilities);
   if(!state.capabilities.pcControl||key!==cloudConnectionKey){
     remoteSession.end();activeRemoteRole=null;pendingViewerSignals=[];

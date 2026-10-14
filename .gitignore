@@ -74,3 +74,5 @@ audit/
 /audit/remote-viewer-smoke-profile/
 
 /audit/onboarding-profile-*/
+/.admin-staging/
+/audit/admin-ui-profile/

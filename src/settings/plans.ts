@@ -13,6 +13,7 @@ export function promptAssignPartnerSeat(opts: {
  subtitle?: string;
  canSkip?: boolean;
  onDone?: (username?: string) => void;
+ onAssign?: (username:string) => Promise<unknown>;
 }): void {
  if (document.querySelector('.duo-assign-dialog')) return;
  const dialog = document.createElement('dialog');
@@ -25,7 +26,7 @@ export function promptAssignPartnerSeat(opts: {
  });
  const copy = h('p', {
   style: 'margin:0 0 16px;font-size:12px;line-height:1.5;color:#a9b8b3;',
-  text: opts.subtitle || 'Enter your partner’s registered @username. They will receive full Duo access and connect with you.'
+  text: opts.subtitle || 'Enter your partner’s registered @username. They receive Duo access and an invitation to connect.'
  });
 
  const inputWrap = h('div', {style: 'margin-bottom:16px;'});
@@ -60,7 +61,7 @@ export function promptAssignPartnerSeat(opts: {
    assignBtn.disabled = true;
    assignBtn.textContent = 'Assigning…';
    try {
-    await Account.billing('createCheckout', {priceCode: 'duo_annual', partnerUsername: val});
+    if(opts.onAssign)await opts.onAssign(val);else await Account.action('assign-seat',{username:val});
     close();
     opts.onDone?.(val);
    } catch (err: any) {
@@ -122,7 +123,12 @@ export function plansSection(onComplete?:()=>void):HTMLElement {
   if(!State.account?.user||!State.account.profile){openAccount();return;}
   const currentPlan = State.account.entitlement?.plan;
   const isPurchaser = State.account.entitlement?.purchaserId === State.account.user?.id;
-  const partnerAssigned = !!State.account.entitlement?.partnerSeat || !!State.account.pair;
+  const partnerAssigned = !!State.account.entitlement?.partnerSeat;
+
+  if(id==='duo'&&currentPlan!=='duo'&&State.account.config.razorpayKeyId){
+   promptAssignPartnerSeat({title:'Duo · choose your partner',subtitle:'Reserve the second seat for your partner before checkout. You connect after they accept.',onAssign:username=>Account.billing('createCheckout',{priceCode:`duo_${cycle}`,partnerUsername:username}),onDone:username=>{if(username)status.textContent='Checkout opened. Both seats activate after payment is verified.';}});
+   return;
+  }
 
   // If already on Duo and clicking to assign unassigned seat:
   if(id==='duo'&&currentPlan==='duo'&&isPurchaser&&!partnerAssigned){
@@ -176,7 +182,7 @@ export function plansSection(onComplete?:()=>void):HTMLElement {
   const partnerSeatUser=a?.entitlement?.partnerSeat?.username;
   const stamp=JSON.stringify([plan,cycle,a?.entitlement?.periodEnd,a?.capabilities.grace,a?.config.razorpayKeyId,a?.user?.id,busy,prices,partnerSeatUser,a?.pair?.id]);if(stamp===key)return;key=stamp;
   summary.replaceChildren(h('span',{class:'plan-status-badge',text:`● ${plan==='duo'?'Pay for both':plan==='pro'?'Pay for yourself':'Free'} (Active)`}));
-  if(a?.entitlement?.periodEnd)summary.append(h('span',{text:`${a.entitlement.provider==='beta_test'?'Beta until':'Current period ends'} ${new Date(a.entitlement.periodEnd).toLocaleDateString()}`}));
+  if(a?.entitlement?.periodEnd)summary.append(h('span',{text:a.entitlement.periodEnd==='infinity'?'Lifetime membership':`${a.entitlement.provider==='beta_test'?'Beta until':'Current period ends'} ${new Date(a.entitlement.periodEnd).toLocaleDateString()}`}));
   if(plan==='duo'&&partnerSeatUser)summary.append(h('span',{style:'color:#a5cbbe;font-size:11px;',text:`Partner seat: @${partnerSeatUser}`}));
   if(!a?.config.razorpayKeyId)summary.append(h('p',{text:'Beta access · choose Pro or Duo for 365 days free. No card or automatic renewal.'}));
   grid.replaceChildren();
@@ -188,7 +194,7 @@ export function plansSection(onComplete?:()=>void):HTMLElement {
    const basePeriod = option.id === 'free' ? 'forever' : (cycle === 'annual' ? '/ year' : '/ month');
    const price=server?new Intl.NumberFormat('en-IN',{style:'currency',currency:server.currency,maximumFractionDigits:0}).format(server.amount/100):basePrice;
    const current=plan===option.id&&!!a?.planChosen;
-   const partnerAssigned = !!a?.entitlement?.partnerSeat || !!a?.pair;
+   const partnerAssigned = !!a?.entitlement?.partnerSeat;
    const canAssign=current&&option.id==='duo'&&a.entitlement?.purchaserId===a.user?.id&&!partnerAssigned;
    const continueAssigned=plan===option.id&&!a?.planChosen&&option.id!=='free';
    const card=h('article',{class:'plan-card'+(current?' selected':''),'data-plan':option.id},h('h3',{text:option.name}),h('div',{class:'plan-price'},h('strong',{text:price}),h('span',{text:basePeriod})),h('ul',{},...option.features.map(text=>h('li',{text}))));

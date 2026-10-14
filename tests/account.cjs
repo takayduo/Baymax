@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
 const {AccountService,capabilities,cleanConfig,OFFLINE_GRACE_MS}=require('../electron/account');
 const config={supabaseUrl:'https://baymax-test.supabase.co',supabaseAnonKey:'sb_publishable_fixture'};
-const now=Date.now(),saved={user:{id:'alice'},planChosen:true,verifiedAt:now,snapshot:{profile:{username:'alice'},entitlement:{plan:'free'},pair:null}};
+const now=Date.now(),saved={user:{id:'alice'},planChosen:true,verifiedAt:now,snapshot:{profile:{username:'alice'},entitlement:{plan:'free'},pair:null,invites:[]}};
 test('Free keeps local tasks/Groq/solo music; paid pairs unlock Live, Focus and Listen Together within bounded grace',()=>{
  let c=capabilities(config,saved,now);for(const key of ['local','groq','tasks','musicSolo'])assert.equal(c[key],true);
  for(const key of ['gemini','productivity','listenTogether','cloud','pcControl'])assert.equal(c[key],false);
@@ -47,7 +47,7 @@ test('Google PKCE validates state, persists encrypted tokens, prevents replay an
  assert.equal(service.login,null);assert.equal(requests.filter(r=>r.url.includes('grant_type=pkce')).length,1);
  const disk=fs.readFileSync(path.join(folder,'account.dpapi.json'),'utf8');assert.ok(!disk.includes('refresh-private'));assert.ok(!disk.includes('access-private'));
  service.saved.session.expires_at=1;assert.deepEqual(await Promise.all([service.token(),service.token(),service.token()]),['refreshed','refreshed','refreshed']);assert.equal(refreshes(),1);
- service.config.razorpayKeyId='rzp_test_fixture';await service.billing('createCheckout',{});assert.equal(service.caps.gemini,false,'opening checkout cannot grant Pro');
+ service.config.razorpayKeyId='rzp_test_fixture';service.config.billingUrl='https://billing.example.com';await service.billing('createCheckout',{});assert.equal(service.caps.gemini,false,'opening checkout cannot grant Pro');
  await service.logout(false);assert.equal(service.caps.local,false);assert.equal(fs.existsSync(service.sessionFile),false);
 });
 test('Native IPC and action gates reject premium/PC paths while Free solo playback and own tasks remain usable',t=>{
@@ -101,8 +101,25 @@ test('end-pair and revoke-seat revoke partner seats on Duo subscriptions', async
   pair: {id: 'pair-456', members: [{userId: 'alice', username: 'alice'}, {userId: 'bob', username: 'bob'}]}
  };
  await service.action('end-pair');
- const unpairPatch = requests.find(r => r.url.includes('/rest/v1/seats?') && r.options.method === 'PATCH');
- assert.ok(unpairPatch, 'end-pair revokes partner seat on purchaser subscription');
- assert.equal(JSON.parse(unpairPatch.options.body).state, 'revoked');
+ const action=requests.find(r=>r.url.endsWith('/rpc/account_action'));assert.ok(action);assert.equal(JSON.parse(action.options.body).p_op,'end-pair');assert.ok(!requests.some(r=>r.options.method==='PATCH'),'Only server-authorized RPCs mutate seats');
+});
+
+test('Network failures never invent usernames, extend entitlement grace or report a successful unpair',async t=>{
+ const {service}=fixture(t);service.saved={...structuredClone(saved),session:{access_token:'private',expires_at:Math.floor(now/1000)+3600}};
+ service.request=async()=>new Response('<html>gateway timeout</html>',{status:502});
+ await assert.rejects(service.action('reserve',{username:'new_name'}),/invalid response/);
+ assert.equal(service.snapshot().profile.username,'alice');
+ await assert.rejects(service.action('end-pair'),/invalid response/);
+ service.saved.verifiedAt=now-60000;await service.refresh();assert.equal(service.saved.verifiedAt,now-60000);assert.match(service.error,/invalid response/);
+});
+test('Central transport retains failed writes and uses bounded paginated reads and task revisions',async()=>{
+ const {CloudTransport}=require('../electron/cloudTransport'),transport=new CloudTransport();
+ transport.pair={id:'pair',backend_kind:'cloud',members:[{userId:'alice',slot:1},{userId:'bella',slot:2}]};transport.user={id:'alice'};transport.callbacks={};
+ transport.account={snapshot:()=>({pair:transport.pair}),rpc:async()=>{throw new Error('offline');}};
+ assert.equal(await transport.saveMessage({id:'msg',text:'pending'}),false);assert.equal(await transport.saveTask({id:'task',title:'pending'}),false);assert.equal(await transport.signal('music',{}),false);
+ let calls=0;transport.account.rest=async resource=>{calls++;assert.match(resource,/limit=500/);if(calls===1)return Array.from({length:500},(_,i)=>({id:String(i).padStart(4,'0'),sender_id:'alice',body:'hello',created_at:new Date().toISOString()}));assert.match(resource,/id=gt.0499/);return [{id:'0500',sender_id:'bella',body:'last',created_at:new Date().toISOString()}];};
+ assert.equal((await transport.messages()).length,501);assert.equal(calls,2);
+ let args;transport.account.rpc=async(name,body)=>{args={name,body};return {revision:5};};const item={id:'task',cloudRevision:4};assert.equal(await transport.saveTask(item),true);assert.equal(args.name,'save_my_task');assert.equal(args.body.p_revision,4);assert.equal(item.cloudRevision,5);
+ assert.doesNotThrow(()=>transport.receive({senderId:'bella',at:NaN,kind:'chat-live',value:{text:'bad'}}));
 });
 
