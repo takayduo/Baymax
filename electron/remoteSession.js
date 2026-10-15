@@ -10,7 +10,7 @@ class RemoteSession {
   }
   receive(packet) {
     if (!packet || !packet.senderId || !/^[\w-]{36}$/.test(packet.sessionId || '')) return false;
-    if (!Number.isFinite(Number(packet.timestamp)) || Math.abs(this.now() - Number(packet.timestamp)) > 30000) return false;
+    if (!Number.isFinite(Number(packet.timestamp)) || Math.abs(this.now() - Number(packet.timestamp)) > 600000) return false;
     if (packet.action === 'request') {
       if (this.current()) return false;
       this.session = { id: packet.sessionId, peer: packet.senderId, role: 'host', accepted: false, expires: this.now() + 60000 };

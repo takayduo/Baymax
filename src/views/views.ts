@@ -186,7 +186,8 @@ export function buildHeader(actions: ViewActions): ViewHost {
       micBtn.append(svg(micOn ? ICONS.mic : ICONS.micOff, 14));
 
       labeledTabs.forEach(([tab]) => tab.setAttribute("aria-current", tab.classList.contains("on") ? "page" : "false"));
-      el.style.opacity = v === "confused" ? "0" : "1";
+      // A companion reaction must never hide the user's navigation controls.
+      el.style.opacity = "1";
     },
   };
 }

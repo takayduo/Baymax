@@ -55,7 +55,7 @@ export function buildProductivity(_actions: ViewActions): ViewHost {
     {
       class: "productivity-container",
       style:
-        "width: 100%; height: 100%; padding: 4px 6px 6px; box-sizing: border-box; display: flex; flex-direction: column;",
+        "width: 100%; height: 100%; padding: 4px 6px 6px; box-sizing: border-box; display: flex; flex-direction: column; background: #0A0A0A;",
     },
     iframe
   );

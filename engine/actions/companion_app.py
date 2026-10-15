@@ -6,7 +6,7 @@ def control_app(parameters=None, player=None, **kwargs):
 
 TOOL = {
     'name': 'control_app',
-    'description': 'Control Baymax built-in music (never open a browser for songs), shared partner playlist, Listen Together, app navigation and emotes. Use music play with query to find a song, play without query to resume; add_shared adds query or current song; join listens with the online partner. Only report success after the tool succeeds.',
+    'description': 'Control Baymax built-in music, shared partner playlist, Listen Together, app navigation and emotes. Default to this player when the user requests music without naming another app. If they explicitly name Spotify, YouTube or another app, use the corresponding browser/PC tools instead. Use music play with query to find a song, play without query to resume; add_shared adds query or current song; join listens with the online partner. Only report success after the tool succeeds.',
     'parameters': {'type':'OBJECT','properties': {
         'action': {'type':'STRING','enum':['music','open_view','emote','read_partner_messages']},
         'command': {'type':'STRING','enum':['play','resume','pause','next','previous','volume','add_shared','join','leave']},

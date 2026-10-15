@@ -9,6 +9,18 @@ class CloudTransport {
   if(this.pair.backend_kind==='cloud'){
    if(!account.caps.cloud){callbacks.onStatus?.({connected:false,error:'Both partners need Pro or Duo for Cloud'});return false;}
    this.client=createClient(account.config.supabaseUrl,account.config.supabaseAnonKey,{accessToken:()=>account.token(),auth:{persistSession:false}});
+   try{const token=await account.token();if(generation!==this.generation)return false;await this.client.realtime.setAuth(token);}catch{
+    if(generation===this.generation){
+     callbacks.onStatus?.({connected:false,error:'Private sync authentication failed; reconnect to retry'});
+     await this.stop();
+     const retryGeneration=this.generation;
+     this.retryTimer=setTimeout(()=>{
+      if(retryGeneration===this.generation)void this.start(account,callbacks).catch(()=>{});
+     },5000);this.retryTimer.unref?.();
+    }
+    return false;
+   }
+   if(generation!==this.generation)return false;
    if(!this.pair.channel_token){callbacks.onStatus?.({connected:false,error:'Apply the latest database migrations'});return false;}
    const channelName=`baymax:pair:${this.pair.id}:${this.pair.channel_token}`;
    const channel=this.client.channel(channelName,{config:{private:true}});
@@ -33,12 +45,13 @@ class CloudTransport {
      for(const item of poll.items||[])if(Date.parse(item.created_at)>=this.startAt-1000)this.receive({senderId:item.sender_id,kind:item.kind,value:item.value,at:Date.parse(item.created_at)});
     }
     if(!this.lastPulse||Date.now()-this.lastPulse>10000){this.lastPulse=Date.now();await this.signal('presence',{online:true});await this.sync();}
-    if(this.remoteAt&&Date.now()-this.remoteAt>35000){this.remoteAt=0;callbacks.onPresenceSync?.({});}
+    if(this.remoteAt&&Date.now()-this.remoteAt>60000){this.remoteAt=0;callbacks.onPresenceSync?.({});}
    }catch(error){callbacks.onStatus?.({connected:false,error:error.message});}finally{if(this.pollGeneration===generation)this.pollGeneration=null;}
   };
   this.timer=setInterval(()=>void tick(),3000);this.timer.unref?.();void tick();return true;
  }
  async stop(){
+  clearTimeout(this.retryTimer);this.retryTimer=null;
   ++this.generation;clearInterval(this.timer);this.timer=null;
   this.mainChannel=null;this.remoteAt=0;this.signalCursor=0;this.lastPulse=0;this.polling=false;this.revisions.clear();const client=this.client,channels=this.channels;this.client=null;this.channels=[];await Promise.allSettled(channels.map(c=>client?.removeChannel(c)));this.callbacks?.onPresenceSync?.({});
  }
@@ -84,13 +97,13 @@ class CloudTransport {
   }catch(error){this.callbacks?.onStatus?.({connected:false,error:error.message});return false;}
  }
  receive(payload){
-  if(!payload||payload.senderId===this.user?.id||!Number.isFinite(payload.at)||Math.abs(Date.now()-payload.at)>120000||!payload.value||typeof payload.value!=='object')return;
+  if(!payload||payload.senderId===this.user?.id||!Number.isFinite(payload.at)||Math.abs(Date.now()-payload.at)>600000||!payload.value||typeof payload.value!=='object')return;
   if(!this.pair?.members.some(m=>m.userId===payload.senderId))return;
   if(payload.kind==='presence'){
    this.remoteAt=payload.value?.online?Date.now():0;const partner=this.other();
    this.callbacks.onPresenceSync?.(this.remoteAt?{[partner.userId]:[{user:partner.displayName||partner.username,role:partner.slot===1?'me':'her'}]}:{});
   }else if(payload.kind==='voice')this.callbacks.onVoiceSignal?.(payload.value);
-  else if(payload.kind==='remote'&&this.account.caps.pcControl)this.callbacks.onRemoteAccess?.({...payload.value,senderId:payload.senderId,recipientId:this.user.id,sender:this.other()?.displayName||this.other()?.username||'Partner',timestamp:payload.at});
+  else if(payload.kind==='remote'&&this.account.caps.pcControl)this.callbacks.onRemoteAccess?.({...payload.value,senderId:payload.senderId,recipientId:this.user.id,sender:this.other()?.displayName||this.other()?.username||'Partner',timestamp:Date.now()});
   else if(payload.kind==='music'&&this.account.caps.listenTogether)this.callbacks.onMusicSignal?.(payload.value);
   else if(payload.kind==='chat-live'&&payload.value?.id&&typeof payload.value.text==='string')this.callbacks.onChatMessage?.(this.chat({id:payload.value.id,sender_id:payload.senderId,body:payload.value.text,created_at:new Date(payload.at).toISOString()}));
   else if(payload.kind==='task-row'&&payload.value.pair_id===this.pair.id&&payload.value.body&&Number.isSafeInteger(payload.value.revision)){

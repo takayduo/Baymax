@@ -8,12 +8,14 @@ function same(source,destination){assert.equal(hash(destination),hash(source),`S
 for(const folder of ['dist','productivity/dist'])for(const file of walk(path.join(root,folder)))if(!file.endsWith('.map'))same(file,path.join(app,path.relative(root,file)));
 for(const file of walk(path.join(root,'electron')))if(/\.(?:js|cjs|ps1|sql)$/.test(file))same(file,path.join(app,path.relative(root,file)));
 for(const file of ['electron/cloud-config.json','public/remote-viewer.html','public/companions/catalog.json','public/companions/accessories.json'])same(path.join(root,file),path.join(app,file));
+// Check source sounds directly too, so an old dist folder cannot hide stale audio.
+for(const file of fs.readdirSync(path.join(root,'public/sounds')).filter(name=>/\.(?:wav|json)$/.test(name)))same(path.join(root,'public/sounds',file),path.join(app,'dist/sounds',file));
 for(const file of ['core/prompt.txt',...fs.readdirSync(path.join(root,'engine/actions')).filter(f=>f.endsWith('.py')).map(f=>'actions/'+f)])same(path.join(root,'engine',file),path.join(root,'release/win-unpacked/resources/engine/_internal',file));
 same(path.join(root,'build/engine/BaymaxEngine/BaymaxEngine.exe'),path.join(root,'release/win-unpacked/resources/engine/BaymaxEngine.exe'));
 const file='Baymax-Setup-1.0.1-x64.exe',installer=path.join(root,'release',file),buffer=fs.readFileSync(installer);
 const pe=buffer.readUInt32LE(0x3c),optional=pe+24,dataDirectories=optional+(buffer.readUInt16LE(optional)===0x20b?112:96);
 const certificateSize=buffer.readUInt32LE(dataDirectories+4*8+4);
-const verification={date:new Date().toISOString().slice(0,10),file,bytes:buffer.length,mebibytes:Number((buffer.length/1024/1024).toFixed(1)),sha256:hash(installer),signature:certificateSize?'Certificate table present (verify Authenticode separately)':'NotSigned',source:root,checkedResources:checked,packagedSmoke:'audit/packaged-smoke-results.json',liveMusicAttempt:'audit/packaged-live-attempt.json',buildLog:'audit/windows-package-onboarding.log'};
+const verification={date:new Date().toISOString().slice(0,10),file,bytes:buffer.length,mebibytes:Number((buffer.length/1024/1024).toFixed(1)),sha256:hash(installer),signature:certificateSize?'Certificate table present (verify Authenticode separately)':'NotSigned',source:root,checkedResources:checked,packagedSmoke:'audit/packaged-smoke-results.json'};
 fs.writeFileSync(path.join(root,'release/SHA256SUMS.txt'),verification.sha256+'  '+file+'\n');
 fs.writeFileSync(path.join(root,'audit/release-verification.json'),JSON.stringify(verification,null,2)+'\n');
 console.log(JSON.stringify({...verification,checkedResources:checked.length},null,2));

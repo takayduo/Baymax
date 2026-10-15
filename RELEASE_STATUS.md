@@ -1,101 +1,66 @@
 # Baymax release status
 
-Updated **14 October 2026**. Working project: **G:\baymax**, based on Mochi-Ultra; the original projects and LOVE backup remain preserved. This is a local Windows private beta, not a published paid service. The installer has been rebuilt; it has not been installed, uploaded or published by this task.
+Updated **15 October 2026**. Desktop: **G:\baymax**. Owner console: **G:\puff-admin**, live at **https://puff-admin.pages.dev**. Private beta; two-PC and paid-service acceptance remain.
 
-## Current installer
+**Later 15 October source update — original sounds:** all 28 inherited companion/UI recordings have been replaced in source with the newly synthesized Puff Soft v1 pack. Artwork and sound triggers are unchanged. See [creation notes](docs/SOUND_ASSETS.md) and [listening preview](docs/sounds-preview.html). Installer packaging was explicitly skipped: the installer described below is the **earlier artifact and still contains the inherited sounds**. Its earlier freshness result does not apply to the current source; rebuild and reverify before distributing the replacement pack.
 
-[Baymax-Setup-1.0.1-x64.exe](release/Baymax-Setup-1.0.1-x64.exe) — **275.4 MiB**, Windows x64, **unsigned**.
+Sound update verification: **59 tests** and both frontend builds passed ([build log](audit/original-sounds-build.log)); **12 real Chromium audio/preview checks** passed ([result](audit/sound-smoke/result.json)). The generator reproduces all 28 WAVs from sample-free recipes, and their hashes differ from every inherited recording.
 
-SHA256: `c39f2b7a77c6c15384d5ea15480613bde4e985feb22be1c9a1d977d910e2dce9`
+## Verified installer
 
-[Checksum file](release/SHA256SUMS.txt) · [Build log](audit/windows-package-fourteen.log) · [Artifact/resource verification](audit/release-verification.json) · [Two-PC testing checklist](docs/COUPLE_TESTING.md)
+[Baymax-Setup-1.0.1-x64.exe](release/Baymax-Setup-1.0.1-x64.exe) — **286,034,455 bytes / 272.8 MiB**, Windows x64, **unsigned**.
 
-Both frontends were rebuilt, including the Productivity Focus overlay, and the Python engine was repackaged. The packaged EXE passed 11 checks using a disposable profile with external Python/Node removed from PATH. Its engine imports 22 actions, 20 companions and three wardrobe accessories. Byte comparisons verified 116 current build resources in the package, including both renderer bundles, native integration modules, engine prompt and action sources.
+SHA256: `39a663ba4e79e1f3273dcc89a3e0ac32ceea75f4f08d939648a53a789ddee52e`
 
-Exit the old Baymax/Mochi instance from its tray before installing this version on each PC. Use the Setup EXE for distribution; copying only `win-unpacked/Baymax.exe` omits required resources. A website can offer this installer for download; it does not turn the desktop app into a web app. Only distribute the installer, checksum and public release notes, not the working directory, backups or audit profiles.
+[Checksum](release/SHA256SUMS.txt) · [Resource verification](audit/release-verification.json) · [Packaged checks](audit/packaged-smoke-results.json) · [Two-PC checklist](docs/COUPLE_TESTING.md).
 
-## Changes in this build
+The owner's artifact matches this hash. Windows Authenticode reports **NotSigned**; the earlier claim that it was signed was incorrect. A checksum does not establish publisher identity. This continuation verified the existing artifact rather than rebuilding it: new changes affect the separate admin site, documentation and tests only.
 
-1. **Remote viewer:** removed the toolbar and cursor-mode toggle. Controlling uses the requested transparent PNG cursor on the page, viewport and video. F11 remains available; closing the window or ending access in the PC tab ends the session. This existing beta feature is outside the public launch scope.
-2. **Partner composer:** removed the input/textarea border, outline and shadow, including keyboard focus; the surrounding dark compose bar remains.
-3. **SQL clipboard:** Settings uses a bounded native Electron clipboard-write IPC, so the custom app protocol does not need clipboard-read permission.
-4. **Repeated notifications:** duplicate incoming message IDs return before UI events and notifications. Outbox cloud retries skip messages already broadcast live.
-5. **Tasks:** refreshed segmented controls, rows, checkboxes, time labels, empty state and add bar. Removed header presence and user/heart emojis. Shared tasks remain visible in the appropriate filter.
-6. **Partner voice calls:** added direct WebRTC audio, ringing/accept/decline, simultaneous-call handling, separate call mute, filters/noise gate/compressor, live companion speaking indicators and full/compact call cards. The persistent call survives view changes and idle collapse. AI input/output is locked during ringing and calls, then restored on hangup. See [VOICE_CALLS.md](docs/VOICE_CALLS.md).
-7. **AI chat:** removed the user switcher and provider/voice chips from the header.
-8. **Quick settings:** removed the Claude Code badge.
-9. **Music repeat:** Off / Playlist / Song cycles beside Next, persists locally and travels with P2P playback state. Manual Next still advances with Repeat Song enabled.
-10. **Duplicate sent bubbles:** sender responses and IPC echoes merge by message ID; rendered history is deduplicated and reading older messages does not continually jump to the bottom.
-11. **Live voices:** fixed the runner callback argument mismatch. Selecting a voice saves it and reconnects the Live session without restarting Baymax. All 30 choices have independent Play/Stop sample buttons; previewing does not select the voice. All 30 Google sample URLs returned HTTP 200 during verification.
-12. **Quit/leave cleanup:** sends music leave/status and call hangup before disconnecting Supabase. Remaining peers clear the session while local music continues; heartbeat handling covers lost connections.
-13. **Focus warning:** uses four seconds, clears after successful repeat blocks and non-privilege failures, has a zero-countdown safety clear, responds to stopping Focus, and includes Dismiss.
-14. **Music first play:** extraction jobs queue behind three active jobs; HTTPS M4A/MP4A is preferred. Resolving/loading retries twice with fresh stream URLs, without forcing a manual track switch.
+The executable boots with an isolated disposable profile and no external Python/Node on PATH; its engine discovers 22 actions. All 121 checked resources match current renderer, Electron/native modules, engine prompt/actions and built engine executable. This does not replace clean-machine install/update/uninstall testing.
 
-The repository uses Canvas companion rendering rather than the hypothetical SVG API named in the request. Call avatars reuse the existing selected companion, colours, cheeks/freckles, scarf/bow/sparkle and music headphones. No additional hat/eyewear wardrobe was invented.
+Quit old tray instances before installing on both PCs. Distribute the Setup EXE and checksum, not a standalone `win-unpacked/Baymax.exe` or source/audit folders. This is a desktop download, not a browser conversion.
 
-## Preserved owner changes and earlier work
+## Current fixes and deployment
 
-- Repeat remains inside `.music-mini` directly after Next. Music retains `botX: 59`, `botY: 104` and 78px left card padding.
-- Tasks retains zero companion diameter and no agent layout. Zero-diameter views hide the canvas immediately instead of shrinking it into a dot. Expanded opacity follows the layout's diameter.
-- Native collapsed state stays synchronized at startup and on transitions; Partner chat can receive focus. Desktop notifications are gated on collapse.
-- Chat broadcasts before cloud storage. Cloud message upserts do not write the nonexistent `sender_role` column.
-- The 20-companion wardrobe, Puff default, whole-body cursor tracking, breathing, thinking animation, projected decorations/headphones, music bob and spinning dizzy eyes remain.
-- Local playlists and the offline-mergeable Our playlist remain. No audio is stored in Supabase; ongoing Listen Together playback controls travel over WebRTC. See [MUSIC.md](docs/MUSIC.md).
-- AI commands still operate the built-in music player, task roles, partner messages, focus, navigation and emotes through bounded handlers. Tasks default to the current user unless a partner is explicitly named.
-- Engine process ownership/termination, PTT helper recovery/key-picker cleanup, fresh-settings microphone synchronization, check-ins OFF by default, saved interests and click-to-interrupt speech cancellation remain. See [PUSH_TO_TALK.md](docs/PUSH_TO_TALK.md) and [PROACTIVE_SPEECH.md](docs/PROACTIVE_SPEECH.md).
-- Embedded settings, compact Home/PC cards, private credentials/user data, original history and existing productivity fixes remain. Previous investigations are in [AUDIT.md](AUDIT.md) and [REPAIR_STATUS.md](REPAIR_STATUS.md).
+- Central account/content use authenticated PostgREST RPCs and private Realtime channels, with no central Edge Functions. Account snapshots do not invent fallback entitlements; client plan flags cannot grant database privileges.
+- Server-authorized pair publishing and rotating topics protect future traffic after revocation. Tasks use authenticated actor IDs/revisions; failed writes remain pending. Tombstones, pagination and immediate chat delivery remain.
+- Duo is limited to the purchaser plus one assigned recipient. Invitations require acceptance. Ending/revoking the gift frees that seat without cancelling another person's separate subscription.
+- The admin includes people/email search, plan grants/durations/lifetime, seat inspection, force-unpair, device heartbeats, audit, beta controls, announcements and emergency Cloud pause. Provider mandate cancellation/refunds are separate from access revocation.
+- The deployed update rejects missing secrets, binds session hashes to the session secret, preserves Workers-compatible manual redirects and maps database errors without raw credentials.
+- Dashboard tests now use the actual admin project and observable UI conditions instead of a fragile 230ms delay; stale success output is cleared before each run.
 
-## Verification
+The owner reported applying hosted Supabase upgrades 007–010. Local PostgreSQL tests validate schema/permissions; live authenticated account/admin mutations have not been exercised in this continuation. Public-site security checks do not prove those workflows.
+
+## Verification on 15 October
 
 | Check | Result / evidence |
 |---|---|
-| TypeScript, main and Productivity | Pass: `npm run typecheck` |
-| Production frontend builds and full Windows packaging | Pass: [build log](audit/windows-package-fourteen.log) |
-| Node regression suite | **46 pass**, [log](audit/fourteen-node-final.log) |
-| Music entry point requested by owner | **7 pass**, `node --test tests/music.test.cjs` (also included in the regression suite) |
-| Python regression suite | **20 pass**, [log](audit/fourteen-python.log), including interruption, call lock and voice reconnect |
-| Actual embedded settings/island renderer | **29 checks pass**, [results](audit/settings-smoke-results.json); includes native clipboard path, saved-layout invariants and incoming-call lock |
-| Voice/UI/Focus integration | **9 grouped checks pass**, [results](audit/fourteen-smoke-results.json); two real local RTC peers, synthetic RTP audio, mute/appearance, glare, timeout/cleanup, persistent call UI, stream retry and actual React Focus overlay |
-| Music integration | **8 grouped checks pass**, [results](audit/music-smoke-results.json); real local peers, local/shared playlists and companion behaviour |
-| Remote viewer | **3 checks pass**, [results](audit/remote-viewer-smoke.json); toolbar absent, cursor rules on all four targets, F11 IPC |
-| Voice sample availability | **30/30 HTTP 200**, [results](audit/voice-preview-availability.json); not a live Gemini conversation |
-| Wake rendering | Five hide/wake cycles, **1,085 software-rendered frames**, peak near-white coverage **1.84%**, no white panel |
-| Final packaged EXE | **11 checks pass**, [results](audit/packaged-smoke-results.json), isolated profile and no external Python/Node on PATH |
-| Package freshness | **116 resource matches**, [verification](audit/release-verification.json) |
-| Packaged live YouTube playback | **Blocked externally**: search succeeded, but resolving audio returned HTTP 429 and a sign-in/bot challenge. [Attempt](audit/packaged-live-attempt.json), [extractor diagnosis](audit/packaged-music-diagnostic.log). Live playback on this network is not verified. |
+| Desktop regression/account/SQL suites | **57 passed** — [log](audit/owner-audit-node-20261015.log) |
+| Both TypeScript projects | **Passed** — [log](audit/owner-typecheck-20261015.log) |
+| Admin API/session/CSRF/errors | **7 passed**, `G:\puff-admin`: `npm run build` |
+| Cloudflare Pages Functions compilation | **Passed** |
+| Dashboard views, grant interaction, narrow layout | **10 fixture checks passed** — [result](audit/admin-ui/result.json) |
+| Packaged desktop/engine | **11 passed** — [log](audit/owner-packaged-smoke-20261015.log) |
+| Package freshness | **121 resources match** — [verification](audit/release-verification.json) |
+| Live admin | **200** homepage, **401** unauthenticated session/data, **403** foreign-origin login — [result](audit/admin-live-20261015.json) |
+| Windows signature | **NotSigned**; hash matches supplied artifact |
 
-The settings test intentionally injects disk/task-save errors to verify draft retention. Those expected stderr messages are not application crashes. Its former hidden-canvas assertions were updated to check the selected wardrobe card and visible Home canvas, preserving the owner's immediate-hide behaviour. Local RTC tests use synthetic media; no partner account was called and no physical microphone was recorded by them.
+Cloudflare deployment **0323c6b1** ([deployment URL](https://0323c6b1.puff-admin.pages.dev)). Sign in at the permanent origin **https://puff-admin.pages.dev**; preview origins intentionally cannot establish owner sessions. The three owner-console secret names are present; no values were exposed. Existing sessions need to sign in again.
 
-Preview: [Partner chat, full/compact call and Tasks](audit/fourteen-ui.png) · [Music](audit/ui-music.png) · [Home](audit/ui-home.png).
+## Preserved features
 
-## Remaining acceptance and launch boundaries
+Consent-based PC Control, partner calls, Listen Together, Gemini/proactive voice/PTT, event-driven task/chat delivery, local playlists, productivity and companion rendering remain intentional features. Check-ins default off; interests and click-to-interrupt remain. Free chat uses **Groq**, and all tiers use the user's own API keys. The owner's later requirements include paid PC Control, superseding the original launch-plan exclusion.
 
-- Run the two-PC checklist with both partners, including physical audio, mic sensitivity/echo, idle call persistence, quitting, shared music and reconnects. Local synthetic peers do not prove WAN connectivity or human-perceived sync/voice quality. There is **no TURN relay**, so restrictive networks may fail direct connections.
-- Music still depends on internet access and the upstream streaming service allowing extraction. The current network received a rate-limit/bot challenge. Retry during acceptance on the intended network; no account cookies were accessed or bundled. Automated retries do not bypass provider restrictions.
-- Live Gemini/Groq conversations and actual acoustic voice switching were not tested using private API keys. Code-level runner/reconnect, PTT and interruption tests passed. Google OAuth/Drive and payments were not exercised.
-- The installer is **unsigned**. Clean-machine install/update/uninstall and Windows GPU/display-scaling/multi-monitor acceptance remain; compiling and launching the unpacked app do not validate those lifecycle operations.
-- Optional wake-word/Whisper/Kokoro model stacks are not bundled. Browser automation expects a supported installed browser; development tasks that install Python packages require a separate Python environment. The core packaged engine does not imply every model feature works offline.
-- This beta retains the owner's expressly selected **open Supabase testing mode**, using URL + anon key + channel and Me/Her role IDs. It is not account authentication or private pair authorization. No hosted database was changed. Use the private test project; replace this mode before public release.
-- [LAUNCH_PLAN.md](docs/LAUNCH_PLAN.md) remains the owner's plan: India first, Groq free chat, BYOK on all plans, solo music Free, Listen Together Pro/Duo, and PC control outside launch scope. Mandatory Google onboarding, central usernames, Cloud, billing, manual subscription grants and paid entitlements are **not deployed or activated**. They were not simulated through local premium flags in this build.
-- The online dependency advisory audit remains incomplete from earlier work; this run did not claim a fresh advisory audit. Productivity still reports a large-bundle warning. Historical usage never recorded cannot be reconstructed. Tests do not establish that every possible bug is eliminated.
+Repeat stays beside Next. Tasks immediately hides its companion; Music retains its left companion position/padding. Native collapsed state and Partner focus remain synchronized; desktop toasts only show while collapsed. Legacy messages omit `sender_role` and broadcast before persistence. Puff stays default in the 20-companion wardrobe, including custom colors/accessories, breathing/thinking and music headphones.
 
-## Reproduce
+## Remaining acceptance and limits
 
-```powershell
-npm run typecheck
-npm test
-node --test tests/music.test.cjs
-python -m unittest discover -s tests -p 'test_*.py'
-npm run build
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/settings-smoke.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fourteen-smoke.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/music-smoke.ps1
-node_modules/.bin/electron.cmd tests/remote-viewer-smoke.cjs
-npm run package:win
-node tests/packaged-smoke.cjs
-node tests/verify-package.cjs
-# Optional external streaming check; may be blocked by the provider/network:
-node tests/packaged-smoke.cjs --live-music
-```
+- Test two real PCs: login, invitations, Duo assign/revoke, unpair/reconnect, remote consent, tasks/chat, physical mic/PTT, interruption and Listen Together. Local/synthetic checks do not prove WAN latency or acoustic quality. No TURN relay is configured for restrictive networks.
+- Exercise live owner actions on staging accounts and confirm hosted RLS/private-only Realtime settings; extra hosted policies are outside local tests.
+- Razorpay secrets were absent from the verified production secret-name list. Integration exists, but checkout/webhooks/refunds/renewals are not activated or exercised. A live admin site is not a live paid service.
+- Installer remains unsigned. Clean-machine lifecycle, GPU/display scaling and multi-monitor acceptance remain.
+- Streaming depends on upstream availability. An earlier YouTube attempt hit HTTP 429/bot verification; no new live playback claim is made. Physical Gemini/Groq conversations with private keys were not tested here.
+- Legacy open personal-project mode remains private testing only, separate from protected central Cloud. Custom adapter setup/migration is not verified with the new direct central RPC implementation; automatic backend switching is not a completed launch feature.
+- Optional wake-word/Whisper/Kokoro stacks are not bundled. No fresh dependency advisory or legal/asset-rights audit was completed here.
 
-`npm run dist:win` is an alias for `npm run package:win`. Build/test profiles stay inside the workspace. No source changes were committed or pushed, and no installer or hosted service was published.
+Operations: [OWNER_GUIDE.md](docs/OWNER_GUIDE.md), `G:\puff-admin\HOSTING.md`. Architecture: [HANDOFF_TO_CHATGPT.md](docs/HANDOFF_TO_CHATGPT.md). No Git commit/push was performed in this continuation; `G:\puff` was not overwritten.

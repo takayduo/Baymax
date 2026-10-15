@@ -52,8 +52,8 @@ app.whenReady().then(async () => {
     'respond-remote-access': (_, accepted) => { if (!accepted) declines++; return true; },
     'get-available-screens': () => [1, 2].map(id => ({ id: `test-${id}`, name: `Screen ${id}`, label: `Screen ${id}`, isPrimary: id === 1, width: 1920, height: 1080, bounds: { x: 0, y: 0, width: 1920, height: 1080 } })),
     'secret-present': () => false,
-    'marklv-list-devices': () => ({ success: true, inputs: ['Test microphone'], outputs: ['Test speakers'] }),
-    'marklv-list-memory': () => ({ success: true, entries: [{ category: 'notes', key: 'Project', value: 'Mochi is the name of my project' }] }),
+    'engine-list-devices': () => ({ success: true, inputs: ['Test microphone'], outputs: ['Test speakers'] }),
+    'engine-list-memory': () => ({ success: true, entries: [{ category: 'notes', key: 'Project', value: 'Mochi is the name of my project' }] }),
     'open-settings-window': () => { separateSettingsRequests++; return true; },
   };
   const preload = fs.readFileSync(path.join(root, 'electron/preload.js'), 'utf8');
@@ -155,6 +155,12 @@ app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.settings-surface input[type=password]').value"), '');
     checks.push('Failed API-key save keeps the draft and reports failure; retry saves successfully');
     await page('control');
+    assert.equal(await js("document.querySelectorAll('[data-skill]').length"),18);
+    await js("document.querySelector('[data-skill=browser_control] .switch').click()");await wait(100);
+    assert.equal(settings.activeActions.browser_control,false);
+    await js("document.querySelector('[data-skill=browser_control] .switch').click()");await wait(100);
+    assert.equal(settings.activeActions.browser_control,true);
+    checks.push('All 18 skills appear and browser control toggles persist in both directions');
     const text = await js("document.querySelector('.preferences-content').innerText");
     assert.ok(text.includes('Nova AI Engine'));
     assert.ok(text.includes('Mochi is the name of my project'));
@@ -302,6 +308,16 @@ app.whenReady().then(async () => {
     await js("const bot=document.querySelector('#bot-canvas'); const rect=bot.getBoundingClientRect(); bot.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:rect.x+rect.width/2,clientY:rect.y+rect.height/2+20}))"); await wait(80);
     assert.ok(interruptCommands>beforeInterrupt,'Clicking the companion must send interrupt even when the renderer last reported idle');
     checks.push('Clicking the companion interrupts without relying on a stale renderer busy state');
+    await js(`document.querySelector('#header button[aria-label="Home"]').click()`);await wait(450);
+    win.webContents.send('cursor',{x:520,y:70});
+    const clickCompanion=()=>js("(()=>{const b=document.querySelector('#bot-canvas'),r=b.getBoundingClientRect();b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2+20}));})()");
+    await clickCompanion();await wait(310);await clickCompanion();await wait(310);await clickCompanion();await wait(250);
+    assert.ok(await js("document.querySelector('#views .view.on')?.textContent.includes('Too many hits')"),'Third deliberate click enters the dizzy view');
+    assert.equal(await js("getComputedStyle(document.querySelector('#header')).opacity"),'1');
+    for(let i=0;i<8;i++){await clickCompanion();await wait(35);}
+    await wait(3600);
+    assert.ok(await js("getComputedStyle(document.querySelector('#bot-canvas')).display!=='none' && document.querySelector('.overview').classList.contains('on')"));
+    checks.push('Triple-click remains visible; rapid clicks cannot extend dizzy mode, and Home recovers');
     assert.ok(paintedFrames > 20);
     assert.ok(maxWhiteCoverage < .15, `White frame coverage: ${maxWhiteCoverage}`);
     checks.push('Five hide/wake cycles render without a white panel in the offscreen compositor');

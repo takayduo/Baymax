@@ -1,5 +1,5 @@
 """
-dashboard/server.py — JARVIS Local HTTP Dashboard
+dashboard/server.py — BAYMAX Local HTTP Dashboard
 
 Plain HTTP on port 8000 (no SSL warnings, no firewall issues).
 Security at the application layer: AES-256-CBC with session-key-derived key.
@@ -17,6 +17,7 @@ import socket
 import string
 import time
 from pathlib import Path
+from core.legacy_compat import certificate_path
 
 _DEPS_OK = False
 try:
@@ -44,8 +45,8 @@ MAX_UPLOAD_MB = 500
 def _make_uploads_dir() -> Path:
     """Return (and create) the cross-platform uploads folder."""
     for candidate in [
-        Path.home() / "Downloads" / "JARVIS Uploads",
-        Path.home() / "Documents" / "JARVIS Uploads",
+        Path.home() / "Downloads" / "BAYMAX Uploads",
+        Path.home() / "Documents" / "BAYMAX Uploads",
         BASE_DIR / "uploads",
     ]:
         try:
@@ -112,8 +113,8 @@ def _ensure_network_access(port: int) -> None:
     if sys.platform == "win32":
         import ctypes, time
 
-        port_rule = f"JARVIS Dashboard Port {port}"
-        prog_rule  = "JARVIS Dashboard Python"
+        port_rule = f"BAYMAX Dashboard Port {port}"
+        prog_rule  = "BAYMAX Dashboard Python"
         py_exe     = sys.executable
 
         def _netsh_rule_exists(name: str) -> bool:
@@ -169,7 +170,7 @@ def _ensure_network_access(port: int) -> None:
             )
 
         bat_body = "\r\n".join(bat_lines) + "\r\n"
-        fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="jarvis_fw_")
+        fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="baymax_fw_")
         try:
             os.write(fd, bat_body.encode("mbcs"))   # Windows cmd.exe expects ANSI
             os.close(fd)
@@ -217,7 +218,7 @@ def _ensure_network_access(port: int) -> None:
                 print("[Dashboard] Refresh your phone browser to connect.")
             else:
                 print("[Dashboard] Setup was not allowed.")
-                print("[Dashboard] Phone connections may fail until JARVIS is run as Administrator.")
+                print("[Dashboard] Phone connections may fail until BAYMAX is run as Administrator.")
         except Exception as e:
             print(f"[Dashboard] Firewall setup error: {e}")
         finally:
@@ -374,8 +375,8 @@ def _ensure_certs() -> bool:
     plain HTTP, which still works — the QR code simply encodes http:// instead.
     """
     certs = BASE_DIR / "config" / "certs"
-    key_p = certs / "jarvis.key"
-    crt_p = certs / "jarvis.crt"
+    key_p = certificate_path(certs, "key")
+    crt_p = certificate_path(certs, "crt")
     if key_p.exists() and crt_p.exists():
         return True
 
@@ -396,8 +397,8 @@ def _ensure_certs() -> bool:
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
         who = x509.Name([
-            x509.NameAttribute(NameOID.COMMON_NAME, "JARVIS Dashboard"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "JARVIS"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "BAYMAX Dashboard"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "BAYMAX"),
         ])
 
         # The SAN has to cover every address the phone might use: the LAN IP the
@@ -485,7 +486,7 @@ class DashboardServer:
     @staticmethod
     def _ssl_enabled() -> bool:
         certs = BASE_DIR / "config" / "certs"
-        return (certs / "jarvis.key").exists() and (certs / "jarvis.crt").exists()
+        return (certificate_path(certs, "key")).exists() and (certificate_path(certs, "crt")).exists()
 
     def get_url(self) -> str:
         proto = "https" if self._ssl_enabled() else "http"
@@ -599,7 +600,7 @@ class DashboardServer:
   h2{color:#f87171;margin-bottom:12px}p{color:#5e6a7e;font-size:14px}
 </style></head>
 <body><div><h2>Link Expired</h2>
-<p>Press <strong style="color:#dde3ed">Remote Control</strong> in JARVIS to get a new QR code.</p>
+<p>Press <strong style="color:#dde3ed">Remote Control</strong> in BAYMAX to get a new QR code.</p>
 </div></body></html>""")
 
             del self._pending_keys[key]
@@ -625,12 +626,12 @@ class DashboardServer:
 </style></head>
 <body>
 <script>
-  sessionStorage.setItem('jarvis_token','{tok}');
-  sessionStorage.setItem('jarvis_key','{key}');
-  localStorage.setItem('jarvis_device_token','{dev_tok}');
+  sessionStorage.setItem('baymax_token','{tok}');
+  sessionStorage.setItem('baymax_key','{key}');
+  localStorage.setItem('baymax_device_token','{dev_tok}');
   setTimeout(function(){{location.replace('/')}},400);
 </script>
-<p>Connecting to JARVIS…</p>
+<p>Connecting to BAYMAX…</p>
 </body></html>""")
 
         @app.post("/api/device-login")
@@ -856,8 +857,8 @@ def _is_port_available(port: int) -> bool:
             if not _is_port_available(PORT + 1):
                 print(f"[Dashboard] Port {PORT + 1} in use, skipping alias.")
                 return
-            ssl_key  = BASE_DIR / "config" / "certs" / "jarvis.key"
-            ssl_cert = BASE_DIR / "config" / "certs" / "jarvis.crt"
+            ssl_key  = certificate_path(BASE_DIR / "config" / "certs", "key")
+            ssl_cert = certificate_path(BASE_DIR / "config" / "certs", "crt")
             asyncio.get_event_loop().run_in_executor(None, _ensure_network_access, PORT + 1)
             cfg = uvicorn.Config(
                 self.app, host="0.0.0.0", port=PORT + 1, log_level="warning",
@@ -893,8 +894,8 @@ def _is_port_available(port: int) -> bool:
             _ensure_certs()
 
             use_ssl  = self._ssl_enabled()
-            ssl_key  = BASE_DIR / "config" / "certs" / "jarvis.key"
-            ssl_cert = BASE_DIR / "config" / "certs" / "jarvis.crt"
+            ssl_key  = certificate_path(BASE_DIR / "config" / "certs", "key")
+            ssl_cert = certificate_path(BASE_DIR / "config" / "certs", "crt")
 
             if use_ssl and target_port == PORT:
                 asyncio.create_task(self._serve_alias())
@@ -906,7 +907,7 @@ def _is_port_available(port: int) -> bool:
 
             proto = "https" if use_ssl else "http"
             print(f"[Dashboard] {proto}://{self._ip}:{target_port}")
-            print("[Dashboard] Press 'Remote Control' in JARVIS UI to get the QR code.")
+            print("[Dashboard] Press 'Remote Control' in BAYMAX UI to get the QR code.")
             server = uvicorn.Server(cfg)
             server.install_signal_handlers = lambda: None
             await server.serve()

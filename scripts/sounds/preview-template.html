@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Puff · Original sound preview</title>
+<style>
+:root{color-scheme:dark;font:15px/1.6 system-ui,sans-serif;background:#111614;color:#edf2eb}*{box-sizing:border-box}body{max-width:1100px;margin:auto;padding:48px 24px}header{max-width:700px;margin-bottom:28px}.eyebrow{color:#b3d6b4;letter-spacing:.18em;font-size:11px;text-transform:uppercase}h1{font-size:clamp(30px,5vw,48px);letter-spacing:-.045em;margin:8px 0}p{color:#a8b6ac;margin:8px 0}button{font:inherit;cursor:pointer;border:1px solid #38483d;border-radius:12px;padding:9px 16px;background:#253129;color:#ecf4e9}button:hover{background:#354638}button:focus-visible,input:focus-visible{outline:2px solid #d2e8be;outline-offset:4px}button.primary{background:#c8dfb7;color:#182218;border-color:transparent}.controls{display:flex;align-items:center;flex-wrap:wrap;gap:12px;position:sticky;top:12px;background:#19221ef2;backdrop-filter:blur(12px);padding:16px;border:1px solid #354139;border-radius:18px;z-index:1}.controls label{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px}input{accent-color:#c8dfb7;max-width:150px}.status{min-height:30px;margin:18px 0;color:#bdd5b9}#sounds{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}article{padding:22px;border:1px solid #2c3830;background:linear-gradient(145deg,#202b23,#19211d);border-radius:18px;display:flex;flex-direction:column;gap:8px}article.active{border-color:#c8dfb7;box-shadow:0 0 0 1px #c8dfb7}article h2{font-size:18px;margin:0;text-transform:capitalize}article p{font-size:13px;min-height:3.2em;margin:0}article small{color:#81968a}article button{margin-top:auto;align-self:flex-start}footer{margin-top:36px;color:#8fa293;font-size:13px}a{color:#d0e4bf}@media(max-width:540px){body{padding:26px 16px}.controls label{margin-left:0;width:100%}.controls{top:6px}#sounds{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="eyebrow">Puff / Soft sound collection · v1</div><h1>Small sounds.<br>A little personality.</h1><p>28 newly synthesized companion effects. Rounded pops, warm chimes and quiet reactions, made without external samples. Your companion artwork stays the same.</p></header>
+<section class="controls" aria-label="Preview controls"><button id="play-all" class="primary">Play all 28</button><button id="stop">Stop</button><label>Volume <input id="volume" aria-label="Preview volume" type="range" min="0" max="20" value="12"><output id="volume-label">12%</output></label></section>
+<p id="status" class="status" role="status" aria-live="polite">Choose a sound. Volume starts at the app’s default.</p>
+<div id="sounds"></div>
+<audio id="player" preload="none"></audio>
+<footer>Each effect is 48 kHz mono PCM. This preview uses the same WAVs as the app. Open this file in a browser alongside the project’s public/sounds folder.<br><a href="./SOUND_ASSETS.md">Creation notes and reproduction commands</a></footer>
+<script>
+const sounds=__SOUND_MANIFEST__;
+const player=document.getElementById('player'),status=document.getElementById('status'),cards=new Map();
+let generation=0,sequence=false,current=-1,nextTimer=null;
+player.volume=.12;
+function stop(message='Playback stopped.'){
+  generation++;sequence=false;current=-1;clearTimeout(nextTimer);nextTimer=null;
+  player.pause();player.removeAttribute('src');player.load();
+  for(const card of cards.values())card.classList.remove('active');status.textContent=message;
+}
+async function play(index,token){
+  if(token!==generation)return;
+  current=index;const sound=sounds[index];
+  for(const [name,card] of cards)card.classList.toggle('active',name===sound.name);
+  status.textContent=`${index+1} / ${sounds.length} · ${sound.name} — ${sound.description}`;
+  player.src='../public/sounds/'+sound.file;
+  try{await player.play();}catch(error){if(token===generation)stop('Could not play this file. Open the preview with its public/sounds folder available.');}
+}
+for(const [index,sound] of sounds.entries()){
+  const card=document.createElement('article'),name=document.createElement('h2'),description=document.createElement('p'),meta=document.createElement('small'),button=document.createElement('button');
+  name.textContent=sound.name;description.textContent=sound.description;meta.textContent=`${String(index+1).padStart(2,'0')} / ${sound.durationSeconds.toFixed(2)} seconds`;
+  button.textContent='Play '+sound.name;button.type='button';button.addEventListener('click',()=>{stop('');void play(index,generation);});
+  card.append(meta,name,description,button);cards.set(sound.name,card);document.getElementById('sounds').append(card);
+}
+player.addEventListener('ended',()=>{
+  if(sequence&&current+1<sounds.length){const token=generation,index=current+1;nextTimer=setTimeout(()=>void play(index,token),450);}
+  else stop(sequence?'All 28 sounds played.':'Choose another sound.');
+});
+player.addEventListener('error',()=>{if(player.hasAttribute('src'))stop('Audio unavailable. Keep the preview alongside public/sounds.');});
+document.getElementById('play-all').addEventListener('click',()=>{stop('');sequence=true;void play(0,generation);});
+document.getElementById('stop').addEventListener('click',()=>stop());
+document.getElementById('volume').addEventListener('input',event=>{player.volume=Number(event.target.value)/100;document.getElementById('volume-label').textContent=event.target.value+'%';});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')stop();});
+</script>
+</body>
+</html>

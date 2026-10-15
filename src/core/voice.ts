@@ -172,7 +172,7 @@ class VoiceService {
     });
     void Bridge.getPushToTalkState().then(state => this.onTalkKey(state)).catch(() => {});
 
-    // Listen for assistant state changes from Mark-LV Python engine (Gemini Mode)
+    // Listen for assistant state changes from Baymax Python engine (Gemini Mode)
     Bridge.on("ai-state", (state: string) => {
       if ((State.settings.aiProvider || "gemini") !== "gemini") return;
       const st = String(state).toLowerCase();

@@ -11,6 +11,8 @@
     "dist/**/*",
     "electron/**/*.js",
     "electron/**/*.cjs",
+    "electron/video.html",
+    "electron/video.css",
     "electron/**/*.ps1",
     "electron/**/*.sql",
     "electron/cloud-config.json",

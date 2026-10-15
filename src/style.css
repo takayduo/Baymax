@@ -86,6 +86,7 @@ body {
 #greeting-canvas {
   position: absolute;
   pointer-events: none;
+  z-index: 20;
 }
 
 /* The drop sequence. Sits under the header and takes over the island body; it

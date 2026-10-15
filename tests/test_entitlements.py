@@ -7,7 +7,7 @@ from core import entitlements
 
 class LaunchEntitlements(unittest.TestCase):
     def test_free_and_paid_dispatch(self):
-        free={'local':True,'gemini':False,'productivity':False,'partner':True,'listenTogether':False}
+        free={'local':True,'gemini':False,'productivity':False,'partner':True,'listenTogether':False,'pcControl':False}
         entitlements.authorize('manage_schedule',caps=free)
         entitlements.authorize('control_app',{'action':'music','command':'play'},free)
         for name,args in [('productivity_manager',{}),('screen_process',{}),('control_app',{'command':'join'}),('computer_control',{})]:
@@ -15,7 +15,11 @@ class LaunchEntitlements(unittest.TestCase):
         paid={key:True for key in free}
         entitlements.authorize('screen_process',caps=paid)
         entitlements.authorize('control_app',{'command':'join'},paid)
-        with self.assertRaises(PermissionError):entitlements.authorize('computer_control',caps=paid)
+        entitlements.authorize('computer_control',caps=paid)
+        for name in entitlements.PC_ACTIONS:
+            entitlements.authorize(name,caps=paid)
+        paid['activeActions']={'browser_control':False}
+        with self.assertRaises(PermissionError):entitlements.authorize('browser_control',caps=paid)
 
     def test_dispatch_fails_closed_when_desktop_verification_is_unavailable(self):
         with patch.object(entitlements,'request',side_effect=RuntimeError('Offline RPC')):

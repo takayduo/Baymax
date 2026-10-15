@@ -279,9 +279,9 @@ function aiSection(): HTMLElement {
   return section;
 }
 
-// ── Mark-LV PC Control & AI Engine Section ──────────────────────────────────
+// ── Baymax PC Control & AI Engine Section ──────────────────────────────────
 
-function markLvSection(): HTMLElement {
+function engineSection(): HTMLElement {
   const body = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
   const section = h(
     "section",
@@ -311,15 +311,13 @@ function markLvSection(): HTMLElement {
     { key: "dev_agent", label: "Developer Agent", desc: "Autonomous multi-step developer agent for complex coding tasks", emoji: "" },
   ];
 
-  const retainedSkills = new Set(['web_search','weather_report','flight_finder','reminder']);
-  ACTIONS_METADATA.splice(0,ACTIONS_METADATA.length,...ACTIONS_METADATA.filter(action=>retainedSkills.has(action.key)));
   let audioInputs: string[] = [];
   let audioOutputs: string[] = [];
   let memoryEntries: Array<{ category?: string; key?: string; value?: string }> = [];
 
-  async function loadMarkLvData() {
+  async function loadEngineData() {
     try {
-      const devRes = await Bridge.markLvListDevices();
+      const devRes = await Bridge.engineListDevices();
       if (devRes && devRes.success) {
         audioInputs = devRes.inputs || [];
         audioOutputs = devRes.outputs || [];
@@ -327,7 +325,7 @@ function markLvSection(): HTMLElement {
     } catch {}
 
     try {
-      const memRes = await Bridge.markLvListMemory();
+      const memRes = await Bridge.engineListMemory();
       if (memRes && memRes.success) {
         memoryEntries = memRes.entries || [];
       }
@@ -492,7 +490,7 @@ function markLvSection(): HTMLElement {
       style: "font-size:12px;padding:5px 12px;",
       text: " Refresh Devices",
     });
-    refreshAudioBtn.addEventListener("click", () => void loadMarkLvData());
+    refreshAudioBtn.addEventListener("click", () => void loadEngineData());
 
     body.append(
       h("div", { class: "group-title", style: "display:flex;align-items:center;justify-content:space-between;" },
@@ -503,7 +501,7 @@ function markLvSection(): HTMLElement {
       h("div", { class: "row" }, h("label", { text: "Audio Output" }), spkSelect)
     );
 
-    // ── Group 4: Autonomous PC Control Actions (17 Actions) ──
+    // ── Group 4: Autonomous PC Control Actions (18 Actions) ──
     const actionsContainer = h("div", {
       style: "display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:10px;margin-top:6px;",
     });
@@ -536,10 +534,12 @@ function markLvSection(): HTMLElement {
         settings.activeActions[act.key] = v;
         void save();
       });
+      actToggle.setAttribute("aria-label", act.label);
 
       const card = h(
         "div",
         {
+          "data-skill": act.key,
           style:
             "background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:10px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;",
         },
@@ -595,9 +595,9 @@ function markLvSection(): HTMLElement {
           forgetBtn.setAttribute("disabled", "true");
           forgetBtn.textContent = "Removing...";
           try {
-            const result = await Bridge.markLvDeleteMemory(cat, key);
+            const result = await Bridge.engineDeleteMemory(cat, key);
             if (!result?.success) throw new Error(result?.error || "Memory could not be removed");
-            await loadMarkLvData();
+            await loadEngineData();
           } catch (error) {
             saveStatus.textContent = String(error);
             saveStatus.dataset.state = "error";
@@ -670,11 +670,11 @@ function markLvSection(): HTMLElement {
 
       addMemoryBtn.setAttribute("disabled", "true");
       try {
-        const result = await Bridge.markLvSaveMemory(c, k, v);
+        const result = await Bridge.engineSaveMemory(c, k, v);
         if (!result?.success) throw new Error(result?.error || "Memory could not be saved");
         newKeyInput.value = "";
         newValInput.value = "";
-        await loadMarkLvData();
+        await loadEngineData();
       } catch (error) {
         saveStatus.textContent = String(error);
         saveStatus.dataset.state = "error";
@@ -704,7 +704,7 @@ function markLvSection(): HTMLElement {
 
   body.textContent = "Loading devices and memory…";
   draw(); // Controls are usable immediately while devices and memory load.
-  void loadMarkLvData();
+  void loadEngineData();
 
   return section;
 }
@@ -1772,7 +1772,7 @@ export async function mountSettings(target: HTMLElement, close?: () => void): Pr
       ["plans", "Plans & Membership", "Choose what works for you", plansSection],
       ["companion", "Companion", "Appearance & everyday preferences", companionSection],
       ["ai", "AI & voice", "Your providers, keys & live voice", aiSection],
-      ["control", "AI engine", "Audio devices & memory", markLvSection],
+      ["control", "AI engine", "Audio devices & memory", engineSection],
       ["sync", "Database & sync", "Your Supabase project & connection", supabaseSection],
       ["files", "File sharing", "Connect Google Drive separately", cloudSection],
       ["apps", "Applications", "Custom paths for launching apps", appLauncherSection],

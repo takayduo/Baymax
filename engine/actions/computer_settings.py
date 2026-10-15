@@ -37,9 +37,8 @@ def _get_base_dir() -> Path:
     return data_root()
 
 def _get_api_key() -> str:
-    path = _get_base_dir() / "config" / "api_keys.json"
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from memory.config_manager import get_gemini_key
+    return get_gemini_key() or ""
 
 def _get_macos_wifi_interface() -> str:
     try:
@@ -691,7 +690,7 @@ _IRREVERSIBLE = {
     # the WiFi off cuts the assistant's own connection to the Live API, so it
     # cannot be asked to turn it back on.
     "toggle_wifi": ("Switch WiFi off or on",
-                    "If this switches WiFi off, JARVIS loses its connection and "
+                    "If this switches WiFi off, BAYMAX loses its connection and "
                     "cannot switch it back on by voice."),
 }
 

@@ -120,7 +120,7 @@ export interface Settings {
   notifyPartnerOnline?: boolean;
   appPaths: Record<string, string>;
 
-  // Mark-LV PC Control & Agent Engine Settings
+  // Baymax PC Control & Agent Engine Settings
   assistantName?: string;
   voiceName?: string;
   wakeWordEnabled?: boolean;
@@ -189,7 +189,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifyPartnerOnline: true,
   appPaths: {},
 
-  // Mark-LV PC Control & Agent Engine Defaults
+  // Baymax PC Control & Agent Engine Defaults
   assistantName: "Baymax",
   voiceName: "Charon",
   wakeWordEnabled: false,

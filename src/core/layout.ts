@@ -176,7 +176,8 @@ export function botPosition(
       // Centre of the fixed 84 pt card (8 pt top inset + 34 pt header → content at y = 42)
       const headerBottom = 42;
       const cardH = 84;
-      const cy = headerBottom + (islandH - headerBottom - cardH) / 2 + cardH / 2;
+      const effectiveH = Math.max(layout.height, islandH);
+      const cy = headerBottom + (effectiveH - headerBottom - cardH) / 2 + cardH / 2;
       return { cx: layout.botX, cy, diameter: layout.botDiameter, opacity };
     }
   }

@@ -56,7 +56,7 @@ test('Saving push-to-talk ON, OFF or a different key configures the existing Gem
     ipcMain:{handle:(_channel,fn)=>{save=fn;}},activeSettings:{aiProvider:'gemini',geminiApiKey:'test',assistantName:'Baymax',pushToTalkEnabled:false,pushToTalkKey:'Control+Space'},
     secrets:{mergeSettings:(old,patch)=>({...old,...patch}),publicSettings:s=>s},
     ...require('../electron/pushToTalk'),...require('../electron/companion'),
-    saveSettings(){},talkShortcut:{configure(){},snapshot:()=>({held:false,suspended:false})},cachedMarkLvTools:null,
+    saveSettings(){},talkShortcut:{configure(){},snapshot:()=>({held:false,suspended:false})},cachedEngineTools:null,
     tray:null,overlayWin:null,displayAssistantName:()=> 'Baymax',syncEngineConfig(){},applyStartupMode(){},startSupabaseSync(){},
     mochiLiveProc:{},startMochiLiveEngine:()=>starts.push(1),stopMochiLiveEngine:()=>stops.push(1),sendToLiveEngine:message=>sent.push(message),console,
   };

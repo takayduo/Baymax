@@ -46,7 +46,7 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld("electronAPI", {
   quit: () => ipcRenderer.invoke("quit"),
   log: (msg) => ipcRenderer.invoke("log", msg),
 
-  // AI & Chat (Mark-LV Live Engine & Groq)
+  // AI & Chat (Baymax Live Engine & Groq)
   chatSend: (query, context) => ipcRenderer.invoke("chat-send", { query, context }),
   chatReset: () => ipcRenderer.invoke("chat-reset"),
   transcribeAudio: (audioBase64) => ipcRenderer.invoke("transcribe-audio", audioBase64),
@@ -104,14 +104,14 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld("electronAPI", {
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
   performUpdate: () => ipcRenderer.invoke("perform-update"),
 
-  // Mark-LV PC Control Engine & Hardware Bridge
-  markLvListActions: () => ipcRenderer.invoke("marklv-list-actions"),
-  markLvListDevices: () => ipcRenderer.invoke("marklv-list-devices"),
-  markLvListMemory: () => ipcRenderer.invoke("marklv-list-memory"),
-  markLvSaveMemory: (category, key, value) => ipcRenderer.invoke("marklv-save-memory", { category, key, value }),
-  markLvDeleteMemory: (category, key) => ipcRenderer.invoke("marklv-delete-memory", { category, key }),
-  markLvExecuteAction: (name, parameters) => ipcRenderer.invoke("marklv-execute-action", { name, parameters }),
-  markLvLaunchHud: () => ipcRenderer.invoke("marklv-launch-hud"),
+  // Baymax PC Control Engine & Hardware Bridge
+  engineListActions: () => ipcRenderer.invoke("engine-list-actions"),
+  engineListDevices: () => ipcRenderer.invoke("engine-list-devices"),
+  engineListMemory: () => ipcRenderer.invoke("engine-list-memory"),
+  engineSaveMemory: (category, key, value) => ipcRenderer.invoke("engine-save-memory", { category, key, value }),
+  engineDeleteMemory: (category, key) => ipcRenderer.invoke("engine-delete-memory", { category, key }),
+  engineExecuteAction: (name, parameters) => ipcRenderer.invoke("engine-execute-action", { name, parameters }),
+  engineLaunchHud: () => ipcRenderer.invoke("engine-launch-hud"),
 
   // Productivity & Focus Engine (Distrack inside Baymax)
   openProductivityWindow: () => ipcRenderer.invoke("open-productivity-window"),

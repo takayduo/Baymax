@@ -76,3 +76,4 @@ audit/
 /audit/onboarding-profile-*/
 /.admin-staging/
 /audit/admin-ui-profile/
+/supabase/.temp/

@@ -222,6 +222,7 @@ export class BotEngine {
   private greetToken = 0;
   private lastAmbient = 0;
   private slapTimes: number[] = [];
+  private lastSlapTime = 0;
   private miniLookTarget = { x: 0, y: 0 };
   private miniLookNextTime = 0;
 
@@ -311,6 +312,8 @@ export class BotEngine {
     this.interruptGreet();
     if (this.state === "dizzy") return;
     const t = now();
+    if (t - this.lastSlapTime < 0.22) return;
+    this.lastSlapTime = t;
     this.slapTimes = this.slapTimes.filter((s) => t - s < 1.7);
     this.slapTimes.push(t);
     Sound.play("slap");

@@ -206,17 +206,21 @@ async function main() {
   });
 
   await onEvent<{ sender: string }>("remote-access-declined", () => {
-    Sound.play("blip");
-    State.remoteAccessStatus = "idle";
-    island.setView(State.defaultView());
-    State.notify();
+    if (State.remoteAccessStatus !== "idle") {
+      Sound.play("blip");
+      State.remoteAccessStatus = "idle";
+      island.setView(State.defaultView());
+      State.notify();
+    }
   });
 
   await onEvent("remote-access-ended", () => {
-    Sound.play("close");
-    stopHostScreenSharing();
-    State.remoteAccessStatus = "idle";
-    State.notify();
+    if (State.remoteAccessStatus !== "idle") {
+      Sound.play("close");
+      stopHostScreenSharing();
+      State.remoteAccessStatus = "idle";
+      State.notify();
+    }
   });
 
   await onEvent<any>("host-signal", async (signal) => {

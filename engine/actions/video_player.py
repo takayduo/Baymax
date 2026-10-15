@@ -18,7 +18,7 @@ WHAT IT ACCEPTS
 
 SOUND IS OFF UNTIL ASKED FOR
     A soundtrack talking over the assistant is the one way this feature could
-    make JARVIS worse rather than better, and the microphone is open while it
+    make BAYMAX worse rather than better, and the microphone is open while it
     plays. So it starts muted, and the user turns sound on — from the button in
     the video header, or by saying so. Closing it works both ways too.
 """
@@ -218,7 +218,7 @@ def video_player(parameters: dict = None, response=None, player=None,
     # answer — the fast clients came back with zero usable formats.
     #
     # So the seconds stay, and what changes is where the user spends them:
-    # listening to JARVIS say it is coming, instead of watching nothing happen.
+    # listening to BAYMAX say it is coming, instead of watching nothing happen.
     # The same shape whatsapp_call uses, and for the same reason.
     threading.Thread(target=_play_youtube, args=(player, source, _begin_open()),
                      daemon=True, name="video-open").start()
@@ -228,32 +228,19 @@ def video_player(parameters: dict = None, response=None, player=None,
 
 
 def _play_youtube(player, source: str, token: int) -> None:
-    """Opens the requested YouTube video in the default browser cleanly and quickly."""
-    page = source if _YT.search(source) else _search_page(source)
-    try:
-        from actions.youtube_video import _scrape_first_video_url
-        first_url = _scrape_first_video_url(source)
-        if first_url:
-            page = first_url
-    except Exception:
-        pass
-
+    """Resolve the requested video once and hand playback to the desktop display."""
+    video_url, audio_url, title, error = _resolve_youtube(source)
     if not _still_wanted(token):
         return
-
-    # Open the video page directly in the default browser with audio!
+    if error or not video_url:
+        print(f"[video_player] Playback failed: {error}")
+        _say(player, "Video could not be loaded. Do not claim playback started.")
+        return
+    # Forward the resolved media to one player/UI, which owns pause and mute.
     try:
-        webbrowser.open(page)
-        print(f"[video_player] ▶️ Opened in browser: {page}")
-    except Exception as e:
-        print(f"[video_player] webbrowser.open error: {e}")
-
-    # Forward event to player/UI
-    if player and hasattr(player, "show_video"):
-        try:
-            player.show_video(page, source, muted=False)
-        except Exception:
-            pass
+        player.show_video(video_url, title or source, muted=True, audio_source=audio_url)
+    except Exception as exc:
+        print(f"[video_player] Playback failed: {exc}")
 
 
 def _say(player, instruction: str) -> None:

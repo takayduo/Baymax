@@ -10,6 +10,7 @@ import subprocess
 import threading
 import webbrowser
 from pathlib import Path
+from core.legacy_compat import user_path
 from typing import Optional
 
 from playwright.async_api import (
@@ -107,7 +108,7 @@ def _real_profile_dir(browser: str) -> str:
             print(f"[Browser] ✅ Real profile found for {browser}: {p}")
             return str(p)
 
-    fallback = home / ".jarvis_profiles" / browser
+    fallback = user_path(".baymax_profiles") / browser
     fallback.mkdir(parents=True, exist_ok=True)
     print(f"[Browser] ⚠️  Real profile not found for {browser}, using: {fallback}")
     return str(fallback)
@@ -533,7 +534,7 @@ class _BrowserSession:
 
         if engine_name == "firefox":
             profile = _firefox_profile_dir() or str(
-                Path.home() / ".jarvis_profiles" / "firefox"
+                user_path(".baymax_profiles") / "firefox"
             )
             kwargs: dict = {
                 "headless":    False,
@@ -547,17 +548,17 @@ class _BrowserSession:
             try:
                 self._context = await engine_obj.launch_persistent_context(profile, **kwargs)
             except Exception as e:
-                print(f"[Browser] Firefox real profile failed ({e}), using JARVIS profile")
-                jarvis = str(Path.home() / ".jarvis_profiles" / "firefox_jarvis")
-                Path(jarvis).mkdir(parents=True, exist_ok=True)
-                self._context = await engine_obj.launch_persistent_context(jarvis, **kwargs)
+                print(f"[Browser] Firefox real profile failed ({e}), using BAYMAX profile")
+                baymax = str(user_path(".baymax_profiles") / "firefox_baymax")
+                Path(baymax).mkdir(parents=True, exist_ok=True)
+                self._context = await engine_obj.launch_persistent_context(baymax, **kwargs)
 
             self._page = await self._adopt_page()
             print(f"[Browser] ✅ Firefox launched")
             return
 
         if engine_name == "webkit":
-            safari_profile = str(Path.home() / ".jarvis_profiles" / "safari")
+            safari_profile = str(user_path(".baymax_profiles") / "safari")
             Path(safari_profile).mkdir(parents=True, exist_ok=True)
             kwargs = {
                 "headless":    False,
@@ -609,16 +610,16 @@ class _BrowserSession:
 
         # The real profile could not be opened (browser already open / locked
         # profile / newer Chrome versions block the real profile under
-        # automation). Fall back to a persistent JARVIS automation profile —
+        # automation). Fall back to a persistent BAYMAX automation profile —
         # accounts logged in here once stay logged in on later sessions too.
-        jarvis_profile = str(Path.home() / ".jarvis_profiles" / self.browser_name)
-        Path(jarvis_profile).mkdir(parents=True, exist_ok=True)
-        print(f"[Browser] Retrying with JARVIS profile: {jarvis_profile}")
+        baymax_profile = str(user_path(".baymax_profiles") / self.browser_name)
+        Path(baymax_profile).mkdir(parents=True, exist_ok=True)
+        print(f"[Browser] Retrying with BAYMAX profile: {baymax_profile}")
 
         try:
-            self._context = await engine_obj.launch_persistent_context(jarvis_profile, **kwargs)
+            self._context = await engine_obj.launch_persistent_context(baymax_profile, **kwargs)
             self._page = await self._adopt_page()
-            print(f"[Browser] ✅ Launched [{label}] with JARVIS profile "
+            print(f"[Browser] ✅ Launched [{label}] with BAYMAX profile "
                   f"(sign-ins persist across sessions)")
         except Exception as e2:
             raise RuntimeError(f"Could not launch {self.browser_name}: {e2}") from e2
@@ -805,7 +806,7 @@ class _BrowserSession:
     async def screenshot(self, path: str = None) -> str:
         page = await self._get_page()
         try:
-            save_path = path or str(Path.home() / "Desktop" / "jarvis_screenshot.png")
+            save_path = path or str(Path.home() / "Desktop" / "baymax_screenshot.png")
             await page.screenshot(path=save_path, full_page=False)
             return f"Screenshot saved: {save_path}"
         except Exception as e:
@@ -956,14 +957,14 @@ def browser_control(
         _log(player, result)
         return result
 
-    # ── Navigation is ALWAYS native ──────────────────────────────────────────
+    # ── Navigation defaults to native ────────────────────────────────────────
     # go_to / search / new_tab open the site in the user's own browser —
     # their own profile, logged-in accounts and start page; exactly as if the
     # user had opened it themselves. A controlled window with about:blank never
-    # opens here. The only exception: if an automation flow is already running,
+    # opens here unless automation is requested. If a flow is already running,
     # navigation continues in that window (so multi-step tasks aren't split).
     if action in ("go_to", "search", "new_tab"):
-        if _registry.has(browser):
+        if params.get("automation") is True or _registry.has(browser):
             sess = _registry.get(browser)
             try:
                 if action == "search":
@@ -1074,6 +1075,10 @@ TOOL = {
             "browser": {
                 "type": "STRING",
                 "description": "Target browser: chrome | edge | firefox | opera | operagx | brave | vivaldi | safari. Omit to use the currently active browser."
+            },
+            "automation": {
+                "type": "BOOLEAN",
+                "description": "Use true on the first go_to/search/new_tab of a multi-step website task so subsequent clicks and form fills stay in the same controlled browser. Omit for simply opening a website."
             },
             "url": {
                 "type": "STRING",

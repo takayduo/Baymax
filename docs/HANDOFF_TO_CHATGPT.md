@@ -1,103 +1,50 @@
-# Baymax Project Handoff & Architecture Summary
+# Baymax handoff
 
-> **Date:** 14 October 2026  
-> **Working Directory:** `G:\baymax` (Backup archive preserved at `G:\LOVE`)  
-> **Target OS:** Windows 11 (x64)  
-> **Installer:** `release\Baymax-Setup-1.0.1-x64.exe`  
-> **Installer SHA256:** `6444c6f41ff805bde94d46114a7052a11b20b372eaa6b5b073d6846fc7e776f9`  
-> **Central Supabase Project:** `https://ycmmygwjsljixdfuyaau.supabase.co` (PostgREST REST + WebSocket Realtime Broadcast channels).
+Updated 15 October 2026. Active desktop: `G:\baymax`. Clone: `G:\puff`. Owner console: `G:\puff-admin`, live at **https://puff-admin.pages.dev**. Preserve LOVE/Mochi source backups. Do not push Git without explicit written owner permission.
 
----
+## Current architecture
 
-## 1. System Architecture Overview
+- Electron/Vite/TypeScript desktop and native Python voice/action engine. Preserve remote consent, partner calls/music, proactive voice/PTT, task/chat delivery, companion rendering and shortcuts.
+- Central account/content use authenticated Supabase PostgREST. **No central Edge Functions.** `get_my_account` supplies authoritative entitlement state, without assembling a guessed fallback after failure. Username reservation is a direct authenticated `profiles` upsert.
+- Private account topic: `baymax:user:<user UUID>`. Pair topic: `baymax:pair:<pair UUID>:<channel_token>`. SQL `send_pair_signal` authorizes publications; clients cannot write arbitrary broadcasts. Membership/entitlement changes rotate topics. Clients refresh on account events with a polling fallback.
+- Tasks use `save_my_task`, authenticated `updated_by`, revisions, tombstones and server broadcasts after writes. Equal content does not rebroadcast indefinitely. Chat preserves live-before-store delivery, idempotency and outbox retries. Failed saves remain pending. Reads paginate beyond 1,000 rows. Do not claim guaranteed sub-50ms WAN latency.
+- Duo has one purchaser seat and one recipient. `assign_partner_seat` checks ownership/conflicts and invites rather than auto-pairing. End-pair/revoke frees the gift without cancelling a separately owned subscription. Gender is `userGender`, not a shared-task role slot.
+- Native Duo dialogs, Enter-key username search and seat/revoke controls remain. Emergency Cloud pause and announcements are server-derived. Installation heartbeats feed the admin devices view.
+- Central files use authenticated Storage plus reserve/remove RPCs. Local playlists, AI keys and raw productivity history are not uploaded by the dashboard.
+- Optional billing runs on Cloudflare; public desktop config accepts `billingUrl`. No Razorpay secrets appeared in the verified production secret-name list; real payment operation remains unactivated.
 
-Baymax is a paired desktop AI companion application built with Electron (frontend overlay + preferences settings), Node.js (main process IPC, security, and transport), and a native Python 3.12 engine (PyQt6, Gemini Live voice, screen awareness, local actions).
+## Database and deployment
 
-### Key Architectural Constraints:
-- **No Edge Functions**: The project uses direct Supabase PostgREST endpoints (`/rest/v1/...`) with authenticated user JWTs (`Bearer <token>`) and Supabase Realtime WebSocket broadcast channels. Do not attempt to route calls through `/functions/v1/...`.
-- **Two Realtime Channel Tiers**:
-  1. `baymax_pair_<pairId>`: Used exclusively by paired partners for instant P2P data exchange (tasks, chat, voice WebRTC signaling, music together, presence).
-  2. `baymax_user_<userId>`: An always-on single-user channel that runs as long as the user is signed in. This handles incoming invites, invite acceptances/declines, and instantaneous unpair notifications when unpaired.
-- **Git Policy**: Strictly prohibited from running `git push` without explicit written confirmation from the user. Only local git commits are permitted.
+Central Supabase: `https://ycmmygwjsljixdfuyaau.supabase.co`.
 
----
+Migrations 001–006 are the previous schema/onboarding/seat fixes. Upgrades:
 
-## 2. Complete Summary of Changes Made Since ChatGPT Limit
+1. `202610140007_direct_authenticated_transport.sql`: private channels, actor-bound RPCs, RLS fixes, safe task/message writes and revocation.
+2. `202610140008_owner_admin.sql`: service-only admin RPCs, audit, devices, controls and grants.
+3. `202610140009_direct_files.sql`: private Storage authorization.
+4. `202610140010_duo_assignment.sql`: purchaser-owned second-seat assignment.
 
-### A. Real-Time Task Synchronization (<50ms Latency)
-- **File:** `electron/cloudTransport.js`
-  - **Issue:** Tasks added for a partner were not showing on the partner's account.
-  - **Root Cause:** In the `public.tasks` table, column `updated_by uuid not null references auth.users(id)` is non-nullable. `saveTask()` was omitting `updated_by`, causing PostgREST to reject inserts with a `null value in column "updated_by"` constraint error.
-  - **Fix:** 
-    - `saveTask()` passes `pair_id`, `id`, `updated_by: this.user.id`, `revision`, `deleted_at`, `body: taskWithMeta`, and `updated_at`.
-    - Dispatches a `schedule-live` WebSocket event containing `{ items: [taskWithMeta], senderName }` over the pair channel, achieving **<50ms latency**.
-    - In `receive()`, added a listener for `schedule-live` that immediately triggers `callbacks.onScheduleUpdated()`, updating the partner's UI in real time.
-    - Updated `task(row)` to stamp `syncPairId: this.pair.id` so tasks loaded from offline storage are correctly scoped to the active pair.
-- **File:** `electron/supabase.js`
-  - Fixed `broadcastScheduleUpdate` which was previously sending an empty payload `{}`. It now forwards the full payload: `payload => managed.signal('schedule-live', payload)`.
-- **File:** `electron/main.js`
-  - In `save-schedule-item` and `toggle-schedule-item`, ensured `item.syncPairId` is assigned to `account.snapshot().pair?.id` and triggered `saveTaskToCloud(item)`.
+The owner reported applying 007–010 to the hosted database. Local tests exercise the full schema, unrelated-user/anon denial, private topics, revocation and grants. Live authenticated mutations were not exercised in this continuation. Apply only missing migrations on upgrades; the complete `electron/supabase-cloud.sql` is for a new project. Preserve applied migration history; use a new migration for further database changes.
 
----
+Admin: Cloudflare Pages Functions + D1 sessions + server-side Supabase RPCs. Its real D1 binding is in `G:\puff-admin\wrangler.toml`; do not overwrite it with the ignored `.admin-staging` preparation copy. Actual source is `G:\puff-admin`. Session hashes now use `SESSION_SECRET`; missing settings fail closed; errors are bounded and do not reflect raw credentials. Antigravity's manual-fetch redirect fix remains.
 
-### B. Duo Subscription Lifecycle, Seat Revocation & Security Enforcement
-- **Files:** `electron/account.js`, `electron/supabase-cloud.sql`, `supabase/migrations/202610140006_duo_seats_revocation.sql`, `src/settings/plans.ts`, `src/settings/account.ts`
-  - **Database Seat Limit & Security Enforcement:**
-    - Confirmed that **no user can sell or distribute Duo seats infinitely**. Postgres strictly throws `'The second seat is already assigned'` if more than 2 seats (`purchaser` + `1 partner`) are created under one subscription.
-    - Added check for `state = 'active'` in `claim_beta_membership()` so revoked seats do not block new partners.
-  - **Automatic Seat Revocation on Disconnect (`end-pair`):**
-    - Updated `public.end_pair(p_actor uuid)`: When either partner clicks "End relationship", any seat granted to the partner under the purchaser's subscription is automatically revoked (`state = 'revoked'`).
-    - The ex-partner immediately drops back to the **Free** plan.
-    - The purchaser's 2nd seat is freed and becomes **Available** again.
-  - **Explicit Partner Seat Revocation (`revoke-seat`):**
-    - Created RPC `public.revoke_partner_seat()` and client action `revoke-seat`. The purchaser can revoke their partner's seat anytime directly from the Account tab with one click.
-  - **Plans Modal UI Cleanup:**
-    - Removed the detached floating text box below the plan cards.
-    - When purchasing "Pay for both", a native Baymax `<dialog class="upgrade-dialog duo-assign-dialog">` appears asking for the partner's `@username` with **[Assign seat]** and **[Skip for now]** options.
-    - When clicking **[Assign partner seat]** on the Duo card, the same sleek modal appears.
-    - Entering a username automatically grants the Duo seat and connects/invites the partner.
-  - **Account Tab Partner Search UI:**
-    - Removed the separate search icon button from the partner search input.
-    - Searching now triggers automatically when the user presses **Enter** inside the input box (`Partner @username (press Enter to search)`).
-    - If 2nd seat is assigned, shows: `Duo Partner Seat: Assigned to @partner (Active) [Revoke seat]`.
-    - If 2nd seat is unassigned, shows: `Duo Partner Seat · Available [Partner @username] [Gift seat]`.
+Production deployment **0323c6b1**, 15 October: homepage 200; unauthenticated session/data 401; foreign-origin login 403. Existing owner sessions need to sign in again. Instructions: `G:\puff-admin\HOSTING.md` and [OWNER_GUIDE.md](OWNER_GUIDE.md).
 
----
+## Preserved desktop layout
 
-### C. Foreign Key Cascade & Entitlement Fallback
-- **Files:** `electron/account.js`, `supabase/migrations/202610140005_tasks_entitlement_cascade.sql`
-  - **Issue 1 (Cannot Delete Test Rows):** Deleting rows in Supabase Table Editor failed because `baymax_private.beta_claims` and `public.seats` referenced `subscriptions` without cascade.
-  - **Fix:** Added `ON DELETE CASCADE` to foreign keys on both tables.
-  - **Issue 2 (Fallback to Free):** Fallback REST queries omitted `seats` and `subscriptions`.
-  - **Fix:** Direct REST query in `accountSnapshot()` queries `public.seats` and `public.subscriptions` where `period_end > now()`, properly detecting Pro/Duo.
+- Repeat stays beside Next in `.music-mini`. Music retains `(botX,botY)=(59,104)` and 78px left padding.
+- Tasks has no companion; its canvas hides immediately without shrinking to a dot. Expanded opacity follows diameter.
+- Collapsed state syncs on startup/transitions; Partner chat receives focus. Desktop toasts show only while collapsed.
+- Legacy message writes omit nonexistent `sender_role`; chat broadcasts before persistence.
 
----
+## Artifact, verification and limits
 
-### D. Settings UI Cleanup & Baymax Theme Fidelity
-- **Tabs Consolidated (9 Tabs):** Removed redundant `Partner` tab from Settings.
-- **Gender Toggle:** Renamed from ambiguous *"Partner Is"* to **"Your gender: [ He | She ]"**.
-- **Presence Toggle:** Moved *"Notify when partner comes online"* directly into the Account tab.
-- **De-clutter:** Removed custom backend dropdown and cloud files dropdown from Account tab.
+Installer: `release\Baymax-Setup-1.0.1-x64.exe`, 286,034,455 bytes (272.8 MiB), **NotSigned**.
 
----
+SHA256: `39a663ba4e79e1f3273dcc89a3e0ac32ceea75f4f08d939648a53a789ddee52e`.
 
-## 3. SQL Migrations & Database Commands
+15 October: 57 desktop tests, both TypeScript projects, 7 admin API tests, compiled Worker, 10 dashboard fixture checks, 11 packaged-app checks and 121 resource matches passed. The current installer was verified, not rebuilt in this continuation. See [RELEASE_STATUS.md](../RELEASE_STATUS.md) for evidence.
 
-Migrations are located in `G:\baymax\supabase\migrations\`:
-1. `202610130001_central.sql` — Core database tables and RLS.
-2. `202610130002_content.sql` — Messaging and Realtime triggers.
-3. `202610130003_migration.sql` — Backend switching functions.
-4. `202610140004_onboarding.sql` — Profile reservation, `get_my_account()`, `claim_beta_membership()`.
-5. `202610140005_tasks_entitlement_cascade.sql` — Cascade foreign keys, `seats`/`subscriptions` select RLS, and `tasks`/`messages` insert/update RLS.
-6. `202610140006_duo_seats_revocation.sql` — Partner seat revocation on unpairing and `revoke_partner_seat()`.
+Do not claim a signed installer, live paid launch, tested physical microphones/WAN pairs or automatic personal-database migration. Two real-PC acceptance and live authenticated owner workflows remain. The custom adapter is separate from central no-Edge transport. Financial cancellation is separate from access revocation.
 
----
-
-## 4. Verification & Testing Status
-
-Every test in the repository is passing:
-- **Unit Tests:** `npm test` -> **55 / 55 tests pass** (0 failures).
-- **Regression Tests:** `node tests/regressions.cjs` -> **46 / 46 tests pass** (0 failures).
-- **Account Suite:** `node --test tests/account.cjs` -> **7 / 7 tests pass** (0 failures).
-- **Frontend & TypeScript:** `npm run build` -> 0 TypeScript errors, both `dist/` and `productivity/dist/` build cleanly.
-- **Windows Installer:** `release\Baymax-Setup-1.0.1-x64.exe` (SHA256: `6444c6f41ff805bde94d46114a7052a11b20b372eaa6b5b073d6846fc7e776f9`).
+Antigravity's reported commits: Baymax `bcda54c`, clone `8e81f16`, admin `e5f84f9`. This continuation leaves changes uncommitted/unpushed, publishes the authorized Cloudflare update, and does not overwrite `G:\puff`.

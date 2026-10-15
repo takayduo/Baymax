@@ -25,7 +25,7 @@ from actions.proactive import ProactiveEngine
 
 source = Path(__file__).resolve().parents[1] / 'engine/main.py'
 tree = ast.parse(source.read_text(encoding='utf-8'))
-live = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'JarvisLive')
+live = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'BaymaxLive')
 names = {'_receive_audio', '_play_audio', '_send_startup_briefing', '_on_text_command', 'set_speaking'}
 methods = [node for node in live.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
 scope = dict(asyncio=asyncio, time=time, datetime=datetime, traceback=traceback, np=np,

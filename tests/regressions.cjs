@@ -11,6 +11,8 @@ const { resolveApplication } = require('../electron/appCommands');
 require('./engine-lifecycle.cjs');
 require('./music.cjs');
 require('./fourteen.cjs');
+require('./sounds.cjs');
+require('./restored-tools.cjs');
 test('Minimal companions lead the catalog, retain the originals, and default to plain Puff', () => {
   const catalog = require('../public/companions/catalog.json');
   assert.deepEqual(catalog.slice(0, 10).map(a => a.id), ['puff','pebble','mallow','drop','tama','neko','kuma','usagi','kumo','hoshi']);

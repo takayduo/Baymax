@@ -297,14 +297,14 @@ def _cooling(model: str) -> bool:
 
 
 def api_key(refresh: bool = False) -> str:
-    """The Gemini key from config/api_keys.json. Cached; never raises."""
+    """The Gemini key from the desktop environment or legacy config. Cached; never raises."""
     global _cached_key
     with _key_lock:
         if _cached_key is not None and not refresh:
             return _cached_key
         try:
-            data = json.loads(_KEY_FILE.read_text(encoding="utf-8"))
-            _cached_key = str(data.get("gemini_api_key") or "")
+            from memory.config_manager import get_gemini_key
+            _cached_key = str(get_gemini_key() or "")
         except Exception:
             _cached_key = ""
         return _cached_key

@@ -45,7 +45,7 @@ class AccountService extends EventEmitter {
  guardIPC(channel,args=[]){
   if(PC_IPC.has(channel)&&!['launch-app','close-app'].includes(channel))this.require('pcControl');
   if(PRODUCTIVITY_IPC.has(channel))this.require('productivity');
-  if(channel==='marklv-launch-hud'||channel==='ai-set-voice')this.require('gemini');
+  if(channel==='engine-launch-hud'||channel==='ai-set-voice')this.require('gemini');
   if(channel==='music-signal' && !['leave','decline'].includes(args[0]?.type))this.require('listenTogether');
   if(channel==='voice-signal'&&!['hangup','decline'].includes(args[0]?.type))this.require('partner');
   if(['chat-send','transcribe-audio','music-search','music-resolve','save-schedule-item','toggle-schedule-item','delete-schedule-item'].includes(channel))this.require('local');
@@ -53,8 +53,9 @@ class AccountService extends EventEmitter {
  }
  guardAction(name,parameters={}){
   if(['open_app','close_app'].includes(name))return; // Saved local app shortcuts are independent of remote access.
-  if(PC_ACTIONS.has(name))throw new Error('This AI automation action is not included in this release');
-  if(!new Set(['web_search','weather_report','flight_finder','reminder','manage_schedule','productivity_manager','control_app','send_partner_message','screen_process','close_camera','manage_monitor','shutdown_jarvis','save_memory','recall_memory']).has(name))throw new Error('This action is not included in this release');
+  // Registration is checked by the action registry. Plan checks must not hide
+  // implemented tools or prevent newly installed, enabled plugins from running.
+  if(PC_ACTIONS.has(name)||name==='send_message')this.require('pcControl');
   if(['screen_process','manage_monitor'].includes(name))this.require('gemini');
   if(name==='productivity_manager')this.require('productivity');
   if(name==='control_app'){
@@ -69,16 +70,27 @@ class AccountService extends EventEmitter {
   if(!this.configured||!this.saved?.user?.id)return null;
   return this.realtimeClient ||= createClient(this.config.supabaseUrl,this.config.supabaseAnonKey,{accessToken:()=>this.token(),auth:{persistSession:false}});
  }
- startUserChannel(){
+ async startUserChannel(){
   if(!this.configured||!this.saved?.user?.id)return;
   const client=this.ensureRealtimeClient(),name='baymax:user:'+this.saved.user.id;
   if(this.userChannel?.topic==='realtime:'+name)return;
   this.stopUserChannel();
+  const generation=this.userChannelGeneration;
+  try{
+   const token=await this.token();
+   if(generation!==this.userChannelGeneration)return;
+   await client.realtime.setAuth(token);
+  }catch{
+   if(generation===this.userChannelGeneration)this.error='Live account authentication unavailable; retrying';
+   return;
+  }
+  if(generation!==this.userChannelGeneration||client!==this.realtimeClient)return;
   const channel=client.channel(name,{config:{private:true}});this.userChannel=channel;
-  channel.on('broadcast',{event:'account-changed'},()=>{void this.refresh();});
+  channel.on('broadcast',{event:'account-changed'},()=>{void this.refresh().catch(()=>{});});
   channel.subscribe(status=>{if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'){this.error='Live account updates unavailable; reconnecting';}});
  }
  stopUserChannel(){
+  this.userChannelGeneration=(this.userChannelGeneration||0)+1;
   const channel=this.userChannel;this.userChannel=null;
   if(channel&&this.realtimeClient)void this.realtimeClient.removeChannel(channel).catch(()=>{});
  }
@@ -95,7 +107,7 @@ class AccountService extends EventEmitter {
    try{const raw=JSON.parse(fs.readFileSync(this.sessionFile,'utf8'));const saved=JSON.parse(this.safeStorage.decryptString(Buffer.from(raw.encrypted,'base64')));if(saved.project===this.config.supabaseUrl)this.saved=saved;}catch{this.error='Saved login could not be decrypted. Sign in again; local data is preserved.';}
   }
   if(this.saved){
-   this.startUserChannel();
+   void this.startUserChannel().catch(()=>{this.error='Live account updates unavailable';});
    await this.refresh().catch(()=>{});
   }
   this.timer=setInterval(()=>{if(this.saved)void this.refresh().catch(()=>{});else this.changed();},10000);this.timer.unref?.();return this.snapshot();
@@ -171,6 +183,7 @@ class AccountService extends EventEmitter {
     const snapshot=await this.accountSnapshot();if(generation!==this.generation)return this.snapshot();
     const previous=this.saved.snapshot;
     this.saved.snapshot=snapshot;this.saved.verifiedAt=this.now();this.error='';
+    void this.startUserChannel().catch(()=>{this.error='Live account updates unavailable';});
     this.saved.deviceId ||= crypto.randomUUID();this.persist();
     if(!this.lastHeartbeat||this.now()-this.lastHeartbeat>60000){this.lastHeartbeat=this.now();void this.rpc('device_heartbeat',{p_id:this.saved.deviceId,p_name:require('node:os').hostname(),p_version:require('../package.json').version}).catch(()=>{});}
     if(previous?.pair&&!snapshot.pair)this.emit('partner-unpaired',{pairId:previous.pair.id});
@@ -207,7 +220,7 @@ class AccountService extends EventEmitter {
     if(generation!==this.generation||this.login!==attempt)throw new Error('Login was replaced');
     if(!(user.app_metadata?.providers||[user.app_metadata?.provider]).includes('google'))throw new Error('Use your Google account to sign in');
     this.saved={user:{id:user.id,email:user.email,displayName:user.user_metadata?.full_name||'',avatarUrl:user.user_metadata?.avatar_url||''},session,snapshot:null,verifiedAt:0,planChosen:false};
-    this.persist();this.error='';reply(200,'Signed in. You can return to Baymax and close this tab.');this.cancelLogin();this.startUserChannel();await this.refresh();
+    this.persist();this.error='';reply(200,'Signed in. You can return to Baymax and close this tab.');this.cancelLogin();void this.startUserChannel().catch(()=>{});await this.refresh();
    }catch(error){reply(400,'Sign-in could not finish. Return to Baymax and try again.');this.error=error.message;this.cancelLogin();}
   });
   attempt.server=server;this.login=attempt;

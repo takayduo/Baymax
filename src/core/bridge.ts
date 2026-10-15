@@ -90,14 +90,14 @@ declare global {
       checkForUpdates?(): Promise<UpdateCheckResult>;
       performUpdate?(): Promise<{ success: boolean; error?: string }>;
 
-      // Mark-LV PC Control Engine & Hardware Bridge
-      markLvListActions?(): Promise<{ success: boolean; actions: any[]; count: number; error?: string }>;
-      markLvListDevices?(): Promise<{ success: boolean; inputs: string[]; outputs: string[]; error?: string }>;
-      markLvListMemory?(): Promise<{ success: boolean; entries: any[]; raw?: any; error?: string }>;
-      markLvSaveMemory?(category: string, key: string, value: string): Promise<{ success: boolean; result?: string; error?: string }>;
-      markLvDeleteMemory?(category: string, key: string): Promise<{ success: boolean; result?: string; error?: string }>;
-      markLvExecuteAction?(name: string, parameters: any): Promise<{ success: boolean; result?: string; error?: string }>;
-      markLvLaunchHud?(): Promise<{ success: boolean; error?: string }>;
+      // Baymax PC Control Engine & Hardware Bridge
+      engineListActions?(): Promise<{ success: boolean; actions: any[]; count: number; error?: string }>;
+      engineListDevices?(): Promise<{ success: boolean; inputs: string[]; outputs: string[]; error?: string }>;
+      engineListMemory?(): Promise<{ success: boolean; entries: any[]; raw?: any; error?: string }>;
+      engineSaveMemory?(category: string, key: string, value: string): Promise<{ success: boolean; result?: string; error?: string }>;
+      engineDeleteMemory?(category: string, key: string): Promise<{ success: boolean; result?: string; error?: string }>;
+      engineExecuteAction?(name: string, parameters: any): Promise<{ success: boolean; result?: string; error?: string }>;
+      engineLaunchHud?(): Promise<{ success: boolean; error?: string }>;
 
       // Productivity & Focus Engine (Baymax)
       openProductivityWindow?(): Promise<boolean>;
@@ -560,33 +560,33 @@ export const Bridge = {
   openN8n: async () => {},
   setPaused: async (_paused: boolean) => {},
 
-  // Mark-LV PC Control Engine & Hardware Bridge
-  markLvListActions: async () => {
-    if (window.electronAPI?.markLvListActions) return await window.electronAPI.markLvListActions();
+  // Baymax PC Control Engine & Hardware Bridge
+  engineListActions: async () => {
+    if (window.electronAPI?.engineListActions) return await window.electronAPI.engineListActions();
     return { success: false, actions: [], count: 0 };
   },
-  markLvListDevices: async () => {
-    if (window.electronAPI?.markLvListDevices) return await window.electronAPI.markLvListDevices();
+  engineListDevices: async () => {
+    if (window.electronAPI?.engineListDevices) return await window.electronAPI.engineListDevices();
     return { success: false, inputs: [], outputs: [] };
   },
-  markLvListMemory: async () => {
-    if (window.electronAPI?.markLvListMemory) return await window.electronAPI.markLvListMemory();
+  engineListMemory: async () => {
+    if (window.electronAPI?.engineListMemory) return await window.electronAPI.engineListMemory();
     return { success: false, entries: [] };
   },
-  markLvSaveMemory: async (category: string, key: string, value: string) => {
-    if (window.electronAPI?.markLvSaveMemory) return await window.electronAPI.markLvSaveMemory(category, key, value);
+  engineSaveMemory: async (category: string, key: string, value: string) => {
+    if (window.electronAPI?.engineSaveMemory) return await window.electronAPI.engineSaveMemory(category, key, value);
     return { success: false };
   },
-  markLvDeleteMemory: async (category: string, key: string) => {
-    if (window.electronAPI?.markLvDeleteMemory) return await window.electronAPI.markLvDeleteMemory(category, key);
+  engineDeleteMemory: async (category: string, key: string) => {
+    if (window.electronAPI?.engineDeleteMemory) return await window.electronAPI.engineDeleteMemory(category, key);
     return { success: false };
   },
-  markLvExecuteAction: async (name: string, parameters: any) => {
-    if (window.electronAPI?.markLvExecuteAction) return await window.electronAPI.markLvExecuteAction(name, parameters);
+  engineExecuteAction: async (name: string, parameters: any) => {
+    if (window.electronAPI?.engineExecuteAction) return await window.electronAPI.engineExecuteAction(name, parameters);
     return { success: false, error: "Bridge unavailable" };
   },
-  markLvLaunchHud: async () => {
-    if (window.electronAPI?.markLvLaunchHud) return await window.electronAPI.markLvLaunchHud();
+  engineLaunchHud: async () => {
+    if (window.electronAPI?.engineLaunchHud) return await window.electronAPI.engineLaunchHud();
     return { success: false };
   },
 

@@ -1,5 +1,5 @@
 """
-mochi_runner.py — Native Mark-LV Headless Assistant Runner for Mochi Ultra
+mochi_runner.py — Native Baymax Headless Assistant Runner for Mochi Ultra
 Connects Mochi Ultra directly to the real-time Gemini Live WebSocket API,
 hardware audio streaming via sounddevice, 17 autonomous PC control actions,
 and memory. Communicates with Electron over stdin/stdout.
@@ -27,8 +27,8 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Import the authentic Mark-LV live assistant
-from main import JarvisLive, BASE_DIR, API_CONFIG_PATH
+# Import the authentic Baymax live assistant
+from main import BaymaxLive, BASE_DIR, API_CONFIG_PATH
 from memory import config_manager
 
 
@@ -45,13 +45,13 @@ def emit_ipc(event_type: str, data: dict = None):
 
 
 class _WinShim:
-    """Shim for JarvisUI._win."""
+    """Shim for BaymaxUI._win."""
     def __init__(self):
         self._ready = True
 
 
 class _RootShim:
-    """Shim for JarvisUI.root."""
+    """Shim for BaymaxUI.root."""
     def mainloop(self):
         pass
 
@@ -59,10 +59,12 @@ class _RootShim:
         pass
 
 
-class MochiHeadlessUI:
+from core.desktop_ui import DesktopUI
+
+class MochiHeadlessUI(DesktopUI):
     """
-    Headless presenter that duck-types JarvisUI.
-    Receives all live state, audio levels, visemes, and transcripts from JarvisLive
+    Headless presenter that duck-types BaymaxUI.
+    Receives all live state, audio levels, visemes, and transcripts from BaymaxLive
     and forwards them to Mochi Ultra's Electron interface in real time.
     """
 
@@ -73,7 +75,7 @@ class MochiHeadlessUI:
         self._current_file: str | None = None
         self._last_audio_level_ts = 0.0
 
-        # Callbacks set by JarvisLive.__init__
+        # Callbacks set by BaymaxLive.__init__
         self.on_push_to_talk = None
         self.ptt_hold = None
         self.on_text_command = None
@@ -112,11 +114,11 @@ class MochiHeadlessUI:
         emit_ipc(event, data or {})
 
     def set_state(self, state: str):
-        """Called by JarvisLive when assistant state changes (LISTENING, THINKING, SPEAKING, SLEEPING)."""
+        """Called by BaymaxLive when assistant state changes (LISTENING, THINKING, SPEAKING, SLEEPING)."""
         emit_ipc("state", {"state": state})
 
     def write_log(self, text: str):
-        """Called by JarvisLive for transcripts and system status."""
+        """Called by BaymaxLive for transcripts and system status."""
         text = str(text).strip()
         if not text:
             return
@@ -181,13 +183,8 @@ class MochiHeadlessUI:
         pass
 
     def show_video(self, source: str, title: str = "", muted: bool = True, audio_source: str = ""):
-        if source and (source.startswith("http://") or source.startswith("https://")):
-            try:
-                import webbrowser
-                webbrowser.open(source)
-            except Exception as e:
-                sys.stderr.write(f"[mochi_runner] show_video open error: {e}\n")
-        emit_ipc("video", {"source": source, "title": title, "muted": muted, "audio_source": audio_source})
+        # One display owner prevents the same video opening in three places.
+        return super().show_video(source, title, muted, audio_source)
 
     def start_camera_stream(self):
         emit_ipc("camera_stream_start")
@@ -203,7 +200,7 @@ class MochiHeadlessUI:
             time.sleep(0.1)
 
 
-def stdin_reader_thread(ui: MochiHeadlessUI, jarvis: JarvisLive):
+def stdin_reader_thread(ui: MochiHeadlessUI, baymax: BaymaxLive):
     """Listens on sys.stdin for commands sent from Electron."""
     sys.stderr.write("[mochi_runner] stdin reader thread started\n")
     sys.stderr.flush()
@@ -240,11 +237,11 @@ def stdin_reader_thread(ui: MochiHeadlessUI, jarvis: JarvisLive):
                     ui.on_interrupt()
 
             elif cmd == "call_active":
-                jarvis.set_call_active(cmd_data.get("active") is True)
+                baymax.set_call_active(cmd_data.get("active") is True)
 
             elif cmd == "mute":
                 muted = cmd_data.get("muted", True)
-                ui.muted = muted or jarvis._call_active
+                ui.muted = muted or baymax._call_active
 
             elif cmd == "voice":
                 voice = cmd_data.get("voice")
@@ -263,19 +260,19 @@ def stdin_reader_thread(ui: MochiHeadlessUI, jarvis: JarvisLive):
                     ui.on_wake_toggle(enabled)
 
             elif cmd == "ptt_config":
-                jarvis.set_push_to_talk(bool(cmd_data.get("enabled", False)),
+                baymax.set_push_to_talk(bool(cmd_data.get("enabled", False)),
                                         suspended=bool(cmd_data.get("suspended", False)))
 
             elif cmd == "proactive_config":
-                jarvis.set_proactive_preferences(cmd_data.get('enabled') is True,
+                baymax.set_proactive_preferences(cmd_data.get('enabled') is True,
                                                 cmd_data.get('interests', ''))
 
             elif cmd == 'background':
-                if jarvis._loop and jarvis.session:
-                    asyncio.run_coroutine_threadsafe(jarvis._send_background(str(cmd_data.get('text', ''))), jarvis._loop)
+                if baymax._loop and baymax.session:
+                    asyncio.run_coroutine_threadsafe(baymax._send_background(str(cmd_data.get('text', ''))), baymax._loop)
 
             elif cmd == 'user_turn':
-                jarvis._begin_user_turn()
+                baymax._begin_user_turn()
 
             elif cmd == "ptt":
                 held = cmd_data.get("held", False)
@@ -291,20 +288,20 @@ def stdin_reader_thread(ui: MochiHeadlessUI, jarvis: JarvisLive):
 
 
 def run_mochi_ultra():
-    """Initializes and runs JarvisLive with MochiHeadlessUI."""
+    """Initializes and runs BaymaxLive with MochiHeadlessUI."""
     emit_ipc("starting")
     ui = MochiHeadlessUI()
-    jarvis = JarvisLive(ui)
+    baymax = BaymaxLive(ui)
 
     # Start the stdin command loop in background thread
-    t = threading.Thread(target=stdin_reader_thread, args=(ui, jarvis), daemon=True)
+    t = threading.Thread(target=stdin_reader_thread, args=(ui, baymax), daemon=True)
     t.start()
 
     emit_ipc("ready")
     print("[Mochi Ultra] Live Assistant Engine Initialized")
 
     try:
-        asyncio.run(jarvis.run())
+        asyncio.run(baymax.run())
     except KeyboardInterrupt:
         print("[Mochi Ultra] Assistant stopped cleanly.")
     except Exception as e:

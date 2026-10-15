@@ -69,6 +69,8 @@ const { AppBlocker, isProtectedProcess } = require("./productivity/blocker");
 
 const { RemoteSession } = require('./remoteSession');
 const remoteSession = new RemoteSession();
+const {VideoPlayer}=require('./videoPlayer');
+const videoPlayer=new VideoPlayer({BrowserWindow,ipcMain});
 const appCommands = require('./appCommands');
 async function broadcastRemoteAccess(payload) {
   const session = remoteSession.current();
@@ -82,7 +84,7 @@ async function broadcastRemoteAccess(payload) {
 function isTrustedRendererUrl(url) {
   if (!url) return false;
   const { pathToFileURL } = require('node:url');
-  const allowed = ['dist/index.html', 'dist/settings.html', 'dist/island.html', 'productivity/dist/index.html', 'public/remote-viewer.html'].map(p => pathToFileURL(path.join(__dirname, '..', p)).href);
+  const allowed = ['dist/index.html', 'dist/settings.html', 'dist/island.html', 'productivity/dist/index.html', 'public/remote-viewer.html', 'electron/video.html'].map(p => pathToFileURL(path.join(__dirname, '..', p)).href);
   try { const parsed = new URL(url); parsed.hash = ''; parsed.search = ''; return ['baymax://app/index.html','baymax://app/settings.html','baymax://app/productivity/index.html'].includes(parsed.href) || allowed.includes(parsed.href) || (!app.isPackaged && ['http://localhost:1420','http://localhost:3000'].includes(parsed.origin)); } catch { return false; }
 }
 const registerHandle = ipcMain.handle.bind(ipcMain);
@@ -230,7 +232,7 @@ const DEFAULT_SETTINGS = {
   syncUrl: "",
   syncApiKey: "",
   appPaths: {},
-  // Mark-LV PC Control & Agent Engine Defaults
+  // Baymax PC Control & Agent Engine Defaults
   assistantName: "Baymax",
   voiceName: "Charon",
   wakeWordEnabled: false,
@@ -493,7 +495,7 @@ async function endPartnerSessions() {
 
 const engineArgs = (mode, args = []) => app.isPackaged ? [mode, ...args] : [path.join(engineDir, { bridge: "mochi_bridge.py", live: "mochi_runner.py", hud: "main.py" }[mode]), ...args];
 const bridgeScript = path.join(engineDir, "mochi_bridge.py");
-const markLvMainScript = path.join(engineDir, "main.py");
+const engineMainScript = path.join(engineDir, "main.py");
 
 function resolvePythonPath() {
   if (app.isPackaged) return path.join(engineDir, "BaymaxEngine.exe");
@@ -540,66 +542,51 @@ function resolvePythonPath() {
   return "python";
 }
 
+const { EngineBridge } = require('./engineBridge');
+const actionBridge = new EngineBridge({
+  spawn: () => spawn(resolvePythonPath(), engineArgs('bridge', ['server']), {
+    cwd: engineDir, windowsHide: true,
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+  }),
+  terminate: terminateProcessTree,
+});
 function runMochiBridgeCmd(cmd, ...args) {
-  return new Promise((resolve) => {
-    const procArgs = engineArgs("bridge", [cmd, ...args]);
-    const pyExe = resolvePythonPath();
-    const child = spawn(pyExe, procArgs, {
-      cwd: engineDir,
-      windowsHide: true,
-      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-    });
-    const deadline = setTimeout(() => { child.kill(); resolve({ success: false, error: 'Engine action timed out after 45 seconds' }); }, 45000);
-    child.once('close', () => clearTimeout(deadline));
-    child.once('error', () => clearTimeout(deadline));
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => { stdout = (stdout + d.toString()).slice(-1048576); });
-    child.stderr.on("data", (d) => { stderr = (stderr + d.toString()).slice(-65536); });
-    child.on("close", (code) => {
-      try {
-        const lines = stdout.trim().split("\n");
-        const jsonLine = lines.reverse().find((l) => l.trim().startsWith("{") && l.trim().endsWith("}"));
-        if (jsonLine) {
-          return resolve(JSON.parse(jsonLine));
-        }
-        resolve({ success: false, error: stderr || stdout || `Process exited with code ${code}` });
-      } catch (e) {
-        resolve({ success: false, error: e.message, raw: stdout });
-      }
-    });
-    child.on("error", (err) => {
-      resolve({ success: false, error: err.message });
-    });
-  });
+  let payload = {cmd};
+  try {
+    if(cmd === 'execute') Object.assign(payload,{name:args[0],parameters:JSON.parse(args[1] || '{}')});
+    if(cmd === 'save-memory') Object.assign(payload,{category:args[0],key:args[1],value:args[2]});
+    if(cmd === 'delete-memory') Object.assign(payload,{category:args[0],key:args[1]});
+    if(cmd === 'sync-config') payload.config=JSON.parse(args[0] || '{}');
+  } catch { return Promise.resolve({success:false,error:'Invalid action parameters'}); }
+  return actionBridge.request(payload);
 }
 
-function syncMarkLvConfig(settings) {
+function syncEngineSettings(settings) {
   try {
     syncEngineConfig(settings);
   } catch (err) {
-    console.warn("Failed to sync Mark-LV config:", err);
+    console.warn("Failed to sync Baymax config:", err);
   }
 }
 
-// Initial Mark-LV config sync on boot
+// Initial Baymax config sync on boot
 setTimeout(() => {
-  if (app.isReady()) syncMarkLvConfig(activeSettings);
+  if (app.isReady()) syncEngineSettings(activeSettings);
 }, 1000);
 
-let cachedMarkLvTools = null;
+let cachedEngineTools = null;
 
-async function getMarkLvToolDeclarations() {
-  if (cachedMarkLvTools) return cachedMarkLvTools;
+async function getEngineToolDeclarations() {
+  if (cachedEngineTools) return cachedEngineTools;
   try {
     const res = await runMochiBridgeCmd("list-actions");
     if (res && res.success && Array.isArray(res.actions)) {
       const enabled = activeSettings.activeActions || {};
-      cachedMarkLvTools = res.actions.filter((a) => enabled[a.name] !== false);
-      return cachedMarkLvTools;
+      cachedEngineTools = res.actions.filter((a) => enabled[a.name] !== false);
+      return cachedEngineTools;
     }
   } catch (err) {
-    console.warn("Error fetching Mark-LV tool declarations:", err);
+    console.warn("Error fetching Baymax tool declarations:", err);
   }
   return [];
 }
@@ -841,11 +828,13 @@ function startSupabaseSync() {
           clearTimeout(partnerOfflineTimer);
           partnerOfflineTimer = null;
         }
-        if (!lastPartnerOnline) {
-          lastPartnerOnline = true;
+        const justCameOnline = !lastPartnerOnline;
+        lastPartnerOnline = true;
+        if (overlayWin && !overlayWin.isDestroyed()) {
+          overlayWin.webContents.send("partner-presence", { online: true, partnerName: partnerUserName, justCameOnline });
+        }
+        if (justCameOnline) {
           triggerPartnerOnlineNotification(partnerUserName);
-        } else if (overlayWin && !overlayWin.isDestroyed()) {
-          overlayWin.webContents.send("partner-presence", { online: true, partnerName: partnerUserName, justCameOnline: false });
         }
 
         // Partner is online — request catch-up sync in case messages were sent while asleep
@@ -1560,7 +1549,7 @@ function closeApplication(query) {
   return appCommands.closeApplication(query, activeSettings.appPaths, productivityTracker?.getKnownApps() || [], getRunning, isProtectedProcess);
 }
 
-// ── Mark-LV Live Assistant Process Manager ──────────────────────────────────
+// ── Baymax Live Assistant Process Manager ──────────────────────────────────
 let mochiLiveProc = null;
 let liveOutputSuppressed = false;
 let liveUserStopped = false;
@@ -1650,7 +1639,7 @@ function syncEngineConfig(settings) {
     fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 4), 'utf-8');
     if (!mochiLiveProc) syncInterestsMemory(engineDataDir, updatedConfig.user_interests);
   } catch (err) {
-    console.warn('[Mark-LV Engine] Failed to write api_keys.json:', err);
+    console.warn('[Baymax Engine] Failed to write api_keys.json:', err);
   }
 }
 
@@ -1660,18 +1649,18 @@ function startMochiLiveEngine() {
   if (mochiLiveStopPromise) { mochiLiveStartRequested = true; return; }
   const provider = activeSettings.aiProvider || "gemini";
   if (provider !== "gemini") {
-    console.log(`[Mark-LV Engine] Current AI provider is '${provider}'. Gemini Live process will not be spawned.`);
+    console.log(`[Baymax Engine] Current AI provider is '${provider}'. Gemini Live process will not be spawned.`);
     return;
   }
   if (!activeSettings.geminiApiKey && !process.env.GEMINI_API_KEY) {
-    console.log('[Mark-LV Engine] Gemini API key not set yet. Waiting for key in Settings...');
+    console.log('[Baymax Engine] Gemini API key not set yet. Waiting for key in Settings...');
     return;
   }
 
   syncEngineConfig(activeSettings);
 
   const runnerScript = path.join(engineDir, 'mochi_runner.py');
-  console.log('[Mark-LV Engine] Spawning live assistant process:', runnerScript);
+  console.log('[Baymax Engine] Spawning live assistant process:', runnerScript);
 
   try {
     const pyExe = resolvePythonPath();
@@ -1679,7 +1668,7 @@ function startMochiLiveEngine() {
     const pyScripts = path.join(pyDir, "Scripts");
     const pathEnv = `${pyDir};${pyScripts};${process.env.PATH || ""}`;
 
-    console.log(`[Mark-LV Engine] Spawning with Python: ${pyExe}`);
+    console.log(`[Baymax Engine] Spawning with Python: ${pyExe}`);
 
     const proc = spawn(pyExe, engineArgs('live'), {
       cwd: engineDir,
@@ -1688,7 +1677,7 @@ function startMochiLiveEngine() {
       env: { ...process.env, PATH: pathEnv, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', BAYMAX_EXTERNAL_PTT: '1', BAYMAX_SPEECH_STOPPED: liveUserStopped ? '1' : '0' },
     });
     mochiLiveProc = proc;
-    proc.stdin?.on('error', error => { if (mochiLiveProc === proc) console.warn('[Mark-LV Engine] Input pipe:', error.message); });
+    proc.stdin?.on('error', error => { if (mochiLiveProc === proc) console.warn('[Baymax Engine] Input pipe:', error.message); });
 
     let buffer = '';
 
@@ -1711,7 +1700,7 @@ function startMochiLiveEngine() {
             console.warn('[LiveEngine IPC Parse Error]:', e.message, trimmed);
           }
         } else {
-          console.log(`[Mark-LV Engine]: ${trimmed}`);
+          console.log(`[Baymax Engine]: ${trimmed}`);
         }
       }
     });
@@ -1719,12 +1708,12 @@ function startMochiLiveEngine() {
     proc.stderr.on('data', (data) => {
       if (mochiLiveProc !== proc) return;
       const errStr = data.toString('utf-8').trim();
-      if (errStr) console.warn(`[Mark-LV Stderr]: ${errStr}`);
+      if (errStr) console.warn(`[Baymax Stderr]: ${errStr}`);
     });
 
     proc.on('close', (code) => {
       if (mochiLiveProc !== proc) return;
-      console.log(`[Mark-LV Engine] Process closed with code ${code}`);
+      console.log(`[Baymax Engine] Process closed with code ${code}`);
       mochiLiveProc = null;
       while (pendingTextResolvers.length > 0) {
         const resolve = pendingTextResolvers.shift();
@@ -1740,7 +1729,7 @@ function startMochiLiveEngine() {
 
     proc.on('error', (err) => {
       if (mochiLiveProc !== proc) return;
-      console.error('[Mark-LV Engine] Process error:', err);
+      console.error('[Baymax Engine] Process error:', err);
       // A failed spawn has no PID. Other errors do not prove the process exited.
       if (!proc.pid) {
         mochiLiveProc = null;
@@ -1756,7 +1745,7 @@ function startMochiLiveEngine() {
     });
 
   } catch (err) {
-    console.error('[Mark-LV Engine] Failed to spawn runner:', err);
+    console.error('[Baymax Engine] Failed to spawn runner:', err);
   }
 }
 
@@ -1773,7 +1762,7 @@ function stopMochiLiveEngine() {
     // Keep ownership if termination failed: starting another mic would recreate the bug.
     if (proc.exitCode === null && proc.signalCode == null) mochiLiveProc = proc;
     mochiLiveStartRequested = false;
-    console.error('[Mark-LV Engine] Stop failed:', error.message);
+    console.error('[Baymax Engine] Stop failed:', error.message);
   }).finally(() => {
     mochiLiveStopPromise = null;
     const restart = mochiLiveStartRequested; mochiLiveStartRequested = false;
@@ -1792,7 +1781,7 @@ function sendToLiveEngine(cmdObj) {
     mochiLiveProc.stdin.write(JSON.stringify(cmdObj) + '\n');
     return true;
   } catch (err) {
-    console.warn('[Mark-LV Engine] Stdin write error:', err);
+    console.warn('[Baymax Engine] Stdin write error:', err);
     return false;
   }
 }
@@ -2004,7 +1993,19 @@ function requestAppAction(params) {
   });
 }
 async function handleEngineAction(action, params) {
-  if(action==='entitlements')return account.caps;
+  if(action==='entitlements')return {...account.caps,activeActions:activeSettings.activeActions||{}};
+  if(action==='engine_video'){
+    account.guardAction('video_player',params);
+    if(activeSettings.activeActions?.video_player===false)throw new Error('Video Player is disabled in Settings');
+    return videoPlayer.command(params);
+  }
+  if(action==='engine_confirm'){
+    account.require('pcControl');
+    const started=Date.now();
+    const result=await dialog.showMessageBox(overlayWin,{type:'question',title:`${displayAssistantName()} action confirmation`,message:String(params.title||'Confirm action').slice(0,500),detail:String(params.detail||'').slice(0,4000),buttons:['Cancel','Confirm'],defaultId:0,cancelId:0,noLink:true});
+    return result.response===1&&Date.now()-started<90000;
+  }
+  if(activeSettings.activeActions?.[action]===false)throw new Error('This skill is disabled in Settings > AI engine');
   account.guardAction(action==='manage_productivity'?'productivity_manager':action,params);
   if(action==='control_app'){
     if(params.action==='read_partner_messages')return loadChatHistory().slice(-20).map(m=>({sender:m.sender,text:m.text,timestamp:m.timestamp}));
@@ -2079,33 +2080,33 @@ ipcMain.handle("boot", () => {
   };
 });
 
-// ── Mark-LV Autonomous PC Control Handlers ──────────────────────────────────
-ipcMain.handle("marklv-list-actions", async () => {
+// ── Baymax Autonomous PC Control Handlers ──────────────────────────────────
+ipcMain.handle("engine-list-actions", async () => {
   return await runMochiBridgeCmd("list-actions");
 });
 
-ipcMain.handle("marklv-list-devices", async () => {
+ipcMain.handle("engine-list-devices", async () => {
   return await runMochiBridgeCmd("list-devices");
 });
 
-ipcMain.handle("marklv-list-memory", async () => {
+ipcMain.handle("engine-list-memory", async () => {
   return await runMochiBridgeCmd("list-memory");
 });
 
-ipcMain.handle("marklv-save-memory", async (_event, { category, key, value }) => {
+ipcMain.handle("engine-save-memory", async (_event, { category, key, value }) => {
   return await runMochiBridgeCmd("save-memory", category || "notes", key || "", value || "");
 });
 
-ipcMain.handle("marklv-delete-memory", async (_event, { category, key }) => {
+ipcMain.handle("engine-delete-memory", async (_event, { category, key }) => {
   return await runMochiBridgeCmd("delete-memory", category || "notes", key || "");
 });
 
-ipcMain.handle("marklv-execute-action", async (_event, { name, parameters }) => {
+ipcMain.handle("engine-execute-action", async (_event, { name, parameters }) => {
   account.guardAction(name,parameters);
   return await runMochiBridgeCmd("execute", name, JSON.stringify(parameters || {}));
 });
 
-ipcMain.handle("marklv-launch-hud", async () => {
+ipcMain.handle("engine-launch-hud", async () => {
   try {
     const hudChild = spawn(resolvePythonPath(), engineArgs('hud'), {
       cwd: engineDir,
@@ -2144,7 +2145,7 @@ ipcMain.handle("save-settings", (_event, newSettings) => {
   saveSettings(next);
   activeSettings = next;
   talkShortcut.configure(activeSettings);
-  cachedMarkLvTools = null;
+  cachedEngineTools = null;
   tray?.setToolTip(`${displayAssistantName()} — AI Desktop Companion`);
   if (oldAutostart !== activeSettings.autostart) {
     applyStartupMode(activeSettings.autostart);
@@ -2545,7 +2546,8 @@ ipcMain.handle("perform-update", async () => {
 });
 
 // ── AI Companion Prompt & Action Executor ──────────────────────────────────
-function buildCompanionSystemPrompt() {
+async function buildCompanionSystemPrompt() {
+  const tools = await getEngineToolDeclarations();
   const userRole = activeSettings.userRole || "me";
   const partnerRole = userRole === "me" ? "her" : "me";
   const currentUserName = userRole === "me" ? (activeSettings.userName || "You") : (activeSettings.partnerName || "Partner");
@@ -2574,6 +2576,7 @@ ${myTasksText}
 ${partnerTasksText}
 
 Configured Apps: ${Object.keys(activeSettings.appPaths || {}).join(", ")}
+Enabled tool schemas: ${JSON.stringify(tools)}
 
 CRITICAL IDENTITY & TASK OWNERSHIP RULES:
 1. You are speaking directly to ${currentUserName}.
@@ -2581,21 +2584,21 @@ CRITICAL IDENTITY & TASK OWNERSHIP RULES:
 3. Only if ${currentUserName} specifically asks about ${partnerUserName}: tell them about ${partnerUserName}'s tasks.
 4. Keep answers short, sweet, and assistant-friendly (maximum 1-2 short sentences!).
 5. Do NOT use markdown symbols (no **, ##, *, backticks) or bullet spam so spoken voice sounds natural.
-6. PC control, external app launching and operating-system automation are not available in this release.
+6. You can use enabled PC and browser tools to launch apps, manage windows, search files, change settings and interact with websites. Use [TOOL: {"name":"registered_tool_name","parameters":{...}}] with the exact parameters below. Execute steps in order; never invent coordinates or claim success without tool results.
 7. Respect these verified capabilities: ${JSON.stringify(account.caps)}. Never promise a locked feature.
 8. If asked to add a task for ${currentUserName}: Confirm and append [ADD_TASK: {"title":"...","time":"...","for":"${userRole}"}].
 9. If asked to add a task for ${partnerUserName}: Confirm and append [ADD_TASK: {"title":"...","time":"...","for":"${partnerRole}"}].
 10. If asked to add a task for both: Confirm and append [ADD_TASK: {"title":"...","time":"...","for":"both"}].
 11. If asked to mark done: Confirm in one line and append [MARK_DONE: task_id_or_title].
 12. If asked to send/text a message to ${partnerUserName}: Confirm in a sweet sentence and append [SEND_CHAT: {"text":"..."}].
-13. Use the built-in music player for songs: [APP: {"action":"music","command":"play","query":"song or artist"}]. Omit query to resume. Other music commands: pause, resume, next, previous, volume (volume:0–100), add_shared (query or current song), join (Listen Together with partner), leave. Do not open a browser for music.
+13. Use the built-in music player for songs: [APP: {"action":"music","command":"play","query":"song or artist"}]. Omit query to resume. Other music commands: pause, resume, next, previous, volume (volume:0–100), add_shared (query or current song), join (Listen Together with partner), leave. When the user names Spotify, YouTube or another app, honor that destination with its browser/PC tools; do not use APP music for an explicitly named external player.
 Use [APP: {"action":"open_view","view":"music"}] to navigate. Views: music, chat (AI), partner_chat, tasks, share, productivity, settings.
 Use [APP: {"action":"emote","emote":"love"}] for love, celebrate, vibe, dizzy, sleepy.
 Use [APP: {"action":"read_partner_messages"}] for recent partner messages.
 Use [TASK: {"action":"list|add|complete|delete","title":"exact task title or ID","for_who":"me|her|both","time":"optional"}] for schedule actions; choose the correct literal role from the current user identity. Never claim an action succeeded before executing its tag.
 14. If asked to search Google or the web (e.g. "search...", "who is...", "what is the score of...", "google..."): Say e.g. "Searching that for you!" and append [WEB_SEARCH: search_query].
 15. If asked to open a website or URL: Say e.g. "Opening that website right now!" and append [BROWSER_OPEN: website_url].
-16. Use the built-in music volume command for music volume. Operating-system controls are unavailable.
+16. Use the built-in music volume command for Baymax music, computer_settings for system volume, and browser_control/computer_control for an explicitly named external player.
 17. If asked to start a focus or flow session (e.g. "start focus session for 1 hour", "focus session start karo", "focus mode on"): Say e.g. "Starting your focus session now. Time to lock in!" and append [START_FOCUS: {"durationMinutes": <minutes>, "mode": "Strict Lock"}].
 For Pomodoro, include "timerMode":"pomodoro" in START_FOCUS.
 18. If asked to stop or end focus mode: Say e.g. "Ending your focus session!" and append [STOP_FOCUS].
@@ -2603,12 +2606,26 @@ Be sweet, playful, and helpful!`;
 }
 
 const { parseActionTags, resolveRole } = require('./actionTags');
+async function executeRegisteredAction(name,parameters={},signal) {
+  signal?.throwIfAborted();
+  if(typeof name!=='string'||!parameters||typeof parameters!=='object'||Array.isArray(parameters))throw new Error('Invalid tool request');
+  if(activeSettings.activeActions?.[name]===false)throw new Error('This skill is disabled in Settings > AI engine');
+  account.guardAction(name,parameters);
+  const tools=await getEngineToolDeclarations();
+  if(!tools.some(tool=>tool.name===name))throw new Error('This tool is unavailable. Check AI engine settings and the installed engine.');
+  signal?.throwIfAborted();
+  const cancel=()=>{void actionBridge.stop('Action interrupted by the user');};
+  signal?.addEventListener('abort',cancel,{once:true});
+  try{return await runMochiBridgeCmd('execute',name,JSON.stringify(parameters));}
+  finally{signal?.removeEventListener('abort',cancel);}
+}
 async function executeActionTags(rawReply, signal) {
   const parsed = parseActionTags(rawReply), userRole = activeSettings.userRole || 'me', outcomes = [];
   for (const {name,value} of parsed.actions) {
     signal?.throwIfAborted();
     let result;
     switch(name) {
+      case 'TOOL': result=await executeRegisteredAction(value?.name,value?.parameters,signal);break;
       case 'APP': result={data:await handleEngineAction('control_app',value)};break;
       case 'TASK': result={data:await handleEngineAction('manage_schedule',value)};break;
       case 'START_FOCUS':
@@ -2634,15 +2651,15 @@ async function executeActionTags(rawReply, signal) {
         matches[0].completed=true;matches[0].completedAt=Date.now();saveSchedule(activeSchedule);void syncScheduleToPartner();
         overlayWin?.webContents.send('schedule-updated',activeSchedule.filter(t=>!t.deleted));break;
       }
-      case 'LAUNCH': result=await launchApplication(value);break;
-      case 'CLOSE': result=await closeApplication(value);break;
-      case 'PLAY_YOUTUBE': result={data:await requestAppAction({action:'music',command:'play',query:value})};break;
-      case 'WEB_SEARCH': result=await runMochiBridgeCmd('execute','web_search',JSON.stringify({query:value,mode:'search'}));break;
-      case 'MEDIA_CONTROL': result=await runMochiBridgeCmd('execute','computer_settings',JSON.stringify({description:value}));break;
+      case 'LAUNCH': result=await executeRegisteredAction('open_app',{app_name:value},signal);break;
+      case 'CLOSE': result=await executeRegisteredAction('close_app',{app_name:value},signal);break;
+      case 'PLAY_YOUTUBE': result=await executeRegisteredAction('youtube_video',{action:'play',query:value},signal);break;
+      case 'WEB_SEARCH': result=await executeRegisteredAction('web_search',{query:value,mode:'search'},signal);break;
+      case 'MEDIA_CONTROL': result=await executeRegisteredAction('computer_settings',{description:value},signal);break;
       case 'BROWSER_OPEN': {
         const url=new URL(/^https?:\/\//i.test(value)?value:'https://'+value);
         if(!['http:','https:'].includes(url.protocol))throw new Error('Unsupported URL');
-        await shell.openExternal(url.href);break;
+        result=await executeRegisteredAction('browser_control',{action:'go_to',url:url.href},signal);break;
       }
       default: throw new Error('Unsupported action: '+name);
     }
@@ -2655,102 +2672,36 @@ async function executeActionTags(rawReply, signal) {
 }
 
 // ── Gemini REST Engine (Instant Text Chat & Action Fallback) ────────────────
-async function callGeminiAI(query, context, signal) {
-  const key = activeSettings.geminiApiKey || process.env.GEMINI_API_KEY;
-  if (!key) {
-    return { text: "Please enter your free Google Gemini API key in Settings (⚙️) to chat with me!" };
-  }
-
-  const systemPrompt = buildCompanionSystemPrompt();
-  const candidateModels = [activeSettings.geminiModel || "gemini-2.5-flash"];
-
-  for (const model of candidateModels) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-      const res = await fetch(url, {
-      signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]),
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: {
-            parts: [{ text: systemPrompt }]
-          },
-          contents: [...textHistory.map(m => ({role:m.role === "assistant" ? "model" : "user",parts:[{text:m.text}]})), {role:"user",parts:[{text:query}]}],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 350
-          }
-        })
-      });
-
-      if (!res.ok) {
-        const errBody = await res.text();
-        console.warn(`[Gemini REST] Model ${model} returned ${res.status}:`, errBody);
-        continue;
-      }
-
-      const data = await res.json();
-      const rawReply = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-      if (!rawReply) continue;
-
-      let cleanReply;
-      try { cleanReply = await executeActionTags(rawReply, signal); }
-      catch (error) { return { text: `An action did not complete: ${error.message}. Earlier actions in this request may already have completed.` }; }
-      return { text: cleanReply || "The requested action completed." };
-    } catch (err) {
-      if (signal.aborted) return {text:"Request cancelled. Actions already completed are not undone."};
-      console.warn(`[Gemini REST] Error calling ${model}:`, err.message);
-    }
-  }
-
-  return { text: "I couldn't reach Gemini right now. Please verify your internet connection or check your Gemini API key in Settings!" };
-}
-
 // ── Groq Secondary AI Engine ────────────────────────────────────────────────
-async function callGroqAI(query, context, signal) {
-  const systemPrompt = buildCompanionSystemPrompt();
-  const key = activeSettings.groqApiKey || activeSettings.grokApiKey;
-  if (!key) {
-    return { text: "Please enter your free Groq API Key (gsk_...) in Settings to chat with me!" };
-  }
-  const model = activeSettings.groqModel || "llama-3.3-70b-versatile";
-
-  try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]),
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...textHistory.map(m => ({role:m.role,content:m.text})),
-          { role: "user", content: query },
-        ],
-        temperature: 0.7,
-        max_tokens: 350,
-      }),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Groq API error (${res.status}): ${errText}`);
-    }
-
-    const data = await res.json();
-    let rawReply = (data.choices?.[0]?.message?.content || "").trim();
-
-    const cleanReply = await executeActionTags(rawReply, signal);
-    return { text: cleanReply || "The requested action completed." };
-  } catch (err) {
-    if (signal.aborted) return {text:"Request cancelled. Actions already completed are not undone."};
-    console.error("[Groq AI Error]:", err);
-    return { text: `Groq error: ${err.message}` };
+const {runActionConversation}=require('./actionConversation');
+async function callTextAI(provider,query,signal) {
+  const gemini=provider==='gemini';
+  const key=gemini?(activeSettings.geminiApiKey||process.env.GEMINI_API_KEY):(activeSettings.groqApiKey||activeSettings.grokApiKey);
+  if(!key)return {text:'Enter your '+(gemini?'Gemini':'Groq')+' API key in Settings first.'};
+  const systemPrompt=await buildCompanionSystemPrompt();
+  const model=gemini?(activeSettings.geminiModel||'gemini-2.5-flash'):(activeSettings.groqModel||'llama-3.3-70b-versatile');
+  try{
+    return await runActionConversation({signal,execute:executeActionTags,request:async steps=>{
+      const messages=[...textHistory,{role:'user',text:query},...steps];
+      const url=gemini?'https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent':'https://api.groq.com/openai/v1/chat/completions';
+      const body=gemini?{
+        system_instruction:{parts:[{text:systemPrompt}]},
+        contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.text}]})),
+        generationConfig:{temperature:0.4,maxOutputTokens:1200},
+      }:{model,messages:[{role:'system',content:systemPrompt},...messages.map(m=>({role:m.role,content:m.text}))],temperature:0.4,max_tokens:1200};
+      const response=await fetch(url,{method:'POST',signal:AbortSignal.any([signal,AbortSignal.timeout(45000)]),
+        headers:{'Content-Type':'application/json',...(gemini?{'x-goog-api-key':key}:{Authorization:'Bearer '+key})},body:JSON.stringify(body)});
+      if(!response.ok)throw new Error((gemini?'Gemini':'Groq')+' returned HTTP '+response.status+'. Check your API key, quota and connection.');
+      const data=await response.json();
+      return gemini?(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim():(data.choices?.[0]?.message?.content||'').trim();
+    }});
+  }catch(error){
+    if(signal.aborted)return {text:'Request cancelled. Actions already completed are not undone.'};
+    return {text:error.message+' Earlier actions may already have completed; they were not retried.'};
   }
 }
+async function callGeminiAI(query,context,signal){return callTextAI('gemini',query,signal);}
+async function callGroqAI(query,context,signal){return callTextAI('groq',query,signal);}
 
 // ── AI & Chat: Engine IPC Handlers (Gemini Live & Groq) ───────────────────
 
@@ -3721,11 +3672,13 @@ ipcMain.handle("open-productivity-window", () => {
 let cloudConnectionKey='',lastCapabilities='';
 account.on('changed',state=>{
   const key=JSON.stringify([state.config.supabaseUrl,state.user?.id,state.pair?.id,state.pair?.channel_token,state.pair?.backend,state.pair?.cloudEligible,state.capabilities.cloud]);
+  const connectionChanged=key!==cloudConnectionKey;
   const capabilitiesKey=JSON.stringify(state.capabilities);
-  if(!state.capabilities.pcControl||key!==cloudConnectionKey){
+  if(!state.capabilities.pcControl||connectionChanged){
+    const wasActive=Boolean(activeRemoteRole||remoteSession.current());
     remoteSession.end();activeRemoteRole=null;pendingViewerSignals=[];
     closeRemoteViewerWindow();stopInputInjector();setHostDisplayBounds(null);
-    if(overlayWin&&!overlayWin.isDestroyed())overlayWin.webContents.send('remote-access-ended');
+    if(wasActive&&overlayWin&&!overlayWin.isDestroyed())overlayWin.webContents.send('remote-access-ended');
   }
   if(state.configured){
     const me=state.pair?.members?.find(m=>m.userId===state.user?.id),other=state.pair?.members?.find(m=>m.userId!==state.user?.id);
@@ -3735,11 +3688,11 @@ account.on('changed',state=>{
     if(!state.capabilities.gemini)activeSettings.aiProvider='groq';
   }
   if(capabilitiesKey!==lastCapabilities){
-    lastCapabilities=capabilitiesKey;cachedMarkLvTools=null;
+    lastCapabilities=capabilitiesKey;cachedEngineTools=null;
     if(!state.capabilities.gemini)void stopMochiLiveEngine();else if(app.isReady())startMochiLiveEngine();
     if(!state.capabilities.productivity){productivityTracker?.stop();productivityBlocker?.stop();}else if(app.isReady())productivityTracker?.start();
   }
-  if(key!==cloudConnectionKey){
+  if(connectionChanged){
     cloudConnectionKey=key;activeSchedule=loadSchedule();lastPartnerOnline=false;
     overlayWin?.webContents.send('partner-chat-history',loadChatHistory());overlayWin?.webContents.send('schedule-updated',activeSchedule.filter(t=>!t.deleted));
     if(app.isReady())startSupabaseSync();
@@ -3924,6 +3877,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", event => {
+  videoPlayer.close();
   musicExtractor.close();
   if (isQuitting) return;
   event.preventDefault();
@@ -3938,7 +3892,7 @@ app.on("before-quit", event => {
   if (productivityStore) {
     try { productivityStore.saveSync(); } catch (e) {}
   }
-  void Promise.allSettled([endPartnerSessions(),stopMochiLiveEngine()]).finally(() => app.quit());
+  void Promise.allSettled([endPartnerSessions(),stopMochiLiveEngine(),actionBridge.stop()]).finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {

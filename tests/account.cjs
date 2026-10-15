@@ -53,7 +53,7 @@ test('Google PKCE validates state, persists encrypted tokens, prevents replay an
 test('Native IPC and action gates reject premium/PC paths while Free solo playback and own tasks remain usable',t=>{
  const {service}=fixture(t);service.saved=structuredClone(saved);
  for(const ipc of ['music-search','music-resolve','music-save','save-schedule-item','chat-send','launch-app','close-app'])assert.doesNotThrow(()=>service.guardIPC(ipc,[]));
- for(const ipc of ['start-focus-session','get-tracked-apps','marklv-launch-hud','request-remote-access'])assert.throws(()=>service.guardIPC(ipc,[]));
+ for(const ipc of ['start-focus-session','get-tracked-apps','engine-launch-hud','request-remote-access'])assert.throws(()=>service.guardIPC(ipc,[]));
  assert.throws(()=>service.guardIPC('music-signal',[{type:'join'}]));assert.throws(()=>service.guardAction('control_app',{action:'music',command:'join'}));assert.throws(()=>service.guardAction('computer_control',{}));
  assert.doesNotThrow(()=>service.guardAction('manage_schedule',{}));
 });

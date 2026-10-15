@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'engine'))
 
 source = Path(__file__).resolve().parents[1] / 'engine' / 'main.py'
 tree = ast.parse(source.read_text(encoding='utf-8'))
-live = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'JarvisLive')
+live = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'BaymaxLive')
 methods = [n for n in live.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ('_on_ptt', '_send_realtime', 'set_push_to_talk')]
 scope = {'asyncio': asyncio, 'os': os, 'types': SimpleNamespace(Blob=lambda **values: values)}
 exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), str(source), 'exec'), scope)

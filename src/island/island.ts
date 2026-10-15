@@ -83,6 +83,7 @@ export class Island {
   private botHovering = false;
   private botHoverTimer: number | null = null;
   private lastLoveTime = 0;
+  private lastSlapClickTime = 0;
   private botHoverStart = { x: 0, y: 0 };
 
   private confusedRecovery: number | null = null;
@@ -272,7 +273,6 @@ export class Island {
           break;
         case "home":
           this.expand(State.defaultView());
-          if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
         case "welcome":
           this.expand("greeting");
@@ -295,7 +295,15 @@ export class Island {
     const prev = State.mode;
     if (mode === prev) return;
     State.mode = mode;
-    if (mode === "expanded") Sound.play("open");
+    if (mode === "expanded") {
+      Sound.play("open");
+      void Bridge.setIgnoreMouseEvents(false);
+      const layout = VIEW_LAYOUTS[State.view];
+      if (layout && layout.botDiameter > 0 && this.botSize.value < 20) {
+        this.botSize.set(layout.botDiameter / 0.6);
+      }
+      this.ensureRunning();
+    }
     if (prev === "expanded") {
       Sound.play("close");
       State.isPinned = false;
@@ -340,9 +348,6 @@ export class Island {
       window.clearTimeout(this.homeCollapseTimer);
       this.homeCollapseTimer = null;
     }
-    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences" && view !== "onboarding") {
-      this.onMouseLeaveIsland();
-    }
     State.notify();
   }
 
@@ -369,9 +374,6 @@ export class Island {
     State.view = view;
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
-    if (!this.wasInIsland && !State.isPinned && view !== "partner-file" && view !== "preferences" && view !== "onboarding") {
-      this.onMouseLeaveIsland();
-    }
     State.notify();
   }
 
@@ -621,11 +623,17 @@ export class Island {
     // The wake strip is the only thing the OS can hit while the island is hidden.
     this.wakeStrip.addEventListener("mouseenter", () => {
       Sound.resume();
+      this.ensureRunning();
       if (State.mode === "hidden") this.fsm.mouseEntered();
+    });
+
+    this.islandEl.addEventListener("mouseenter", () => {
+      this.onMouseEnterIsland();
     });
 
     this.islandEl.addEventListener("mousedown", (e) => {
       Sound.resume();
+      this.ensureRunning();
       State.lastActivity = performance.now();
       const hitBot = this.isBotHit(e.clientX, e.clientY);
       if (hitBot) {
@@ -645,6 +653,14 @@ export class Island {
         return;
       }
       if (hitBot) {
+        // Keep the recovery owner intact during the dizzy animation. Further
+        // clicks still interrupt speech above, but must not clear its override.
+        if (State.stateOverride === "dizzy") return;
+        const nowMs = performance.now();
+        if (nowMs - this.lastSlapClickTime < 250) {
+          return;
+        }
+        this.lastSlapClickTime = nowMs;
         this.cancelBotHover();
         State.stateOverride = null;
         State.triggerEmote("surprised");
@@ -815,7 +831,7 @@ export class Island {
 
   /** Three slaps → dizzy + confused view for 3.3 s, then back. */
   handleDizzy() {
-    this.prevViewBeforeConfused = State.view;
+    this.prevViewBeforeConfused = State.view === "confused" ? State.defaultView() : State.view;
     State.stateOverride = "dizzy";
     this.engine.setState("dizzy");
     Sound.play("dizzy");

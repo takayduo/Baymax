@@ -2,10 +2,10 @@
 import json
 from core.electron_rpc import request
 
-SAFE_ACTIONS = frozenset({
-    'web_search', 'weather_report', 'flight_finder', 'reminder', 'manage_schedule',
-    'productivity_manager', 'control_app', 'send_partner_message', 'screen_process',
-    'close_camera', 'manage_monitor', 'shutdown_jarvis', 'save_memory', 'recall_memory',
+PC_ACTIONS = frozenset({
+    'computer_control', 'browser_control', 'desktop_control', 'computer_settings',
+    'file_controller', 'file_processor', 'screen_processor', 'system_monitor',
+    'code_helper', 'dev_agent', 'game_updater', 'video_player', 'youtube_video', 'send_message',
 })
 
 def capabilities():
@@ -20,10 +20,14 @@ def require(feature, caps=None):
         raise PermissionError('Open Account & Plan to enable this feature')
 
 def authorize(name, parameters=None, caps=None):
-    if name not in SAFE_ACTIONS:
-        raise PermissionError('PC control is not included in this release')
     caps = capabilities() if caps is None else caps
     require('local', caps)
+    # The registry validates names. The desktop owns this live switch snapshot;
+    # a running session must also respect switches changed after discovery.
+    if caps.get('activeActions', {}).get(name) is False:
+        raise PermissionError('This skill is disabled in Settings > AI engine')
+    if name in PC_ACTIONS:
+        require('pcControl', caps)
     parameters = parameters or {}
     if name == 'productivity_manager':
         require('productivity', caps)

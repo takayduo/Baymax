@@ -1,6 +1,6 @@
 """
 mochi_bridge.py — High-Performance Python Bridge for Mochi Ultra
-Connects Mochi's Electron main process with Mark-LV's Autonomous PC Control Engine,
+Connects Mochi's Electron main process with Baymax's Autonomous PC Control Engine,
 Action Registry, Audio Hardware, and Long-Term Memory.
 """
 
@@ -97,7 +97,8 @@ def cmd_execute_action(name: str, parameters: dict):
         return {"success": False, "error": f"Action '{name}' is not registered."}
     try:
         authorize(name, parameters)
-        return reg.run_result(name, parameters or {})
+        from core.desktop_ui import action_ui
+        return reg.run_result(name, parameters or {}, {"player": action_ui()})
     except Exception as e:
         return {"success": False, "error": f"Execution error: {e}", "traceback": traceback.format_exc()}
 
@@ -199,6 +200,7 @@ def run_server():
         line = line.strip()
         if not line:
             continue
+        req_id = None
         try:
             req = json.loads(line)
             req_id = req.get("id")
@@ -208,7 +210,7 @@ def run_server():
             sys.stdout.write(json.dumps(res) + "\n")
             sys.stdout.flush()
         except Exception as e:
-            err_res = {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+            err_res = {"id": req_id, "success": False, "error": str(e), "traceback": traceback.format_exc()}
             sys.stdout.write(json.dumps(err_res) + "\n")
             sys.stdout.flush()
 
