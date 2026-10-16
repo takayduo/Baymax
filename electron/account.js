@@ -1,6 +1,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),http=require('node:http');
 const {EventEmitter}=require('node:events');
 const {createClient}=require('@supabase/supabase-js');
+const {RealtimeChannel}=require('./realtimeChannel');
 const OFFLINE_GRACE_MS=72*60*60*1000,LOGIN_MS=5*60*1000;
 const EMPTY_CONFIG={supabaseUrl:'',supabaseAnonKey:'',razorpayKeyId:'',billingUrl:'',planIds:{pro_monthly:'',pro_annual:'',duo_monthly:'',duo_annual:''}};
 function cleanConfig(value){
@@ -66,33 +67,30 @@ class AccountService extends EventEmitter {
   if(name==='send_partner_message')this.require('partner');
   this.require('local');
  }
- ensureRealtimeClient(){
+ ensureRealtimeClient(options){
   if(!this.configured||!this.saved?.user?.id)return null;
-  return this.realtimeClient ||= createClient(this.config.supabaseUrl,this.config.supabaseAnonKey,{accessToken:()=>this.token(),auth:{persistSession:false}});
+  return this.realtimeClient ||= createClient(this.config.supabaseUrl,this.config.supabaseAnonKey,options||{accessToken:()=>this.token(),auth:{persistSession:false}});
  }
+ get userChannel(){return this.userRealtime?.channel||null;}
  async startUserChannel(){
   if(!this.configured||!this.saved?.user?.id)return;
-  const client=this.ensureRealtimeClient(),name='baymax:user:'+this.saved.user.id;
-  if(this.userChannel?.topic==='realtime:'+name)return;
+  const userId=this.saved.user.id,project=this.config.supabaseUrl,generation=this.generation;
+  const name='baymax:user:'+userId;
+  if(this.userRealtime?.active&&this.userRealtime.topic===name)return;
   this.stopUserChannel();
-  const generation=this.userChannelGeneration;
-  try{
-   const token=await this.token();
-   if(generation!==this.userChannelGeneration)return;
-   await client.realtime.setAuth(token);
-  }catch{
-   if(generation===this.userChannelGeneration)this.error='Live account authentication unavailable; retrying';
-   return;
-  }
-  if(generation!==this.userChannelGeneration||client!==this.realtimeClient)return;
-  const channel=client.channel(name,{config:{private:true}});this.userChannel=channel;
-  channel.on('broadcast',{event:'account-changed'},()=>{void this.refresh().catch(()=>{});});
-  channel.subscribe(status=>{if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'){this.error='Live account updates unavailable; reconnecting';}});
+  const live=new RealtimeChannel({account:this,topic:name,now:this.now,
+   createClientImpl:(_url,_key,options)=>this.ensureRealtimeClient(options),
+   isCurrent:()=>this.userRealtime===live&&generation===this.generation&&this.saved?.user?.id===userId&&this.config.supabaseUrl===project,
+   onClient:client=>{if(this.userRealtime===live)this.realtimeClient=client;},
+   onStatus:status=>{if(this.userRealtime===live){if(status.connected){if(this.error.startsWith('Live account'))this.error='';}else this.error='Live account updates reconnecting';}},
+   bind:(channel,current)=>channel.on('broadcast',{event:'account-changed'},()=>{if(current())void this.refresh().catch(()=>{});}),
+  });
+  this.userRealtime=live;
+  await live.start();
  }
  stopUserChannel(){
-  this.userChannelGeneration=(this.userChannelGeneration||0)+1;
-  const channel=this.userChannel;this.userChannel=null;
-  if(channel&&this.realtimeClient)void this.realtimeClient.removeChannel(channel).catch(()=>{});
+  const live=this.userRealtime;this.userRealtime=null;this.realtimeClient=null;
+  if(live)void live.stop();
  }
  persist(){
   if(!this.saved){if(fs.existsSync(this.sessionFile))fs.unlinkSync(this.sessionFile);return;}
@@ -110,7 +108,7 @@ class AccountService extends EventEmitter {
    void this.startUserChannel().catch(()=>{this.error='Live account updates unavailable';});
    await this.refresh().catch(()=>{});
   }
-  this.timer=setInterval(()=>{if(this.saved)void this.refresh().catch(()=>{});else this.changed();},10000);this.timer.unref?.();return this.snapshot();
+  this.timer=setInterval(()=>{if(this.saved){void this.token().catch(()=>{});void this.refresh().catch(()=>{});}else this.changed();},10000);this.timer.unref?.();return this.snapshot();
  }
  async saveConfig(value){
   const next=cleanConfig(value);if(next.supabaseUrl!==this.config.supabaseUrl||next.supabaseAnonKey!==this.config.supabaseAnonKey)await this.logout(false);
@@ -118,22 +116,30 @@ class AccountService extends EventEmitter {
  }
  async fetchJSON(url,options={}){
   const response=await this.request(url,{...options,headers:{apikey:this.config.supabaseAnonKey,'content-type':'application/json',...options.headers},signal:AbortSignal.timeout(15000),redirect:'error'});
+  const serverDate=Date.parse(response.headers.get('date')||'');
+  if(Number.isFinite(serverDate))this.serverClockOffset=serverDate-this.now();
   const raw=response.status===204?'':await response.text();let result=null;
   try{result=raw?JSON.parse(raw):null;}catch{const error=new Error('Service returned an invalid response ('+response.status+'). Please retry.');error.status=response.status;throw error;}
   if(!response.ok){const error=new Error(result?.code==='23505'?'This record already exists. Refresh and try again.':result?.error_description||result?.error?.message||(typeof result?.error==='string'?result.error:null)||result?.message||result?.msg||'Service unavailable');error.status=response.status;error.code=result?.code;throw error;}
   return result;
  }
+ serverNow(){return this.now()+(this.serverClockOffset||0);}
  async token(){
   if(!this.saved?.session)throw new Error('Sign in required');
-  if(!this.saved.session.expires_at||this.saved.session.expires_at*1000<this.now()+60000){
+  if(!this.saved.session.expires_at||this.saved.session.expires_at*1000<this.now()+120000){
    if(this.tokenRefresh)return this.tokenRefresh;
    const generation=this.generation;
-   this.tokenRefresh=(async()=>{
+   const refreshing=(async()=>{
     const session=await this.fetchJSON(this.config.supabaseUrl+'/auth/v1/token?grant_type=refresh_token',{method:'POST',body:JSON.stringify({refresh_token:this.saved.session.refresh_token})}).catch(error=>{if([400,401].includes(error.status))error.authRejected=true;throw error;});
     if(generation!==this.generation)throw new Error('Account changed');
+    if(!session||typeof session.access_token!=='string'||!session.access_token||typeof session.refresh_token!=='string'||!session.refresh_token)throw new Error('Invalid session refresh response');
     session.expires_at ||= Math.floor(this.now()/1000)+Number(session.expires_in||3600);
-    this.saved.session=session;this.persist();return session.access_token;
-   })().finally(()=>{this.tokenRefresh=null;});
+    if(!Number.isFinite(session.expires_at)||session.expires_at*1000<=this.now())throw new Error('Session refresh returned an expired token');
+    this.saved.session=session;this.persist();
+    this.emit('token-refreshed',session.access_token);
+    return session.access_token;
+   })().finally(()=>{if(this.tokenRefresh===refreshing)this.tokenRefresh=null;});
+   this.tokenRefresh=refreshing;
    return this.tokenRefresh;
   }
   return this.saved.session.access_token;
@@ -191,7 +197,7 @@ class AccountService extends EventEmitter {
     if(previous&&!previous.pair&&snapshot.pair){const partner=snapshot.pair.members?.find(m=>m.userId!==this.saved.user.id);this.emit('partner-invite-accepted',{partnerUsername:partner?.username});}
    }catch(error){
     if(generation!==this.generation)return this.snapshot();
-    if(error.status===401||error.authRejected){this.saved=null;this.persist();}
+    if(error.status===401||error.authRejected){++this.generation;this.tokenRefresh=null;this.stopUserChannel();this.saved=null;this.persist();}
     this.error=error.message||'Offline: using bounded cached access';
    }
    this.changed();return this.snapshot();
@@ -272,7 +278,7 @@ class AccountService extends EventEmitter {
   return result;
  }
  async logout(revoke=true){
-  this.cancelLogin();++this.generation;
+  this.cancelLogin();++this.generation;this.tokenRefresh=null;
   this.stopUserChannel();
   if(this.realtimeClient){void this.realtimeClient.removeAllChannels().catch(()=>{});this.realtimeClient=null;}
   const access=this.saved?.session?.access_token;this.saved=null;this.error='';

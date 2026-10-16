@@ -26,6 +26,7 @@ export class ListenTogether {
   private partial:{id:string;parts:string[];size:number;time:number}|null=null;
   constructor(private options:Options) {}
   get session(){return this.sessionId;}
+  get healthy(){return this.state==='together'&&this.channel?.readyState==='open'&&Date.now()-this.lastReceived<=12000;}
   private owns(pc:RTCPeerConnection){return this.pc===pc;}
   private report(value:ListenStatus,error='') { this.state=value; this.options.status(value,error); }
   async join() {

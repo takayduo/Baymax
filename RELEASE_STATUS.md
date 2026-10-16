@@ -1,5 +1,7 @@
 # Baymax release status
 
+**17 October 2026 — partner connection recovery (source update):** account and pair sockets now renew auth and reconnect automatically; recent partner database messages protect presence, and cloud Offline notices no longer terminate a healthy P2P music session. Verification and limits are recorded in [connection recovery notes](docs/REALTIME_RECOVERY.md). The final source checks cover **77 tests**, both TypeScript projects and frontend builds; the isolated Electron music smoke covers **9 checks**, including real local WebRTC controls after an Offline notice. Installer packaging was not run for this update. Installer hashes and package claims in the older sections below are historical evidence, not verification of this source update.
+
 Updated **15 October 2026**. Desktop: **G:\baymax**. Owner console: **G:\puff-admin**, live at **https://puff-admin.pages.dev**. Private beta; two-PC and paid-service acceptance remain.
 
 **Later 15 October source update — original sounds:** all 28 inherited companion/UI recordings have been replaced in source with the newly synthesized Puff Soft v1 pack. Artwork and sound triggers are unchanged. See [creation notes](docs/SOUND_ASSETS.md) and [listening preview](docs/sounds-preview.html). Installer packaging was explicitly skipped: the installer described below is the **earlier artifact and still contains the inherited sounds**. Its earlier freshness result does not apply to the current source; rebuild and reverify before distributing the replacement pack.

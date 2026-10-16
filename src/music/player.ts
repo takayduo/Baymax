@@ -178,7 +178,13 @@ export class MusicPlayer {
   }
   presence(online:boolean){
     if(!allowed('listenTogether')){this.peer.leave();this.partner=null;return;}
-    if(!online){this.partner=null;this.peer.leave();this.notify();return;}
+    if(!online){
+      // A cloud presence outage is not a peer disconnect. The data channel's
+      // own heartbeat still closes a genuinely lost peer; account changes and
+      // explicit Leave continue to revoke the session immediately.
+      if(this.peer.healthy)return;
+      this.partner=null;this.peer.leave();this.notify();return;
+    }
     if(Date.now()-this.lastProbe>5000){this.lastProbe=Date.now();void Bridge.musicSignal({type:'probe'});this.announce(true);}
   }
   announce(force=false){

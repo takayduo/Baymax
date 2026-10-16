@@ -73,14 +73,15 @@ test('Account refresh reconnects changed pairs once, without ending stable remot
 test('Private account subscription authenticates first and ignores superseded logins',async()=>{
   const {AccountService}=require('../electron/account');let auth=[],channels=[],unsubs=[];
   const instance=Object.create(AccountService.prototype);instance.config={supabaseUrl:'test'};instance.saved={user:{id:'alice'}};
-  instance.realtimeClient={realtime:{setAuth:async token=>auth.push(token)},channel:(name,options)=>{
+  instance.ensureRealtimeClient=()=>({realtime:{setAuth:async token=>auth.push(token),disconnect:async()=>{}},channel:(name,options)=>{
     const c={topic:'realtime:'+name,on(){return c;},subscribe(){}};channels.push({name,options});return c;
-  },removeChannel:async c=>unsubs.push(c)};
+  },removeAllChannels:async()=>unsubs.push(true)});
+  instance.now=Date.now;instance.error='';
   let resolveToken;instance.token=()=>new Promise(r=>resolveToken=r);
   const first=instance.startUserChannel();instance.stopUserChannel();resolveToken('stale');await first;assert.equal(channels.length,0);
   instance.token=async()=>{throw Error('expired');};await instance.startUserChannel();assert.equal(channels.length,0);
-  instance.token=async()=> 'fresh';await instance.startUserChannel();assert.deepEqual(auth,['fresh']);assert.equal(channels[0].options.config.private,true);
-  await instance.startUserChannel();assert.equal(channels.length,1);instance.stopUserChannel();assert.equal(unsubs.length,1);
+  instance.stopUserChannel();instance.token=async()=> 'fresh';await instance.startUserChannel();assert.deepEqual(auth,['fresh']);assert.equal(channels[0].options.config.private,true);
+  await instance.startUserChannel();assert.equal(channels.length,1);instance.stopUserChannel();await Promise.resolve();assert.equal(unsubs.length,1);
 });
 test('Video sources are media URLs or existing files, never executable URL schemes',()=>{
   const {mediaURL}=require('../electron/videoPlayer');

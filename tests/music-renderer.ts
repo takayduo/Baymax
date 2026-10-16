@@ -72,6 +72,15 @@ class FakeAudio extends EventTarget {
     assert(signaling.length===handshake,'Ongoing controls used Supabase signaling');
     assert(Math.abs(guestState.at-hostState.at)<250,'Clock offset correction failed');
     checks.push('Real RTCDataChannel joins, shares queue, and applies guest seek/pause/next and host previous without cloud sync messages');
+    assert(host.healthy && guest.healthy,'Connected peers did not report healthy data channels');
+    const savedPeer=player.peer;
+    // Exercise the production presence handler against an actual RTCDataChannel.
+    Object.defineProperty(player,'peer',{value:guest,configurable:true});
+    player.presence(false);player.presence(false);
+    assert(guest.state==='together' && host.state==='together','Cloud Offline notice closed healthy P2P music');
+    guest.control({type:'seek',position:63});await until(()=>hostState.position===63 && guestState.position===63);
+    Object.defineProperty(player,'peer',{value:savedPeer,configurable:true});
+    checks.push('Cloud Offline notices preserve a healthy real P2P session and subsequent two-way controls');
     // Large queue exercises chunking instead of exceeding RTC message limits.
     const large=Array.from({length:200},(_,i)=>({...songs[0],id:String(i).padStart(11,'0'),title:'Long song title '.repeat(10)}));
     hostState=reducePlayback(hostState,{type:'queue',tracks:large,index:123,playing:false});host.broadcast();await until(()=>guestState.queue.length===200);
