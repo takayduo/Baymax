@@ -82,7 +82,15 @@ body {
   border-radius: inherit;
 }
 
-#bot-canvas,
+#bot-canvas {
+  position: absolute;
+  pointer-events: none;
+  z-index: 20;
+  max-width: 120px;
+  max-height: 160px;
+  contain: size layout paint;
+}
+
 #greeting-canvas {
   position: absolute;
   pointer-events: none;

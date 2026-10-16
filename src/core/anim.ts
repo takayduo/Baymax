@@ -76,13 +76,14 @@ export class Spring {
   }
 
   step(dt: number) {
-    const steps = Math.max(1, Math.ceil(dt / (1 / 240)));
-    const h = dt / steps;
+    const safeDt = Math.min(0.1, Math.max(0.0001, dt));
+    const steps = Math.max(1, Math.ceil(safeDt / (1 / 240)));
+    const h = safeDt / steps;
     for (let i = 0; i < steps; i++) {
       const acc =
         this.omega * this.omega * (this.target - this.value) -
         2 * this.zeta * this.omega * this.velocity;
-      this.velocity += acc * h;
+      this.velocity = clamp(this.velocity + acc * h, -2500, 2500);
       this.value += this.velocity * h;
     }
   }

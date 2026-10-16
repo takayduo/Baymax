@@ -269,7 +269,6 @@ export class Island {
           else if (from === "hidden") Sound.play("peek");
           this.setMode("compact");
           if (from === "welcome") State.view = State.defaultView();
-          if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
         case "home":
           this.expand(State.defaultView());
@@ -299,8 +298,8 @@ export class Island {
       Sound.play("open");
       void Bridge.setIgnoreMouseEvents(false);
       const layout = VIEW_LAYOUTS[State.view];
-      if (layout && layout.botDiameter > 0 && this.botSize.value < 20) {
-        this.botSize.set(layout.botDiameter / 0.6);
+      if (layout && layout.botDiameter > 0 && (this.botSize.value < 20 || this.botSize.value > 110)) {
+        this.botSize.set(clamp(layout.botDiameter / 0.6, 1, 100));
       }
       this.ensureRunning();
     }
@@ -763,12 +762,12 @@ export class Island {
       UploadSeq.updateCursor(State.mouseInIsland.x, State.mouseInIsland.y);
     }
 
-    const hidden = rect.h <= 1;
-    const hitWidth = hidden ? 240 : rect.w;
+    const hitWidth = Math.max(240, rect.w);
     const hitLeft = rect.x + (rect.w - hitWidth) / 2;
+    const hitHeight = Math.max(6, rect.h);
     const margin = this.wasInIsland ? 10 : 6;
     const inIsland = x >= hitLeft - margin && x <= hitLeft + hitWidth + margin &&
-      y >= rect.y && y <= rect.y + (hidden ? 6 : rect.h) + margin;
+      y >= rect.y && y <= rect.y + hitHeight + margin;
 
     if (inIsland && !this.wasInIsland) {
       this.onMouseEnterIsland();
@@ -925,10 +924,10 @@ export class Island {
 
   private updateBotTargets() {
     const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
-    this.botCx.target = p.cx;
-    this.botCy.target = p.cy;
+    this.botCx.target = clamp(p.cx, -50, PANEL_W + 50);
+    this.botCy.target = clamp(p.cy, -50, PANEL_H + 50);
     if (p.diameter > 0) {
-      this.botSize.target = p.diameter / 0.6;
+      this.botSize.target = clamp(p.diameter / 0.6, 1, 100);
     }
 
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
@@ -938,13 +937,15 @@ export class Island {
     this.botCanvas.style.display = visible ? "block" : "none";
 
     if (visible && State.mode === "expanded" && State.view !== "uploading") {
-      const d = p.diameter;
+      const d = clamp(p.diameter, 0, 60);
       const color = botGlowColor(State.effectiveState);
+      const safeCx = clamp(this.botCx.value, -50, PANEL_W + 50);
+      const safeCy = clamp(this.botCy.value, -50, PANEL_H + 50);
       this.botGlow.style.display = "block";
       this.botGlow.style.width = `${d * 2.2}px`;
       this.botGlow.style.height = `${d * 2.2}px`;
-      this.botGlow.style.left = `${this.botCx.value - d * 1.1}px`;
-      this.botGlow.style.top = `${this.botCy.value - d * 1.1}px`;
+      this.botGlow.style.left = `${safeCx - d * 1.1}px`;
+      this.botGlow.style.top = `${safeCy - d * 1.1}px`;
       this.botGlow.style.background = `radial-gradient(circle, ${color} 0%, transparent 62%)`;
       this.botGlow.style.opacity = String(botGlowOpacity(State.effectiveState));
     } else {
@@ -954,9 +955,9 @@ export class Island {
 
   private drawBot(dt: number) {
     if (this.botCanvas.style.display === "none") return;
-    const size = this.botSize.value;
-    const w = Math.max(1, Math.round(size));
-    const hCss = w + BOT_OVERHANG;
+    const size = clamp(this.botSize.value, 1, 110);
+    const w = Math.max(1, Math.min(110, Math.round(size)));
+    const hCss = Math.min(150, w + BOT_OVERHANG);
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     if (this.canvasPx !== w) {
       this.canvasPx = w;
@@ -965,8 +966,10 @@ export class Island {
       this.botCanvas.style.width = `${w}px`;
       this.botCanvas.style.height = `${hCss}px`;
     }
-    this.botCanvas.style.left = `${this.botCx.value - w / 2}px`;
-    this.botCanvas.style.top = `${this.botCy.value - BOT_OVERHANG / 2 - hCss / 2}px`;
+    const safeCx = clamp(this.botCx.value, -50, PANEL_W + 50);
+    const safeCy = clamp(this.botCy.value, -50, PANEL_H + 50);
+    this.botCanvas.style.left = `${safeCx - w / 2}px`;
+    this.botCanvas.style.top = `${safeCy - BOT_OVERHANG / 2 - hCss / 2}px`;
 
     const ctx = this.botCanvas.getContext("2d");
     if (!ctx) return;

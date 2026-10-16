@@ -54,6 +54,7 @@ class MusicExtractor {
     const { file, prefix, runtime, pythonPath } = this.command();
     return new Promise((resolve,reject) => {
       const child = this.execute(file, [...prefix,'--ignore-config','--no-playlist','--no-warnings','--no-cache-dir','--socket-timeout','15','--retries','1',
+        '--extractor-args','youtube:player_client=android,web',
         ...(runtime ? ['--js-runtimes',`node:${runtime}`] : []), ...args],
       {windowsHide:true,timeout:45000,maxBuffer:2*1024*1024,encoding:'utf8',env:{...process.env,...(pythonPath?{PYTHONPATH:pythonPath}:{}),ELECTRON_RUN_AS_NODE:'1',PYTHONIOENCODING:'utf-8'}},
       (error,stdout) => { this.children.delete(child); error ? reject(new Error('Could not load this music source. Check your internet connection, or try another song.')) : resolve(stdout); });
@@ -70,7 +71,7 @@ class MusicExtractor {
   async resolve(id, refresh = false) {
     if (!trackId(id)) throw new Error('Invalid music track');
     if (!refresh && this.pending.has(id)) return this.pending.get(id);
-    const pending = this.run(['-f','bestaudio[ext=m4a][protocol=https]/bestaudio[acodec^=mp4a][protocol=https]/bestaudio[protocol=https]/bestaudio','-g','--',`https://www.youtube.com/watch?v=${id}`]).then(raw => {
+    const pending = this.run(['-f','bestaudio[ext=m4a][protocol=https]/bestaudio[acodec^=mp4a][protocol=https]/bestaudio[protocol=https]/bestaudio/best[height<=360][protocol=https]/best[protocol=https]','-g','--',`https://www.youtube.com/watch?v=${id}`]).then(raw => {
       const url = raw.trim().split(/\r?\n/)[0];
       const parsed = new URL(url);
       if (parsed.protocol !== 'https:' || !/(^|\.)googlevideo\.com$/.test(parsed.hostname)) throw new Error('This song did not provide a supported audio stream');
