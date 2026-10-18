@@ -10,6 +10,7 @@ class Store {
   constructor(defaults = {}) {
     const userData = app.getPath('userData');
     this.path = path.join(userData, 'distrack-data.json');
+    this.defaults = defaults;
     this.data = { ...defaults };
     this.saveTimer = null;
     this.load();
@@ -23,7 +24,14 @@ class Store {
       }
     } catch (e) {
       console.error('[Store] Failed to load:', e.message);
-      throw new Error('Productivity data could not be read. The original file has been preserved.', {cause:e});
+      try {
+        if (fs.existsSync(this.path)) {
+          const corruptBackup = `${this.path}.corrupt-${Date.now()}`;
+          fs.renameSync(this.path, corruptBackup);
+          console.warn(`[Store] Preserved corrupted file to ${corruptBackup}`);
+        }
+      } catch {}
+      this.data = { ...this.defaults };
     }
   }
 
@@ -34,7 +42,13 @@ class Store {
         const dir = path.dirname(this.path);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const tmpPath = `${this.path}.tmp`;
-        fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), 'utf8');
+        const fd = fs.openSync(tmpPath, 'w');
+        try {
+          fs.writeSync(fd, JSON.stringify(this.data, null, 2), 0, 'utf8');
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
         fs.renameSync(tmpPath, this.path);
         this.lastError = null;
       } catch (e) {
@@ -49,7 +63,13 @@ class Store {
       const dir = path.dirname(this.path);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const tmpPath = `${this.path}.tmp`;
-      fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), 'utf8');
+      const fd = fs.openSync(tmpPath, 'w');
+      try {
+        fs.writeSync(fd, JSON.stringify(this.data, null, 2), 0, 'utf8');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
       fs.renameSync(tmpPath, this.path);
       this.lastError = null;
     } catch (e) {

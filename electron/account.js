@@ -37,7 +37,8 @@ class AccountService extends EventEmitter {
  constructor({folder,safeStorage,openExternal,openCheckout=openExternal,request=fetch,environment=process.env,now=Date.now,configPath=path.join(__dirname,'cloud-config.json'),callbackPort=42837}){
   super();Object.assign(this,{folder,safeStorage,openExternal,openCheckout,request,now,callbackPort});this.saved=null;this.login=null;this.refreshing=null;this.error='';this.generation=0;
   this.configFile=path.join(folder,'cloud-config.json');this.sessionFile=path.join(folder,'account.dpapi.json');
-  const base=fs.existsSync(this.configFile)?JSON.parse(fs.readFileSync(this.configFile,'utf8')):fs.existsSync(configPath)?JSON.parse(fs.readFileSync(configPath,'utf8')):EMPTY_CONFIG;
+  let base=EMPTY_CONFIG;
+  try{if(fs.existsSync(this.configFile))base=JSON.parse(fs.readFileSync(this.configFile,'utf8'));else if(fs.existsSync(configPath))base=JSON.parse(fs.readFileSync(configPath,'utf8'));}catch{}
   this.config=cleanConfig({...base,...(environment.BAYMAX_CENTRAL_URL?{supabaseUrl:environment.BAYMAX_CENTRAL_URL}:{}),...(environment.BAYMAX_CENTRAL_PUBLIC_KEY?{supabaseAnonKey:environment.BAYMAX_CENTRAL_PUBLIC_KEY}:{}),...(environment.BAYMAX_RAZORPAY_KEY_ID?{razorpayKeyId:environment.BAYMAX_RAZORPAY_KEY_ID}:{})});
  }
  get configured(){return !!this.config.supabaseUrl;}

@@ -11,10 +11,18 @@ function readArray(file) {
 function writeJson(file, value) {
   const temporary = `${file}.${crypto.randomUUID()}.tmp`;
   try {
-    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), {encoding:'utf8', flag:'wx'});
+    const fd = fs.openSync(temporary, 'wx');
+    try {
+      fs.writeSync(fd, JSON.stringify(value, null, 2), 0, 'utf8');
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(temporary, file);
   } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    if (fs.existsSync(temporary)) {
+      try { fs.unlinkSync(temporary); } catch {}
+    }
   }
 }
 

@@ -392,6 +392,21 @@ function applyStartupMode(enabled) {
 }
 
 const {readArray, writeJson} = require('./jsonFiles');
+function safeReadArray(file) {
+  try {
+    return readArray(file);
+  } catch (err) {
+    console.error(`[Data] Corrupted array in ${file}:`, err.message);
+    try {
+      if (fs.existsSync(file)) {
+        const corruptFile = `${file}.corrupt-${Date.now()}`;
+        fs.renameSync(file, corruptFile);
+        console.warn(`[Data] Preserved corrupted file to ${corruptFile}`);
+      }
+    } catch {}
+    return [];
+  }
+}
 function accountFile(base,pairScoped=false){
   if(!account.configured)return base;
   const state=account.snapshot(),scope=state.user?.id||'signed-out';
@@ -399,10 +414,10 @@ function accountFile(base,pairScoped=false){
   return path.join(folder,path.basename(base));
 }
 function loadSchedule() {
-  if(!account.configured)return readArray(schedulePath);
-  const local=readArray(accountFile(schedulePath)).map(t=>({...t,syncPairId:null}));
+  if(!account.configured)return safeReadArray(schedulePath);
+  const local=safeReadArray(accountFile(schedulePath)).map(t=>({...t,syncPairId:null}));
   const pair=account.snapshot().pair?.id;
-  return pair?[...local,...readArray(accountFile(schedulePath,true)).map(t=>({...t,syncPairId:pair}))]:local;
+  return pair?[...local,...safeReadArray(accountFile(schedulePath,true)).map(t=>({...t,syncPairId:pair}))]:local;
 }
 const { mergeTasks, stampTasks } = require('./taskSync');
 function saveSchedule(items) {
@@ -419,7 +434,7 @@ let activeSchedule = loadSchedule();
 
 const chatHistoryPath = path.join(userDataDir, "chat_history.json");
 
-function loadChatHistory() { return readArray(accountFile(chatHistoryPath,true)); }
+function loadChatHistory() { return safeReadArray(accountFile(chatHistoryPath,true)); }
 function saveChatHistory(history) { writeJson(accountFile(chatHistoryPath,true), history); }
 
 const engineDir = app.isPackaged ? path.join(process.resourcesPath, "engine") : path.join(__dirname, "..", "engine");
@@ -430,7 +445,8 @@ const musicExtractor = new MusicExtractor(() => ({file:resolvePythonPath(), pref
 const { SharedMusicStore } = require('./sharedMusic');
 function sharedMusicStore() { return new SharedMusicStore(userDataDir,account.configured?(account.snapshot().user?.id||'signed-out')+'|'+(account.snapshot().pair?.id||'unpaired'):(activeSettings.syncUrl || '')+'|'+(activeSettings.shareChannel || 'coucou-badsha-ayzil')); }
 function loadMusicLibrary() {
-  const library=musicStore.load(), tracks=sharedMusicStore().tracks();
+  let library={playlists:[{id:'favorites',name:'My playlist',tracks:[]}]};try{library=musicStore.load();}catch(e){console.warn('[Music] Could not load playlists:',e.message);}
+  let tracks=[];try{tracks=sharedMusicStore().tracks();}catch(e){console.warn('[Music] Could not load shared playlist:',e.message);}
   library.playlists=library.playlists.filter(p=>p.id!=='shared');
   library.playlists.unshift({id:'shared',name:'Our playlist',tracks});
   return library;
@@ -3872,7 +3888,8 @@ app.whenReady().then(async () => {
     }
   });
 }).catch(error => {
-  dialog.showErrorBox('Baymax could not start', error.message);
+  console.error('[Startup Error]', error);
+  dialog.showErrorBox('Baymax could not start', (error?.message || 'An unexpected error occurred.').replace(/\0/g, ' '));
   app.quit();
 });
 

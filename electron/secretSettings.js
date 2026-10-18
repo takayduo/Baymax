@@ -5,7 +5,9 @@ function protect(value, safeStorage) {
   return { encrypted: safeStorage.encryptString(JSON.stringify(value)).toString('base64') };
 }
 function reveal(value, safeStorage) {
-  return value?.encrypted ? JSON.parse(safeStorage.decryptString(Buffer.from(value.encrypted,'base64'))) : value;
+  if (!value?.encrypted) return value;
+  try { return JSON.parse(safeStorage.decryptString(Buffer.from(value.encrypted,'base64'))); }
+  catch { return null; }
 }
 function encodeSettings(settings, safeStorage) { return Object.fromEntries(Object.entries(settings).map(([key,value]) => [key, secretKey(key) && value ? protect(value,safeStorage) : value])); }
 function decodeSettings(settings, safeStorage) { return Object.fromEntries(Object.entries(settings).map(([key,value]) => [key, secretKey(key) ? reveal(value,safeStorage) : value])); }
